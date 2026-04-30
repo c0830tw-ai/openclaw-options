@@ -232,9 +232,9 @@
 <div id="root"></div>
 
 <script type="text/babel">
-const FIREBASE_URL = 'https://option-3047e-default-rtdb.asia-southeast1.firebasedatabase.app/trading/2330/collar/latest.json';
-const REFRESH_URL  = '/api/refresh';   // 本地 server.py 提供
-const REFRESH_SEC  = 30;
+const FIREBASE_URL  = 'https://option-3047e-default-rtdb.asia-southeast1.firebasedatabase.app/trading/2330/collar/latest.json';
+const REFRESH_URL   = '/api/refresh';
+const REFRESH_MS    = 5 * 60 * 1000;   // 網頁開著時每 5 分鐘重抓
 
 function fmt(n, dec = 0) {
   return Number(n).toLocaleString('zh-TW', { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -393,16 +393,9 @@ function App() {
     setRefreshing(false);
   }
 
-  function resetCountdown() {
-    clearInterval(countdownRef.current);
-    countdownRef.current = setInterval(() => {
-      fetchFirebase();
-    }, REFRESH_SEC * 1000);
-  }
-
   React.useEffect(() => {
     triggerRefresh();
-    resetCountdown();
+    countdownRef.current = setInterval(triggerRefresh, REFRESH_MS);
     return () => clearInterval(countdownRef.current);
   }, []);
 
