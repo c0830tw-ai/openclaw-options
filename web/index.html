@@ -32,18 +32,6 @@
     }
     .header h1 { font-size: 18px; color: #7dd3fc; letter-spacing: 0.05em; }
     .header-right { display: flex; align-items: center; gap: 12px; color: #64748b; font-size: 12px; }
-    .btn-refresh {
-      background: #1e2535;
-      border: 1px solid #334155;
-      color: #94a3b8;
-      padding: 4px 12px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 12px;
-      font-family: inherit;
-    }
-    .btn-refresh:hover { background: #273044; color: #e2e8f0; }
-
     /* Market strip */
     .market-strip {
       display: grid;
@@ -201,8 +189,6 @@
       margin-bottom: 16px;
       font-size: 13px;
     }
-
-    .countdown { font-size: 11px; color: #334155; }
 
     /* Section divider */
     .section-divider {
@@ -382,7 +368,6 @@ function App() {
   const [error, setError] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
-  const [countdown, setCountdown] = React.useState(REFRESH_SEC);
   const countdownRef = React.useRef(null);
 
   async function fetchFirebase() {
@@ -409,36 +394,24 @@ function App() {
   }
 
   function resetCountdown() {
-    setCountdown(REFRESH_SEC);
     clearInterval(countdownRef.current);
     countdownRef.current = setInterval(() => {
-      setCountdown(c => {
-        if (c <= 1) { fetchFirebase(); return REFRESH_SEC; }
-        return c - 1;
-      });
-    }, 1000);
+      fetchFirebase();
+    }, REFRESH_SEC * 1000);
   }
 
   React.useEffect(() => {
-    triggerRefresh();   // 開頁面就抓新資料
+    triggerRefresh();
     resetCountdown();
     return () => clearInterval(countdownRef.current);
   }, []);
-
-  function handleRefresh() {
-    setLoading(true);
-    triggerRefresh();
-    resetCountdown();
-  }
 
   return (
     <div className="app">
       <div className="header">
         <h1>2330 0050對應大盤選擇權領口策略</h1>
         <div className="header-right">
-          {data && <span>更新 {fmtTime(data.timestamp)}</span>}
-          <span className="countdown">{countdown}s</span>
-          <button className="btn-refresh" onClick={handleRefresh}>重整</button>
+          {refreshing && <span style={{color:'#475569'}}>更新中…</span>}
         </div>
       </div>
 
