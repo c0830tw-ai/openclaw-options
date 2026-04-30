@@ -1,0 +1,6 @@
+.env
+firebase-key.json
+*.log
+latest_collar.json
+__pycache__/
+node_modules/
