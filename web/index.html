@@ -247,7 +247,8 @@
 
 <script type="text/babel">
 const FIREBASE_URL = 'https://option-3047e-default-rtdb.asia-southeast1.firebasedatabase.app/trading/2330/collar/latest.json';
-const REFRESH_SEC = 30;
+const REFRESH_URL  = '/api/refresh';   // 本地 server.py 提供
+const REFRESH_SEC  = 30;
 
 function fmt(n, dec = 0) {
   return Number(n).toLocaleString('zh-TW', { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -380,10 +381,11 @@ function App() {
   const [data, setData] = React.useState(null);
   const [error, setError] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
+  const [refreshing, setRefreshing] = React.useState(false);
   const [countdown, setCountdown] = React.useState(REFRESH_SEC);
   const countdownRef = React.useRef(null);
 
-  async function fetchData() {
+  async function fetchFirebase() {
     try {
       const res = await fetch(FIREBASE_URL);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -397,29 +399,35 @@ function App() {
     }
   }
 
+  async function triggerRefresh() {
+    setRefreshing(true);
+    try {
+      await fetch(REFRESH_URL);   // 等 shioaji_collar.py 跑完（約 5s）
+    } catch (_) {}               // 若非 server.py 啟動，靜默跳過
+    await fetchFirebase();
+    setRefreshing(false);
+  }
+
   function resetCountdown() {
     setCountdown(REFRESH_SEC);
     clearInterval(countdownRef.current);
     countdownRef.current = setInterval(() => {
       setCountdown(c => {
-        if (c <= 1) {
-          fetchData();
-          return REFRESH_SEC;
-        }
+        if (c <= 1) { fetchFirebase(); return REFRESH_SEC; }
         return c - 1;
       });
     }, 1000);
   }
 
   React.useEffect(() => {
-    fetchData();
+    triggerRefresh();   // 開頁面就抓新資料
     resetCountdown();
     return () => clearInterval(countdownRef.current);
   }, []);
 
   function handleRefresh() {
     setLoading(true);
-    fetchData();
+    triggerRefresh();
     resetCountdown();
   }
 
@@ -439,7 +447,7 @@ function App() {
       {loading && !data ? (
         <div className="state-box">
           <div className="spinner" />
-          <p>連接 Firebase…</p>
+          <p>{refreshing ? '向永豐抓取最新報價…' : '連接 Firebase…'}</p>
         </div>
       ) : data ? (
         <>
