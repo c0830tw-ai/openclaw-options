@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenClaw Collar Tool</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0f1117;
+      color: #e2e8f0;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 14px;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .app { max-width: 900px; margin: 0 auto; }
+
+    /* Header */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0 16px;
+      border-bottom: 1px solid #1e2535;
+      margin-bottom: 16px;
+    }
+    .header h1 { font-size: 18px; color: #7dd3fc; letter-spacing: 0.05em; }
+    .header-right { display: flex; align-items: center; gap: 12px; color: #64748b; font-size: 12px; }
+    .btn-refresh {
+      background: #1e2535;
+      border: 1px solid #334155;
+      color: #94a3b8;
+      padding: 4px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-family: inherit;
+    }
+    .btn-refresh:hover { background: #273044; color: #e2e8f0; }
+
+    /* Market strip */
+    .market-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      background: #1e2535;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+    .market-cell {
+      background: #13192a;
+      padding: 12px 16px;
+    }
+    .market-cell .label { font-size: 11px; color: #475569; margin-bottom: 4px; }
+    .market-cell .value { font-size: 20px; font-weight: 600; color: #f1f5f9; }
+    .market-cell .value.down { color: #f87171; }
+    .market-cell .value.tag { font-size: 14px; color: #7dd3fc; }
+
+    /* Options row */
+    .options-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .option-card {
+      background: #13192a;
+      border: 1px solid #1e2535;
+      border-radius: 8px;
+      padding: 12px 16px;
+    }
+    .option-card .opt-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .opt-badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 3px;
+      letter-spacing: 0.05em;
+    }
+    .opt-badge.put { background: #7f1d1d; color: #fca5a5; }
+    .opt-badge.call { background: #14532d; color: #86efac; }
+    .opt-strike { font-size: 18px; font-weight: 700; }
+    .opt-prices {
+      display: flex;
+      gap: 16px;
+      font-size: 12px;
+      color: #64748b;
+    }
+    .opt-prices span { display: flex; flex-direction: column; gap: 2px; }
+    .opt-prices .pkey { font-size: 10px; color: #475569; }
+    .opt-prices .pval { color: #cbd5e1; font-size: 13px; }
+    .opt-symbol { font-size: 10px; color: #334155; margin-top: 6px; }
+
+    /* Structure cards */
+    .structures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .struct-card {
+      background: #13192a;
+      border: 1px solid #1e2535;
+      border-radius: 8px;
+      padding: 16px;
+      position: relative;
+      transition: border-color 0.15s;
+    }
+    .struct-card:hover { border-color: #334155; }
+    .struct-card.recommended { border-color: #1d4ed8; }
+    .recommended-badge {
+      position: absolute;
+      top: -1px; right: 12px;
+      background: #1d4ed8;
+      color: #bfdbfe;
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 0 0 4px 4px;
+    }
+    .struct-name { font-size: 11px; color: #475569; margin-bottom: 4px; }
+    .struct-desc { font-size: 13px; color: #94a3b8; margin-bottom: 12px; }
+    .struct-legs {
+      font-size: 20px;
+      font-weight: 700;
+      color: #f1f5f9;
+      margin-bottom: 12px;
+    }
+    .struct-strikes { font-size: 11px; color: #475569; margin-bottom: 12px; line-height: 1.6; }
+    .struct-net {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .struct-net.credit { color: #4ade80; }
+    .struct-net.debit { color: #f87171; }
+    .struct-protection {
+      height: 4px;
+      background: #1e2535;
+      border-radius: 2px;
+      margin-bottom: 6px;
+      overflow: hidden;
+    }
+    .struct-protection-fill {
+      height: 100%;
+      background: #3b82f6;
+      border-radius: 2px;
+      transition: width 0.4s ease;
+    }
+    .struct-pct-label { font-size: 11px; color: #64748b; }
+    .credit-tag {
+      display: inline-block;
+      margin-top: 10px;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 3px;
+      background: #14532d;
+      color: #86efac;
+    }
+    .debit-tag {
+      display: inline-block;
+      margin-top: 10px;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 3px;
+      background: #7f1d1d;
+      color: #fca5a5;
+    }
+
+    /* States */
+    .state-box {
+      text-align: center;
+      padding: 60px 20px;
+      color: #475569;
+    }
+    .state-box .icon { font-size: 32px; margin-bottom: 12px; }
+    .state-box p { font-size: 14px; }
+
+    .spinner {
+      width: 24px; height: 24px;
+      border: 2px solid #1e2535;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 12px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error-box {
+      background: #7f1d1d22;
+      border: 1px solid #7f1d1d;
+      border-radius: 8px;
+      padding: 16px;
+      color: #fca5a5;
+      margin-bottom: 16px;
+      font-size: 13px;
+    }
+
+    .countdown { font-size: 11px; color: #334155; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const FIREBASE_URL = 'https://option-3047e-default-rtdb.asia-southeast1.firebasedatabase.app/trading/2330/collar/latest.json';
+const REFRESH_SEC = 30;
+
+function fmt(n, dec = 0) {
+  return Number(n).toLocaleString('zh-TW', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+}
+
+function fmtTime(iso) {
+  if (!iso) return '—';
+  return iso.slice(11, 19);
+}
+
+function fmtNet(n) {
+  const wan = n / 10000;
+  return (wan >= 0 ? '+' : '') + wan.toFixed(1) + '萬';
+}
+
+function MarketStrip({ market, txo_month }) {
+  const price = market?.price_2330;
+  const open = market?.price_2330_open;
+  const taiex = market?.taiex;
+  const vol = market?.volume_2330;
+  const isDown = open && price < open;
+
+  return (
+    <div className="market-strip">
+      <div className="market-cell">
+        <div className="label">台積電 2330</div>
+        <div className={`value ${isDown ? 'down' : ''}`}>{price ? fmt(price) : '—'}</div>
+      </div>
+      <div className="market-cell">
+        <div className="label">加權指數 TAIEX</div>
+        <div className="value">{taiex ? fmt(taiex, 2) : '—'}</div>
+      </div>
+      <div className="market-cell">
+        <div className="label">成交量（張）</div>
+        <div className="value">{vol !== undefined ? fmt(vol) : '—'}</div>
+      </div>
+      <div className="market-cell">
+        <div className="label">TXO 月份</div>
+        <div className="value tag">{txo_month || '—'}</div>
+      </div>
+    </div>
+  );
+}
+
+function OptionCard({ type, data }) {
+  if (!data) return null;
+  return (
+    <div className="option-card">
+      <div className="opt-header">
+        <span className={`opt-badge ${type}`}>{type.toUpperCase()}</span>
+        <span className="opt-strike">{fmt(data.strike)}</span>
+      </div>
+      <div className="opt-prices">
+        <span><span className="pkey">ASK</span><span className="pval">{data.ask}</span></span>
+        <span><span className="pkey">MID</span><span className="pval">{data.mid}</span></span>
+        <span><span className="pkey">BID</span><span className="pval">{data.bid}</span></span>
+        <span><span className="pkey">VOL</span><span className="pval">{data.volume}</span></span>
+      </div>
+      <div className="opt-symbol">{data.symbol}</div>
+    </div>
+  );
+}
+
+function StructCard({ s, isRecommended }) {
+  const pct = Math.min(100, s.protection_pct);
+  return (
+    <div className={`struct-card ${isRecommended ? 'recommended' : ''}`}>
+      {isRecommended && <div className="recommended-badge">推薦</div>}
+      <div className="struct-name">{s.name}</div>
+      <div className="struct-desc">{s.desc}</div>
+      <div className="struct-legs">{s.calls}C / {s.puts}P</div>
+      <div className="struct-strikes">
+        Call {fmt(s.call_strike)} @ {s.call_premium}<br/>
+        Put &nbsp;{fmt(s.put_strike)} @ {s.put_premium}
+      </div>
+      <div className={`struct-net ${s.is_net_credit ? 'credit' : 'debit'}`}>
+        {fmtNet(s.monthly_net)}
+      </div>
+      <div className="struct-protection">
+        <div className="struct-protection-fill" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="struct-pct-label">保護 {pct.toFixed(0)}%</div>
+      <div className={s.is_net_credit ? 'credit-tag' : 'debit-tag'}>
+        {s.is_net_credit ? '✓ Credit' : '✗ Debit'}
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [data, setData] = React.useState(null);
+  const [error, setError] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [countdown, setCountdown] = React.useState(REFRESH_SEC);
+  const countdownRef = React.useRef(null);
+
+  async function fetchData() {
+    try {
+      const res = await fetch(FIREBASE_URL);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      setData(json);
+      setError(null);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function resetCountdown() {
+    setCountdown(REFRESH_SEC);
+    clearInterval(countdownRef.current);
+    countdownRef.current = setInterval(() => {
+      setCountdown(c => {
+        if (c <= 1) {
+          fetchData();
+          return REFRESH_SEC;
+        }
+        return c - 1;
+      });
+    }, 1000);
+  }
+
+  React.useEffect(() => {
+    fetchData();
+    resetCountdown();
+    return () => clearInterval(countdownRef.current);
+  }, []);
+
+  function handleRefresh() {
+    setLoading(true);
+    fetchData();
+    resetCountdown();
+  }
+
+  return (
+    <div className="app">
+      <div className="header">
+        <h1>OpenClaw Collar Tool</h1>
+        <div className="header-right">
+          {data && <span>更新 {fmtTime(data.timestamp)}</span>}
+          <span className="countdown">{countdown}s</span>
+          <button className="btn-refresh" onClick={handleRefresh}>重整</button>
+        </div>
+      </div>
+
+      {error && <div className="error-box">⚠ 載入失敗：{error}</div>}
+
+      {loading && !data ? (
+        <div className="state-box">
+          <div className="spinner" />
+          <p>連接 Firebase…</p>
+        </div>
+      ) : data ? (
+        <>
+          <MarketStrip market={data.market} txo_month={data.txo_month} />
+          <div className="options-row">
+            <OptionCard type="put" data={data.selected_options?.put} />
+            <OptionCard type="call" data={data.selected_options?.call} />
+          </div>
+          <div className="structures">
+            {data.structures?.map((s, i) => (
+              <StructCard key={s.name} s={s} isRecommended={i === 0} />
+            ))}
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

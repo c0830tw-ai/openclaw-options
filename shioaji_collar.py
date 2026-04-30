@@ -202,7 +202,7 @@ def build_structures(
 def fetch_market_snapshot(api):
     """抓 2330 和加權指數。"""
     c_2330 = api.Contracts.Stocks.TSE['2330']
-    c_taiex = api.Contracts.Indexs.TSE['001']  # 加權指數
+    c_taiex = api.Contracts.Indexs.TSE['TSE001']  # 加權指數
 
     snaps = api.snapshots([c_2330, c_taiex])
     snap_2330, snap_taiex = snaps[0], snaps[1]
@@ -218,19 +218,18 @@ def fetch_market_snapshot(api):
 
 
 def fetch_txo_chain(api, month: str) -> list:
-    """抓指定月份的 TXO 合約清單。"""
-    # 月選代碼: TXO + YYYYMM
-    txo_attr = f'TXO{month}'
-    if not hasattr(api.Contracts.Options, txo_attr):
-        # 嘗試其他可能格式
-        log.warning(f'TXO{month} not found, listing available options months:')
-        for attr in dir(api.Contracts.Options):
-            if attr.startswith('TXO'):
-                log.info(f'  {attr}')
-        raise ValueError(f'TXO month {month} not available')
+    """抓指定月份的 TXO 合約清單。
 
-    chain = list(getattr(api.Contracts.Options, txo_attr))
-    log.info(f'TXO{month} chain has {len(chain)} contracts')
+    Contracts.Options.TXO 包含所有月份，用 delivery_month 欄位篩選。
+    month 格式為 YYYYMM（例如 '202506'）。
+    """
+    all_contracts = list(api.Contracts.Options.TXO)
+    chain = [c for c in all_contracts if c.delivery_month == month]
+    if not chain:
+        available = sorted({c.delivery_month for c in all_contracts})
+        log.warning(f'TXO {month} 無合約，可用月份: {available}')
+        raise ValueError(f'TXO month {month} not available. Available: {available}')
+    log.info(f'TXO {month} chain has {len(chain)} contracts')
     return chain
 
 
