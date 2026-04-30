@@ -232,15 +232,17 @@
       letter-spacing: 0.03em;
     }
     .market-status.open   { background: #14532d; color: #4ade80; }
+    .market-status.after  { background: #422006; color: #fb923c; }
+    .market-status.night  { background: #1e1b4b; color: #a5b4fc; }
     .market-status.closed { background: #1e2535; color: #475569; }
-    .market-status.pre    { background: #1c1917; color: #78716c; }
     .market-status .dot {
       width: 6px; height: 6px;
       border-radius: 50%;
     }
     .market-status.open .dot   { background: #4ade80; animation: pulse 1.5s infinite; }
+    .market-status.after .dot  { background: #fb923c; animation: pulse 1.5s infinite; }
+    .market-status.night .dot  { background: #a5b4fc; animation: pulse 2s infinite; }
     .market-status.closed .dot { background: #475569; }
-    .market-status.pre .dot    { background: #78716c; }
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50%       { opacity: 0.3; }
@@ -308,12 +310,20 @@ function fmtNet(n) {
 
 function getMarketStatus() {
   const now = new Date();
-  const day = now.getDay();                          // 0=日, 6=六
-  if (day === 0 || day === 6) return 'closed';
+  const day  = now.getDay();
   const mins = now.getHours() * 60 + now.getMinutes();
-  if (mins < 9 * 60)           return 'pre';        // 開盤前
-  if (mins <= 13 * 60 + 30)    return 'open';       // 盤中
-  return 'closed';                                   // 收盤後
+
+  if (day === 0) return 'closed';                    // 週日全休
+  if (day === 6) return mins < 5 * 60 ? 'night' : 'closed'; // 週六夜盤延續至 05:00
+
+  // 週一～週五
+  if (mins < 5 * 60)           return 'night';      // 00:00–05:00 夜盤延續
+  if (mins < 9 * 60)           return 'closed';     // 05:00–09:00 休市
+  if (mins <= 13 * 60 + 30)    return 'open';       // 09:00–13:30 日盤
+  if (mins < 14 * 60)          return 'closed';     // 13:30–14:00 換盤空檔
+  if (mins <= 14 * 60 + 30)    return 'after';      // 14:00–14:30 盤後
+  if (mins < 15 * 60)          return 'closed';     // 14:30–15:00 空檔
+  return 'night';                                    // 15:00–24:00 夜盤
 }
 
 function MarketStatus() {
@@ -322,7 +332,7 @@ function MarketStatus() {
     const t = setInterval(() => setStatus(getMarketStatus()), 30000);
     return () => clearInterval(t);
   }, []);
-  const labels = { open: '盤中', closed: '收盤', pre: '開盤前' };
+  const labels = { open: '日盤', after: '盤後', night: '夜盤', closed: '休市' };
   return (
     <span className={`market-status ${status}`}>
       <span className="dot" />
