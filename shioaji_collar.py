@@ -56,11 +56,16 @@ class Config:
     firebase_path: str = '/trading/2330/collar/latest'
     firebase_history_path: str = '/trading/2330/collar/history'
 
-    # 策略參數
+    # 策略參數 — 2330
     beta: float = 1.18                    # 2330 對加權的 beta
     large_futures_lots: int = 1           # 大台積電股期口數
     target_protection_min: float = 0.70   # 下檔保護下限
     target_protection_max: float = 0.80   # 下檔保護上限
+
+    # 策略參數 — 0050
+    beta_0050: float = 0.97               # 0050 對加權的 beta
+    lots_0050: int = 2                    # 0050 股期口數
+    lot_size_0050: int = 10000            # 每口受益憑證單位數
 
     # 動態履約價選擇
     delta_target: float = 0.10            # Put/Call delta 絕對值上限
@@ -511,7 +516,9 @@ def main():
         market = fetch_market_snapshot(api)
         price_2330 = market['price_2330']
         taiex = market['taiex']
-        log.info(f'2330: {price_2330} | TAIEX: {taiex}')
+        snap_0050 = api.snapshots([api.Contracts.Stocks.TSE['0050']])[0]
+        price_0050 = float(snap_0050.close)
+        log.info(f'2330: {price_2330} | TAIEX: {taiex} | 0050: {price_0050}')
 
         # 2. K棒指標（ATR / BB / HV）
         indicators = fetch_kbars_2330(api)
@@ -557,7 +564,21 @@ def main():
             beta_adj_ratio=contracts['beta_adjusted_ratio'],
         )
 
-        # 10. 組裝結果
+        # 10. 0050 股期 2口 對應 TXO 領式
+        notional_0050    = CFG.lots_0050 * CFG.lot_size_0050 * price_0050
+        beta_ratio_0050  = (notional_0050 * CFG.beta_0050) / (taiex * 50)
+        n_contracts_0050 = max(1, round(beta_ratio_0050))
+        structures_0050  = build_structures(
+            n_contracts=n_contracts_0050,
+            call_strike=call_c.strike_price,
+            put_strike=put_c.strike_price,
+            call_bid=quotes['call_bid'],
+            put_ask=quotes['put_ask'],
+            beta_adj_ratio=beta_ratio_0050,
+        )
+        log.info(f'0050: {price_0050}  名目={notional_0050:,.0f}  beta_ratio={beta_ratio_0050:.2f}  建議{n_contracts_0050}口TXO')
+
+        # 11. 組裝結果
         result = {
             'timestamp': datetime.now().isoformat(),
             'config': {
@@ -596,9 +617,19 @@ def main():
                 },
             },
             'structures': [asdict(s) for s in structures],
+            'collar_0050': {
+                'price_0050':          price_0050,
+                'lots':                CFG.lots_0050,
+                'lot_size':            CFG.lot_size_0050,
+                'notional':            notional_0050,
+                'beta':                CFG.beta_0050,
+                'beta_adj_ratio':      beta_ratio_0050,
+                'recommended_contracts': n_contracts_0050,
+                'structures':          [asdict(s) for s in structures_0050],
+            },
         }
 
-        # 11. 輸出
+        # 12. 輸出
         log.info('-' * 60)
         log.info('Result:')
         for s in structures:

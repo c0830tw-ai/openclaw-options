@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>OpenClaw Collar Tool</title>
+  <title>2330 0050對應大盤選擇權領口策略</title>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -203,6 +203,43 @@
     }
 
     .countdown { font-size: 11px; color: #334155; }
+
+    /* Section divider */
+    .section-divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 20px 0 14px;
+    }
+    .section-divider .section-title {
+      font-size: 12px;
+      color: #475569;
+      white-space: nowrap;
+      letter-spacing: 0.08em;
+    }
+    .section-divider::before, .section-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: #1e2535;
+    }
+
+    /* 0050 info bar */
+    .info-bar-0050 {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      background: #13192a;
+      border: 1px solid #1e2535;
+      border-radius: 8px;
+      padding: 10px 16px;
+      margin-bottom: 12px;
+      font-size: 12px;
+    }
+    .info-bar-0050 .ib-item { display: flex; flex-direction: column; gap: 2px; }
+    .info-bar-0050 .ib-key { font-size: 10px; color: #475569; }
+    .info-bar-0050 .ib-val { color: #f1f5f9; font-size: 15px; font-weight: 600; }
+    .info-bar-0050 .ib-val.accent { color: #7dd3fc; }
   </style>
 </head>
 <body>
@@ -300,6 +337,45 @@ function StructCard({ s, isRecommended }) {
   );
 }
 
+function Section0050({ collar }) {
+  if (!collar) return null;
+  const { price_0050, lots, lot_size, notional, beta, beta_adj_ratio, recommended_contracts, structures } = collar;
+  return (
+    <>
+      <div className="section-divider">
+        <span className="section-title">0050 股期 {lots} 口 對應台指選擇權領口</span>
+      </div>
+      <div className="info-bar-0050">
+        <div className="ib-item">
+          <span className="ib-key">0050 現價</span>
+          <span className="ib-val">{price_0050?.toFixed(2)}</span>
+        </div>
+        <div className="ib-item">
+          <span className="ib-key">{lots}口名目（{lot_size.toLocaleString()}單位/口）</span>
+          <span className="ib-val">{(notional / 10000).toFixed(0)} 萬</span>
+        </div>
+        <div className="ib-item">
+          <span className="ib-key">Beta vs TAIEX</span>
+          <span className="ib-val">{beta}</span>
+        </div>
+        <div className="ib-item">
+          <span className="ib-key">Beta 調整比例</span>
+          <span className="ib-val">{beta_adj_ratio?.toFixed(2)}</span>
+        </div>
+        <div className="ib-item">
+          <span className="ib-key">建議 TXO 口數</span>
+          <span className="ib-val accent">{recommended_contracts} 口</span>
+        </div>
+      </div>
+      <div className="structures">
+        {structures?.map((s, i) => (
+          <StructCard key={s.name} s={s} isRecommended={i === 0} />
+        ))}
+      </div>
+    </>
+  );
+}
+
 function App() {
   const [data, setData] = React.useState(null);
   const [error, setError] = React.useState(null);
@@ -350,7 +426,7 @@ function App() {
   return (
     <div className="app">
       <div className="header">
-        <h1>OpenClaw Collar Tool</h1>
+        <h1>2330 0050對應大盤選擇權領口策略</h1>
         <div className="header-right">
           {data && <span>更新 {fmtTime(data.timestamp)}</span>}
           <span className="countdown">{countdown}s</span>
@@ -377,6 +453,7 @@ function App() {
               <StructCard key={s.name} s={s} isRecommended={i === 0} />
             ))}
           </div>
+          <Section0050 collar={data.collar_0050} />
         </>
       ) : null}
     </div>
