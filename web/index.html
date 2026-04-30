@@ -35,7 +35,7 @@
     /* Market strip */
     .market-strip {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(5, 1fr);
       gap: 1px;
       background: #1e2535;
       border-radius: 8px;
@@ -220,6 +220,32 @@
       font-size: 13px;
     }
 
+    /* Market status badge */
+    .market-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+    }
+    .market-status.open   { background: #14532d; color: #4ade80; }
+    .market-status.closed { background: #1e2535; color: #475569; }
+    .market-status.pre    { background: #1c1917; color: #78716c; }
+    .market-status .dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+    }
+    .market-status.open .dot   { background: #4ade80; animation: pulse 1.5s infinite; }
+    .market-status.closed .dot { background: #475569; }
+    .market-status.pre .dot    { background: #78716c; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+
     /* Section divider */
     .section-divider {
       display: flex;
@@ -278,6 +304,31 @@ function fmtTime(iso) {
 function fmtNet(n) {
   const wan = n / 10000;
   return (wan >= 0 ? '+' : '') + wan.toFixed(1) + '萬';
+}
+
+function getMarketStatus() {
+  const now = new Date();
+  const day = now.getDay();                          // 0=日, 6=六
+  if (day === 0 || day === 6) return 'closed';
+  const mins = now.getHours() * 60 + now.getMinutes();
+  if (mins < 9 * 60)           return 'pre';        // 開盤前
+  if (mins <= 13 * 60 + 30)    return 'open';       // 盤中
+  return 'closed';                                   // 收盤後
+}
+
+function MarketStatus() {
+  const [status, setStatus] = React.useState(getMarketStatus);
+  React.useEffect(() => {
+    const t = setInterval(() => setStatus(getMarketStatus()), 30000);
+    return () => clearInterval(t);
+  }, []);
+  const labels = { open: '盤中', closed: '收盤', pre: '開盤前' };
+  return (
+    <span className={`market-status ${status}`}>
+      <span className="dot" />
+      {labels[status]}
+    </span>
+  );
 }
 
 function IndicatorBar({ indicators, targets, dte }) {
@@ -350,6 +401,9 @@ function MarketStrip({ market, txo_month }) {
       <div className="market-cell">
         <div className="label">TXO 月份</div>
         <div className="value tag">{txo_month || '—'}</div>
+      </div>
+      <div className="market-cell" style={{display:'flex', alignItems:'center', justifyContent:'center'}}>
+        <MarketStatus />
       </div>
     </div>
   );
