@@ -105,27 +105,96 @@ class CollarStructure:
 
 
 # ============ Helpers ============
+# 內建假日備援清單（holidays 套件安裝失敗時使用）
+_HOLIDAYS_BUILTIN: frozenset = frozenset({
+    '2025-01-01', '2025-01-27', '2025-01-28', '2025-01-29', '2025-01-30', '2025-01-31',
+    '2025-02-28', '2025-04-03', '2025-04-04', '2025-05-01', '2025-05-31',
+    '2025-10-06', '2025-10-10',
+    '2026-01-01', '2026-01-22', '2026-01-23', '2026-01-26', '2026-01-27',
+    '2026-01-28', '2026-01-29', '2026-01-30',
+    '2026-02-28', '2026-04-03', '2026-04-04', '2026-05-01',
+    '2026-06-19', '2026-09-25', '2026-10-09', '2026-10-10',
+})
+
+
+_HOLIDAYS_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'taiwan_holidays_cache.json')
+
+
+def _build_taiwan_holidays() -> frozenset:
+    """每年自動抓一次台灣假日並快取到 taiwan_holidays_cache.json。
+    快取年份不符（跨年）才重新抓，套件未安裝時退回內建清單。"""
+    current_year = datetime.now().year
+
+    # 讀快取：年份相符直接使用
+    if os.path.exists(_HOLIDAYS_CACHE):
+        try:
+            with open(_HOLIDAYS_CACHE, encoding='utf-8') as f:
+                cached = json.load(f)
+            if cached.get('year') == current_year:
+                dates = frozenset(cached['holidays'])
+                log.info(f'台灣假日從快取載入，共 {len(dates)} 個（{current_year} 年）')
+                return dates
+        except Exception:
+            pass  # 快取損壞，繼續重抓
+
+    # 重新抓取
+    years = range(current_year - 1, current_year + 2)
+    try:
+        import holidays as hd
+        result: list = sorted({str(d) for year in years
+                                for d in hd.country_holidays('TW', years=year).keys()})
+        with open(_HOLIDAYS_CACHE, 'w', encoding='utf-8') as f:
+            json.dump({'year': current_year, 'holidays': result}, f,
+                      ensure_ascii=False, indent=2)
+        log.info(f'台灣假日已更新快取，共 {len(result)} 個（{current_year} 年）')
+        return frozenset(result)
+    except ImportError:
+        log.warning('holidays 套件未安裝，使用內建清單（pip install holidays）')
+        return _HOLIDAYS_BUILTIN
+    except Exception as e:
+        log.warning(f'holidays 抓取失敗（{e}），使用內建清單')
+        return _HOLIDAYS_BUILTIN
+
+
+TAIWAN_HOLIDAYS: frozenset = _build_taiwan_holidays()
+
+
+def adjust_settlement(d) -> datetime:
+    """若結算日為假日或週末，順延至下一個交易日。支援 datetime 和 date。"""
+    while d.weekday() >= 5 or d.strftime('%Y-%m-%d') in TAIWAN_HOLIDAYS:
+        d += timedelta(days=1)
+    return d
+
+
 def is_market_hours() -> bool:
     """台股交易時間 09:00-13:30。"""
     now = datetime.now().time()
     return dtime(9, 0) <= now <= dtime(13, 30)
 
 
+def _third_wed_of(dt: datetime) -> datetime:
+    """某月第三個週三。"""
+    first = dt.replace(day=1)
+    days_to_wed = (2 - first.weekday()) % 7
+    return first + timedelta(days=days_to_wed + 14)
+
+
 def get_txo_settlement(today: Optional[datetime] = None) -> Tuple[str, datetime]:
-    """返回 (月份 YYYYMM, 結算日)。結算日為當月第三個週三。"""
+    """返回近月 (月份 YYYYMM, 結算日)。結算日為當月第三個週三，遇假日順延。"""
     today = today or datetime.now()
-
-    def third_wed_of(dt: datetime) -> datetime:
-        first = dt.replace(day=1)
-        days_to_wed = (2 - first.weekday()) % 7
-        return first + timedelta(days=days_to_wed + 14)
-
-    settlement = third_wed_of(today)
+    settlement = adjust_settlement(_third_wed_of(today))
     if (settlement.date() - today.date()).days < CFG.days_to_next_month:
         next_month = (today.replace(day=28) + timedelta(days=4)).replace(day=1)
-        settlement = third_wed_of(next_month)
+        settlement = adjust_settlement(_third_wed_of(next_month))
         return next_month.strftime('%Y%m'), settlement
     return today.strftime('%Y%m'), settlement
+
+
+def get_far_month_settlement(near_settlement: datetime) -> Tuple[str, datetime]:
+    """近月結算日後的下一個月份（遠月）。遇假日順延。"""
+    next_month = (near_settlement.replace(day=28) + timedelta(days=4)).replace(day=1)
+    far_settlement = adjust_settlement(_third_wed_of(next_month))
+    return next_month.strftime('%Y%m'), far_settlement
 
 
 def get_target_txo_month(today: Optional[datetime] = None) -> str:
@@ -169,15 +238,19 @@ def _norm_cdf(x: float) -> float:
     return (1 + math.erf(x / math.sqrt(2))) / 2
 
 
-def bs_delta(S: float, K: float, T: float, sigma: float, is_put: bool) -> float:
+def bs_delta(S: float, K: float, T: float, sigma: float, is_put: bool,
+             r: Optional[float] = None) -> float:
     """
-    S: 標的現價（TAIEX）  K: 履約價  T: 到期年數
-    sigma: 年化波動率     returns: put delta（負值）或 call delta（正值）
+    S: 標的現價（TAIEX 現貨或 TX 期貨）  K: 履約價  T: 到期年數
+    sigma: 年化波動率  r: 無風險利率（傳 0.0 即 Black-76 期貨定價）
+    returns: put delta（負值）或 call delta（正值）
     """
     if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
         return 0.0
+    if r is None:
+        r = CFG.risk_free_rate
     try:
-        d1 = (math.log(S / K) + (CFG.risk_free_rate + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+        d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
         return _norm_cdf(d1) - 1 if is_put else _norm_cdf(d1)
     except (ValueError, ZeroDivisionError):
         return 0.0
@@ -231,13 +304,18 @@ def find_strike_with_delta(
     hv_taiex: float,
     opt_right,
     preferred_strike: float,
+    s_price: Optional[float] = None,
+    r: Optional[float] = None,
 ) -> Any:
     """
     從合約鏈挑履約價：
       1. 以 preferred_strike 為起點
       2. 往 OTM 方向走，找第一個 abs(delta) <= delta_target 的合約
       3. 全部超標時退回最 OTM 選項
+    s_price: B-S 用的標的價格（傳 TX 期貨即 Black-76；不傳則用 taiex）
+    r:       無風險利率（傳 0.0 對應 Black-76；不傳則用 CFG.risk_free_rate）
     """
+    S      = s_price if s_price is not None else taiex
     is_put = (opt_right == OptionRight.Put)
     candidates = [c for c in contracts if c.option_right == opt_right]
     if not candidates:
@@ -261,14 +339,14 @@ def find_strike_with_delta(
 
     label = 'Put' if is_put else 'Call'
     for contract in search:
-        d = bs_delta(taiex, contract.strike_price, T, hv_taiex, is_put)
+        d = bs_delta(S, contract.strike_price, T, hv_taiex, is_put, r=r)
         if abs(d) <= CFG.delta_target:
             log.info(f'  {label} {contract.strike_price:.0f}: delta={d:+.3f} ✓')
             return contract
         log.debug(f'  {label} {contract.strike_price:.0f}: delta={d:+.3f} > {CFG.delta_target}，往 OTM 移')
 
     fallback = search[-1]
-    d = bs_delta(taiex, fallback.strike_price, T, hv_taiex, is_put)
+    d = bs_delta(S, fallback.strike_price, T, hv_taiex, is_put, r=r)
     log.warning(f'  {label} delta 全超標，取最 OTM {fallback.strike_price:.0f}: delta={d:+.3f}')
     return fallback
 
@@ -453,21 +531,114 @@ def fetch_hv_tx(api, month: str) -> Optional[float]:
 
 
 def fetch_market_snapshot(api):
-    """抓 2330 和加權指數。"""
-    c_2330 = api.Contracts.Stocks.TSE['2330']
-    c_taiex = api.Contracts.Indexs.TSE['TSE001']  # 加權指數
+    """抓 2330、加權指數現貨，以及 TX 近月期貨。"""
+    c_2330  = api.Contracts.Stocks.TSE['2330']
+    c_taiex = api.Contracts.Indexs.TSE['TSE001']
 
     snaps = api.snapshots([c_2330, c_taiex])
     snap_2330, snap_taiex = snaps[0], snaps[1]
+    taiex = float(snap_taiex.close)
+
+    # TX 近月期貨（Black-76 定價基準）
+    tx_futures = None
+    try:
+        today_month = datetime.now().strftime('%Y%m')
+        near_tx = next(
+            (c for c in sorted(api.Contracts.Futures.TX, key=lambda c: c.delivery_month)
+             if c.delivery_month >= today_month),
+            None
+        )
+        if near_tx:
+            tx_snap = api.snapshots([near_tx])[0]
+            tx_futures = float(tx_snap.close) if tx_snap.close else None
+            log.info(f'TX 期貨 {near_tx.symbol}: {tx_futures}  '
+                     f'基差 {tx_futures - taiex:+.1f}' if tx_futures else '')
+    except Exception as e:
+        log.warning(f'TX 期貨報價失敗（{e}），落回現貨')
 
     return {
-        'price_2330': float(snap_2330.close),
+        'price_2330':      float(snap_2330.close),
         'price_2330_open': float(snap_2330.open) if snap_2330.open else None,
         'price_2330_high': float(snap_2330.high) if snap_2330.high else None,
-        'price_2330_low': float(snap_2330.low) if snap_2330.low else None,
-        'taiex': float(snap_taiex.close),
-        'volume_2330': int(snap_2330.volume) if snap_2330.volume else 0,
+        'price_2330_low':  float(snap_2330.low)  if snap_2330.low  else None,
+        'taiex':           taiex,
+        'tx_futures':      tx_futures,
+        'volume_2330':     int(snap_2330.volume) if snap_2330.volume else 0,
     }
+
+
+def _nth_weekday_of_month(year: int, month: int, weekday: int, n: int):
+    """某月第 n 個指定星期幾（weekday: 0=Mon, 2=Wed, 4=Fri）。
+    若該月沒有第 n 個（如某月只有 4 個週五），回傳 None。"""
+    first = datetime(year, month, 1)
+    days_to_wd = (weekday - first.weekday()) % 7
+    result = first + timedelta(days=days_to_wd + 7 * (n - 1))
+    return result.date() if result.month == month else None
+
+
+def _build_weekly_candidates(series_map: dict, weekday: int,
+                             month_offsets: int = 2) -> list:
+    """產生指定星期幾的週選候選清單，按結算日排序。"""
+    today = datetime.now().date()
+    candidates = []
+    for offset in range(month_offsets):
+        base = datetime.now()
+        if offset > 0:
+            base = (base.replace(day=28) + timedelta(days=4)).replace(day=1)
+        y, m = base.year, base.month
+        month_str = f'{y}{m:02d}'
+        for n, series in series_map.items():
+            d = _nth_weekday_of_month(y, m, weekday, n)
+            if not d:
+                continue
+            adj = adjust_settlement(d)
+            if adj > today:
+                candidates.append((adj, d, series, month_str))
+    candidates.sort()
+    return candidates
+
+
+def _pick_weekly_chain(api, candidates: list, label: str) -> Optional[dict]:
+    """從候選清單找第一個有合約的週選，回傳 chain info。"""
+    today = datetime.now().date()
+    log.info(f'{label} 候選: {[(str(a), str(o), s) for a, o, s, _ in candidates[:4]]}')
+    for adj_date, orig_date, series, month_str in candidates[:6]:
+        try:
+            series_contracts = list(getattr(api.Contracts.Options, series))
+            chain = [c for c in series_contracts if c.delivery_month == month_str]
+            if chain:
+                dte = (adj_date - today).days
+                suffix = f'（假日順延自 {orig_date}）' if adj_date != orig_date else ''
+                log.info(f'{label} 確認: {series} {adj_date}{suffix}  DTE: {dte}  合約數: {len(chain)}')
+                return {
+                    'delivery_month': orig_date.strftime('%Y%m%d'),
+                    'settlement_date': adj_date.strftime('%Y%m%d'),
+                    'series': series,
+                    'dte': dte,
+                    'chain': chain,
+                }
+            log.debug(f'{label} {series} {month_str} 無合約，繼續')
+        except AttributeError:
+            log.debug(f'api.Contracts.Options.{series} 不存在，跳過')
+        except Exception as e:
+            log.debug(f'{label} {series} 失敗: {e}')
+    log.warning(f'{label}：所有候選均無合約或無法存取')
+    return None
+
+
+def get_nearest_weekly_wed(api, monthly_settlement_date) -> Optional[dict]:
+    """找最近的週三週選 (TX1/TX2/TX4/TX5)，跳過月選結算日（第3週）。"""
+    WED = {1: 'TX1', 2: 'TX2', 4: 'TX4', 5: 'TX5'}
+    candidates = [c for c in _build_weekly_candidates(WED, weekday=2)
+                  if c[1] != monthly_settlement_date]
+    return _pick_weekly_chain(api, candidates, '週三')
+
+
+def get_nearest_weekly_fri(api) -> Optional[dict]:
+    """找最近的週五週選 (TXU/TXV/TXX/TXY/TXZ)。"""
+    FRI = {1: 'TXU', 2: 'TXV', 3: 'TXX', 4: 'TXY', 5: 'TXZ'}
+    candidates = _build_weekly_candidates(FRI, weekday=4)
+    return _pick_weekly_chain(api, candidates, '週五')
 
 
 def fetch_txo_chain(api, month: str) -> list:
@@ -557,11 +728,16 @@ def main():
     try:
         # 1. 抓現價
         market = fetch_market_snapshot(api)
-        price_2330 = market['price_2330']
-        taiex = market['taiex']
-        snap_0050 = api.snapshots([api.Contracts.Stocks.TSE['0050']])[0]
-        price_0050 = float(snap_0050.close)
-        log.info(f'2330: {price_2330} | TAIEX: {taiex} | 0050: {price_0050}')
+        price_2330  = market['price_2330']
+        taiex       = market['taiex']
+        tx_futures  = market.get('tx_futures') or taiex   # Black-76 定價基準
+        bs_s        = tx_futures                           # S for all delta calcs
+        bs_r        = 0.0 if market.get('tx_futures') else None  # Black-76 r=0
+        snap_0050   = api.snapshots([api.Contracts.Stocks.TSE['0050']])[0]
+        price_0050  = float(snap_0050.close)
+        basis       = tx_futures - taiex if market.get('tx_futures') else 0.0
+        log.info(f'2330: {price_2330} | TAIEX現: {taiex} | TX期: {tx_futures} '
+                 f'基差: {basis:+.1f} | 0050: {price_0050}')
 
         # 2. K棒指標（ATR / BB / HV）
         indicators = fetch_kbars_2330(api)
@@ -594,12 +770,12 @@ def main():
         # 7. 選履約價（含 delta 過濾）
         hv_taiex = indicators['hv_taiex'] if indicators else 0.20
         T = dte / 365
-        log.info(f'Delta 篩選: target ≤ {CFG.delta_target}  HV_TAIEX={hv_taiex:.1%}  T={T:.3f}y')
-        put_c  = find_strike_with_delta(chain, taiex, T, hv_taiex, OptionRight.Put,  targets['put_strike'])
-        call_c = find_strike_with_delta(chain, taiex, T, hv_taiex, OptionRight.Call, targets['call_strike'])
+        log.info(f'Delta 篩選: target ≤ {CFG.delta_target}  HV_TAIEX={hv_taiex:.1%}  T={T:.3f}y  S={bs_s}')
+        put_c  = find_strike_with_delta(chain, taiex, T, hv_taiex, OptionRight.Put,  targets['put_strike'],  s_price=bs_s, r=bs_r)
+        call_c = find_strike_with_delta(chain, taiex, T, hv_taiex, OptionRight.Call, targets['call_strike'], s_price=bs_s, r=bs_r)
 
-        put_delta  = bs_delta(taiex, put_c.strike_price,  T, hv_taiex, is_put=True)
-        call_delta = bs_delta(taiex, call_c.strike_price, T, hv_taiex, is_put=False)
+        put_delta  = bs_delta(bs_s, put_c.strike_price,  T, hv_taiex, is_put=True,  r=bs_r)
+        call_delta = bs_delta(bs_s, call_c.strike_price, T, hv_taiex, is_put=False, r=bs_r)
         log.info(f'最終: Put {put_c.strike_price:.0f} (δ={put_delta:+.3f})  Call {call_c.strike_price:.0f} (δ={call_delta:+.3f})')
 
         # 8. 抓選擇權報價
@@ -629,6 +805,137 @@ def main():
             beta_adj_ratio=beta_ratio_0050,
         )
         log.info(f'0050: {price_0050}  名目={notional_0050:,.0f}  beta_ratio={beta_ratio_0050:.2f}  建議{n_contracts_0050}口TXO')
+
+        # 10b. 遠月建議（結算日換倉目標）
+        far_month_data = None
+        try:
+            far_month, far_settlement_dt = get_far_month_settlement(settlement_dt)
+            far_dte = max(0, (far_settlement_dt.date() - datetime.now().date()).days)
+            log.info(f'遠月 TXO: {far_month}  結算: {far_settlement_dt.date()}  DTE: {far_dte}')
+
+            far_targets = compute_target_strikes(price_2330, taiex, indicators, far_dte)
+            log.info(f"遠月目標: Put @ {far_targets['put_strike']}  Call @ {far_targets['call_strike']}")
+
+            far_chain = fetch_txo_chain(api, far_month)
+            far_T     = far_dte / 365
+            far_put_c  = find_strike_with_delta(far_chain, taiex, far_T, hv_taiex, OptionRight.Put,  far_targets['put_strike'],  s_price=bs_s, r=bs_r)
+            far_call_c = find_strike_with_delta(far_chain, taiex, far_T, hv_taiex, OptionRight.Call, far_targets['call_strike'], s_price=bs_s, r=bs_r)
+
+            far_put_delta  = bs_delta(bs_s, far_put_c.strike_price,  far_T, hv_taiex, is_put=True,  r=bs_r)
+            far_call_delta = bs_delta(bs_s, far_call_c.strike_price, far_T, hv_taiex, is_put=False, r=bs_r)
+            log.info(f'遠月最終: Put {far_put_c.strike_price:.0f} (δ={far_put_delta:+.3f})  Call {far_call_c.strike_price:.0f} (δ={far_call_delta:+.3f})')
+
+            far_quotes     = fetch_option_quotes(api, far_put_c, far_call_c)
+            far_structures = build_structures(
+                n_contracts=contracts['recommended_contracts'],
+                call_strike=far_call_c.strike_price,
+                put_strike=far_put_c.strike_price,
+                call_bid=far_quotes['call_bid'],
+                put_ask=far_quotes['put_ask'],
+                beta_adj_ratio=contracts['beta_adjusted_ratio'],
+            )
+            far_month_data = {
+                'txo_month': far_month,
+                'dte':       far_dte,
+                'targets': {
+                    'target_put_strike':  far_targets['put_strike'],
+                    'target_call_strike': far_targets['call_strike'],
+                    'method':             far_targets['method'],
+                },
+                'selected_options': {
+                    'put': {
+                        'strike': far_put_c.strike_price,
+                        'symbol': far_put_c.symbol,
+                        'delta':  round(far_put_delta, 4),
+                        'ask':    far_quotes['put_ask'],
+                        'bid':    far_quotes['put_bid'],
+                        'mid':    far_quotes['put_mid'],
+                        'volume': far_quotes['put_volume'],
+                    },
+                    'call': {
+                        'strike': far_call_c.strike_price,
+                        'symbol': far_call_c.symbol,
+                        'delta':  round(far_call_delta, 4),
+                        'ask':    far_quotes['call_ask'],
+                        'bid':    far_quotes['call_bid'],
+                        'mid':    far_quotes['call_mid'],
+                        'volume': far_quotes['call_volume'],
+                    },
+                },
+                'structures': [asdict(s) for s in far_structures],
+            }
+        except Exception as e:
+            log.warning(f'遠月計算失敗（{e}），略過')
+
+        def _calc_weekly(w_info: dict, label: str) -> Optional[dict]:
+            if not w_info:
+                return None
+            w_dte   = w_info['dte']
+            w_chain = w_info['chain']
+            w_T     = max(w_dte, 1) / 365
+            w_tgt   = compute_target_strikes(price_2330, taiex, indicators, w_dte)
+            w_put_c  = find_strike_with_delta(w_chain, taiex, w_T, hv_taiex, OptionRight.Put,  w_tgt['put_strike'],  s_price=bs_s, r=bs_r)
+            w_call_c = find_strike_with_delta(w_chain, taiex, w_T, hv_taiex, OptionRight.Call, w_tgt['call_strike'], s_price=bs_s, r=bs_r)
+            w_pd = bs_delta(bs_s, w_put_c.strike_price,  w_T, hv_taiex, is_put=True,  r=bs_r)
+            w_cd = bs_delta(bs_s, w_call_c.strike_price, w_T, hv_taiex, is_put=False, r=bs_r)
+            log.info(f'{label} 最終: Put {w_put_c.strike_price:.0f} (δ={w_pd:+.3f})  Call {w_call_c.strike_price:.0f} (δ={w_cd:+.3f})')
+            w_q = fetch_option_quotes(api, w_put_c, w_call_c)
+            w_structs = build_structures(
+                n_contracts=contracts['recommended_contracts'],
+                call_strike=w_call_c.strike_price,
+                put_strike=w_put_c.strike_price,
+                call_bid=w_q['call_bid'],
+                put_ask=w_q['put_ask'],
+                beta_adj_ratio=contracts['beta_adjusted_ratio'],
+            )
+            return {
+                'delivery_month': w_info['delivery_month'],
+                'settlement_date': w_info['settlement_date'],
+                'series': w_info['series'],
+                'dte': w_dte,
+                'targets': {
+                    'target_put_strike':  w_tgt['put_strike'],
+                    'target_call_strike': w_tgt['call_strike'],
+                    'method':             w_tgt['method'],
+                },
+                'selected_options': {
+                    'put': {
+                        'strike': w_put_c.strike_price,
+                        'symbol': w_put_c.symbol,
+                        'delta':  round(w_pd, 4),
+                        'ask':    w_q['put_ask'],
+                        'bid':    w_q['put_bid'],
+                        'mid':    w_q['put_mid'],
+                        'volume': w_q['put_volume'],
+                    },
+                    'call': {
+                        'strike': w_call_c.strike_price,
+                        'symbol': w_call_c.symbol,
+                        'delta':  round(w_cd, 4),
+                        'ask':    w_q['call_ask'],
+                        'bid':    w_q['call_bid'],
+                        'mid':    w_q['call_mid'],
+                        'volume': w_q['call_volume'],
+                    },
+                },
+                'structures': [asdict(s) for s in w_structs],
+            }
+
+        # 10c. 週三週選
+        weekly_wed_data = None
+        try:
+            weekly_wed_data = _calc_weekly(
+                get_nearest_weekly_wed(api, settlement_dt.date()), '週三')
+        except Exception as e:
+            log.warning(f'週三週選計算失敗（{e}），略過')
+
+        # 10d. 週五週選
+        weekly_fri_data = None
+        try:
+            weekly_fri_data = _calc_weekly(
+                get_nearest_weekly_fri(api), '週五')
+        except Exception as e:
+            log.warning(f'週五週選計算失敗（{e}），略過')
 
         # 11. 組裝結果
         result = {
@@ -679,6 +986,9 @@ def main():
                 'recommended_contracts': n_contracts_0050,
                 'structures':          [asdict(s) for s in structures_0050],
             },
+            'far_month':   far_month_data,
+            'weekly_wed':  weekly_wed_data,
+            'weekly_fri':  weekly_fri_data,
         }
 
         # 12. 輸出

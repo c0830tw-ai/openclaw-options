@@ -18,6 +18,9 @@
       min-height: 100vh;
       padding: 20px;
     }
+    @media (max-width: 600px) {
+      body { padding: 12px 10px; font-size: 13px; }
+    }
 
     .app { max-width: 900px; margin: 0 auto; }
 
@@ -25,31 +28,45 @@
     .header {
       display: flex;
       justify-content: space-between;
-      align-items: center;
+      align-items: flex-start;
       padding: 12px 0 16px;
       border-bottom: 1px solid #1e2535;
       margin-bottom: 16px;
+      gap: 8px;
     }
-    .header h1 { font-size: 18px; color: #7dd3fc; letter-spacing: 0.05em; }
-    .header-right { display: flex; align-items: center; gap: 12px; color: #64748b; font-size: 12px; }
+    .header h1 { font-size: 18px; color: #7dd3fc; letter-spacing: 0.05em; line-height: 1.3; }
+    .header-right { display: flex; align-items: center; gap: 12px; color: #64748b; font-size: 12px; white-space: nowrap; }
+    @media (max-width: 600px) {
+      .header h1 { font-size: 15px; }
+    }
     /* Market strip */
     .market-strip {
       display: grid;
-      grid-template-columns: repeat(5, 1fr);
+      grid-template-columns: repeat(6, 1fr);
       gap: 1px;
       background: #1e2535;
       border-radius: 8px;
       overflow: hidden;
       margin-bottom: 16px;
     }
+    @media (max-width: 600px) {
+      .market-strip { grid-template-columns: repeat(3, 1fr); }
+    }
     .market-cell {
       background: #13192a;
       padding: 12px 16px;
+    }
+    @media (max-width: 600px) {
+      .market-cell { padding: 10px 12px; }
     }
     .market-cell .label { font-size: 11px; color: #475569; margin-bottom: 4px; }
     .market-cell .value { font-size: 20px; font-weight: 600; color: #f1f5f9; }
     .market-cell .value.down { color: #f87171; }
     .market-cell .value.tag { font-size: 14px; color: #7dd3fc; }
+    @media (max-width: 600px) {
+      .market-cell .value { font-size: 16px; }
+      .market-cell .value.tag { font-size: 13px; }
+    }
 
     /* Indicator bar */
     .indicator-bar {
@@ -68,7 +85,10 @@
       flex-direction: column;
       gap: 3px;
       flex: 1;
-      min-width: 80px;
+      min-width: 72px;
+    }
+    @media (max-width: 600px) {
+      .ind-cell { min-width: 60px; padding: 7px 10px; }
     }
     .ind-cell .ind-key { font-size: 10px; color: #475569; }
     .ind-cell .ind-val { font-size: 13px; color: #cbd5e1; font-weight: 600; }
@@ -87,6 +107,9 @@
       grid-template-columns: 1fr 1fr;
       gap: 8px;
       margin-bottom: 16px;
+    }
+    @media (max-width: 480px) {
+      .options-row { grid-template-columns: 1fr; }
     }
     .option-card {
       background: #13192a;
@@ -145,6 +168,11 @@
 
     /* Structure cards */
     .structures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    @media (max-width: 600px) {
+      .structures { grid-template-columns: 1fr; }
+      /* compact cards (週選/遠月/0050) 手機上 2欄 */
+      .structures.compact-grid { grid-template-columns: repeat(2, 1fr); }
+    }
     .struct-card {
       background: #13192a;
       border: 1px solid #1e2535;
@@ -177,6 +205,10 @@
       font-size: 24px;
       font-weight: 700;
       margin-bottom: 4px;
+    }
+    @media (max-width: 600px) {
+      .struct-net { font-size: 20px; }
+      .struct-legs { font-size: 17px; }
     }
     .struct-net.credit { color: #4ade80; }
     .struct-net.debit { color: #f87171; }
@@ -295,6 +327,7 @@
       color: #475569;
       white-space: nowrap;
       letter-spacing: 0.08em;
+      font-weight: 600;
     }
     .section-divider::before, .section-divider::after {
       content: '';
@@ -302,12 +335,23 @@
       height: 1px;
       background: #1e2535;
     }
+    /* 各區段色彩 */
+    .section-divider.near    .section-title { color: #7dd3fc; }
+    .section-divider.weekly  .section-title { color: #c4b5fd; }
+    .section-divider.far     .section-title { color: #5eead4; }
+    .section-divider.etf     .section-title { color: #fcd34d; }
+    /* 緊湊結構卡（週選/遠月/0050 用） */
+    .struct-card.compact .struct-strikes { display: none; }
+    .struct-card.compact .struct-legs    { font-size: 15px; margin-bottom: 8px; }
+    .struct-card.compact .struct-net     { font-size: 18px; margin-bottom: 4px; }
+    .struct-card.compact .struct-protection { margin-bottom: 4px; }
 
     /* 0050 info bar */
     .info-bar-0050 {
       display: flex;
       align-items: center;
-      gap: 20px;
+      flex-wrap: wrap;
+      gap: 16px 20px;
       background: #13192a;
       border: 1px solid #1e2535;
       border-radius: 8px;
@@ -454,11 +498,13 @@ function IndicatorBar({ indicators, targets, dte }) {
 }
 
 function MarketStrip({ market, txo_month }) {
-  const price = market?.price_2330;
-  const open = market?.price_2330_open;
-  const taiex = market?.taiex;
-  const vol = market?.volume_2330;
-  const isDown = open && price < open;
+  const price      = market?.price_2330;
+  const open       = market?.price_2330_open;
+  const taiex      = market?.taiex;
+  const txFutures  = market?.tx_futures;
+  const basis      = txFutures != null && taiex ? txFutures - taiex : null;
+  const vol        = market?.volume_2330;
+  const isDown     = open && price < open;
 
   return (
     <div className="market-strip">
@@ -467,8 +513,20 @@ function MarketStrip({ market, txo_month }) {
         <div className={`value ${isDown ? 'down' : ''}`}>{price ? fmt(price) : '—'}</div>
       </div>
       <div className="market-cell">
-        <div className="label">加權指數 TAIEX</div>
+        <div className="label">加權現貨 TAIEX</div>
         <div className="value">{taiex ? fmt(taiex, 2) : '—'}</div>
+      </div>
+      <div className="market-cell">
+        <div className="label">
+          TX 期貨
+          {basis != null && (
+            <span style={{marginLeft:'6px', fontSize:'10px',
+              color: basis >= 0 ? '#86efac' : '#fca5a5'}}>
+              {basis >= 0 ? '+' : ''}{basis.toFixed(0)}
+            </span>
+          )}
+        </div>
+        <div className="value">{txFutures ? fmt(txFutures, 2) : <span style={{color:'#334155'}}>—</span>}</div>
       </div>
       <div className="market-cell">
         <div className="label">成交量（張）</div>
@@ -520,13 +578,13 @@ function OptionCard({ type, data, taiex }) {
   );
 }
 
-function StructCard({ s, isRecommended, taiex }) {
+function StructCard({ s, isRecommended, taiex, compact = false }) {
   const pct     = Math.min(100, s.protection_pct);
   const putDist = s.puts > 0 && taiex > 0
     ? (s.put_strike - taiex) / taiex * 100
     : null;
   return (
-    <div className={`struct-card ${isRecommended ? 'recommended' : ''}`}>
+    <div className={`struct-card ${isRecommended ? 'recommended' : ''} ${compact ? 'compact' : ''}`}>
       {isRecommended && <div className="recommended-badge">推薦</div>}
       <div className="struct-name">{s.name}</div>
       <div className="struct-desc">{s.desc}</div>
@@ -555,12 +613,78 @@ function StructCard({ s, isRecommended, taiex }) {
   );
 }
 
+function SectionNear({ data, taiex }) {
+  return (
+    <>
+      <div className="section-divider near">
+        <span className="section-title">近月 {data.txo_month} · DTE {data.dte} 天</span>
+      </div>
+      <div className="options-row">
+        <OptionCard type="put"  data={data.selected_options?.put}  taiex={taiex} />
+        <OptionCard type="call" data={data.selected_options?.call} taiex={taiex} />
+      </div>
+      <div className="structures">
+        {data.structures?.map((s, i) => (
+          <StructCard key={s.name} s={s} isRecommended={i === 0} taiex={taiex} />
+        ))}
+      </div>
+    </>
+  );
+}
+
+function SectionWeekly({ weekly, label, taiex }) {
+  if (!weekly) return null;
+  const { delivery_month, settlement_date, series, dte, selected_options, structures } = weekly;
+  const fmt8 = d => d ? `${d.slice(0,4)}/${d.slice(4,6)}/${d.slice(6,8)}` : d;
+  const origLabel = fmt8(delivery_month);
+  const adjLabel  = settlement_date && settlement_date !== delivery_month ? fmt8(settlement_date) : null;
+  return (
+    <>
+      <div className="section-divider weekly">
+        <span className="section-title">
+          {label} {series} · {origLabel}{adjLabel ? ` → 結算 ${adjLabel}` : ''} · DTE {dte} 天
+        </span>
+      </div>
+      <div className="options-row">
+        <OptionCard type="put"  data={selected_options?.put}  taiex={taiex} />
+        <OptionCard type="call" data={selected_options?.call} taiex={taiex} />
+      </div>
+      <div className="structures compact-grid">
+        {structures?.map((s, i) => (
+          <StructCard key={s.name} s={s} isRecommended={i === 0} taiex={taiex} compact />
+        ))}
+      </div>
+    </>
+  );
+}
+
+function SectionFarMonth({ farMonth, taiex }) {
+  if (!farMonth) return null;
+  const { txo_month, dte, selected_options, structures } = farMonth;
+  return (
+    <>
+      <div className="section-divider far">
+        <span className="section-title">遠月 {txo_month} · DTE {dte} 天 · 結算日換倉目標</span>
+      </div>
+      <div className="options-row">
+        <OptionCard type="put"  data={selected_options?.put}  taiex={taiex} />
+        <OptionCard type="call" data={selected_options?.call} taiex={taiex} />
+      </div>
+      <div className="structures compact-grid">
+        {structures?.map((s, i) => (
+          <StructCard key={s.name} s={s} isRecommended={i === 0} taiex={taiex} compact />
+        ))}
+      </div>
+    </>
+  );
+}
+
 function Section0050({ collar, taiex }) {
   if (!collar) return null;
   const { price_0050, lots, lot_size, notional, beta, beta_adj_ratio, recommended_contracts, structures } = collar;
   return (
     <>
-      <div className="section-divider">
+      <div className="section-divider etf">
         <span className="section-title">0050 股期 {lots} 口 對應台指選擇權領口</span>
       </div>
       <div className="info-bar-0050">
@@ -585,9 +709,9 @@ function Section0050({ collar, taiex }) {
           <span className="ib-val accent">{recommended_contracts} 口</span>
         </div>
       </div>
-      <div className="structures">
+      <div className="structures compact-grid">
         {structures?.map((s, i) => (
-          <StructCard key={s.name} s={s} isRecommended={i === 0} taiex={taiex} />
+          <StructCard key={s.name} s={s} isRecommended={i === 0} taiex={taiex} compact />
         ))}
       </div>
     </>
@@ -649,7 +773,7 @@ function App() {
       {loading && !data ? (
         <div className="state-box">
           <div className="spinner" />
-          <p>{refreshing ? '向永豐抓取最新報價…' : '連接 Firebase…'}</p>
+          <p>{refreshing ? '向永豐抓取最新報價…' : '讀取本機資料…'}</p>
         </div>
       ) : data ? (
         <>
@@ -657,15 +781,16 @@ function App() {
           <DTEWarning dte={data.dte} />
           <IndicatorBar indicators={data.indicators} targets={data.targets} dte={data.dte} />
           <MarketHoursNote />
-          <div className="options-row">
-            <OptionCard type="put" data={data.selected_options?.put} taiex={data.market?.taiex} />
-            <OptionCard type="call" data={data.selected_options?.call} taiex={data.market?.taiex} />
-          </div>
-          <div className="structures">
-            {data.structures?.map((s, i) => (
-              <StructCard key={s.name} s={s} isRecommended={i === 0} taiex={data.market?.taiex} />
-            ))}
-          </div>
+          {(() => {
+            const taiex = data.market?.taiex;
+            const sections = [
+              { dte: data.dte,                  key: 'near',      el: <SectionNear    data={data}                      taiex={taiex} /> },
+              data.weekly_wed && { dte: data.weekly_wed.dte, key: 'weekly_wed', el: <SectionWeekly weekly={data.weekly_wed} label="週三週選" taiex={taiex} /> },
+              data.weekly_fri && { dte: data.weekly_fri.dte, key: 'weekly_fri', el: <SectionWeekly weekly={data.weekly_fri} label="週五週選" taiex={taiex} /> },
+              data.far_month  && { dte: data.far_month.dte,  key: 'far',        el: <SectionFarMonth farMonth={data.far_month}              taiex={taiex} /> },
+            ].filter(Boolean).sort((a, b) => a.dte - b.dte);
+            return sections.map(s => <React.Fragment key={s.key}>{s.el}</React.Fragment>);
+          })()}
           <Section0050 collar={data.collar_0050} taiex={data.market?.taiex} />
           <div style={{
             marginTop:'24px', padding:'12px 0',

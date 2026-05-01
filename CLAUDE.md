@@ -33,7 +33,7 @@ collar-trading/
 
 ```bash
 # 安裝依賴
-python3 -m pip install shioaji firebase-admin
+python3 -m pip install shioaji firebase-admin holidays
 
 # 複製並填入金鑰
 cp .env.example .env
