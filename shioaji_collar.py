@@ -196,15 +196,16 @@ def compute_target_strikes(
         mult = CFG.atr_mult_base * (0.75 + 0.25 * min(dte, 20) / 20)
         atr  = indicators['atr']
 
-        # Put：BB 下軌 vs ATR 下界，取較低者（更保守），但必須 < 現價
+        # Put：BB 下軌 vs ATR 下界，取較近現價者（ATR 反映近期波動，BB 反映歷史範圍）
+        # 取 max 避免兩個指標疊加都往 OTM 推，讓 delta filter 做最終篩選
         put_2330_bb  = min(indicators['bb_lower'], price_2330 - 1)
         put_2330_atr = price_2330 - mult * atr
-        put_2330     = min(put_2330_bb, put_2330_atr)
+        put_2330     = max(put_2330_bb, put_2330_atr)
 
-        # Call：BB 上軌 vs ATR 上界，取較高者（更保守），但必須 > 現價
+        # Call：BB 上軌 vs ATR 上界，取較近現價者
         call_2330_bb  = max(indicators['bb_upper'], price_2330 + 1)
         call_2330_atr = price_2330 + mult * atr
-        call_2330     = max(call_2330_bb, call_2330_atr)
+        call_2330     = min(call_2330_bb, call_2330_atr)
 
         r_put  = (put_2330  - price_2330) / price_2330
         r_call = (call_2330 - price_2330) / price_2330
@@ -332,7 +333,7 @@ def build_structures(
 
     return [
         make('symmetric', '對稱領式 NC/NP', n_contracts, n_contracts),
-        make('skewed', '偏賣方 2C/1P', n_contracts, max(1, n_contracts // 2)),
+        make('skewed', f'偏賣方 {n_contracts}C/{max(1, n_contracts // 2)}P', n_contracts, max(1, n_contracts // 2)),
         make('covered_call', '純 Covered Call', n_contracts, 0),
     ]
 
@@ -406,6 +407,48 @@ def fetch_kbars_2330(api) -> Optional[dict]:
         }
     except Exception as e:
         log.warning(f'kbar 抓取失敗（{e}），退回靜態備援')
+        return None
+
+
+def fetch_hv_tx(api, month: str) -> Optional[float]:
+    """
+    抓台指期近月 K 棒，直接計算 TAIEX 年化歷史波動率。
+    比 hv_2330/beta 代理更準確：排除台積電個股波動的干擾。
+    失敗時回傳 None，主流程退回 hv_2330/beta 代理。
+    """
+    try:
+        all_tx = list(api.Contracts.Futures.TX)
+        candidates = sorted(
+            [c for c in all_tx if c.delivery_month >= month],
+            key=lambda c: c.delivery_month,
+        )
+        if not candidates:
+            log.warning('找不到 TX 合約，HV 退回 2330/beta 代理')
+            return None
+
+        contract = candidates[0]
+        log.info(f'TX HV 來源: {contract.symbol} ({contract.delivery_month})')
+
+        end_dt   = datetime.now()
+        start_dt = end_dt - timedelta(days=int(CFG.bb_period * 1.5 * 7 / 5) + 10)
+        kbars = api.kbars(
+            contract=contract,
+            start=start_dt.strftime('%Y-%m-%d'),
+            end=end_dt.strftime('%Y-%m-%d'),
+        )
+        daily  = _resample_daily(kbars)
+        closes = daily['Close']
+        n_days = daily['days']
+
+        if n_days < CFG.bb_period // 2:
+            log.warning(f'TX 日K不足（{n_days} 天），退回 2330/beta 代理')
+            return None
+
+        hv = _calc_hv(closes, CFG.bb_period)
+        log.info(f'TX 日K {n_days} 根  HV_TAIEX={hv:.1%}（直接計算）')
+        return hv
+    except Exception as e:
+        log.warning(f'TX kbar 失敗（{e}），退回 2330/beta 代理')
         return None
 
 
@@ -527,6 +570,15 @@ def main():
         month, settlement_dt = get_txo_settlement()
         dte = max(0, (settlement_dt.date() - datetime.now().date()).days)
         log.info(f'TXO month: {month}  結算: {settlement_dt.date()}  DTE: {dte}')
+
+        # 3b. 嘗試用 TX 期貨直接計算 TAIEX HV（比 2330/beta 代理更準）
+        hv_tx = fetch_hv_tx(api, month)
+        if indicators:
+            if hv_tx is not None:
+                indicators['hv_taiex'] = hv_tx
+                indicators['hv_source'] = 'tx_direct'
+            else:
+                indicators['hv_source'] = 'proxy_2330/beta'
 
         # 4. 動態履約價目標
         targets = compute_target_strikes(price_2330, taiex, indicators, dte)

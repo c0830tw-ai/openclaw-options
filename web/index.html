@@ -120,6 +120,28 @@
     .opt-prices .pkey { font-size: 10px; color: #475569; }
     .opt-prices .pval { color: #cbd5e1; font-size: 13px; }
     .opt-symbol { font-size: 10px; color: #334155; margin-top: 6px; }
+    .dist-badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 3px;
+    }
+    .dist-badge.put  { background: #7f1d1d55; color: #fca5a5; }
+    .dist-badge.call { background: #14532d55; color: #86efac; }
+    .spread-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid #1e2535;
+      font-size: 11px;
+      color: #475569;
+    }
+    .spread-val { font-weight: 700; font-size: 12px; }
+    .spread-val.ok      { color: #64748b; }
+    .spread-val.caution { color: #fb923c; }
+    .spread-val.warn    { color: #f87171; }
 
     /* Structure cards */
     .structures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
@@ -248,6 +270,19 @@
       50%       { opacity: 0.3; }
     }
 
+    /* Warning / notice banners */
+    .banner {
+      border-radius: 8px;
+      padding: 10px 16px;
+      margin-bottom: 12px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .banner.dte-warn  { background: #422006; border: 1px solid #92400e; color: #fbbf24; }
+    .banner.mkt-note  { background: #0f172a; border: 1px solid #1e2535; color: #475569; }
+
     /* Section divider */
     .section-divider {
       display: flex;
@@ -290,9 +325,9 @@
 <div id="root"></div>
 
 <script type="text/babel">
-const FIREBASE_URL  = 'https://option-3047e-default-rtdb.asia-southeast1.firebasedatabase.app/trading/2330/collar/latest.json';
-const REFRESH_URL   = '/api/refresh';
-const REFRESH_MS    = 5 * 60 * 1000;   // 網頁開著時每 5 分鐘重抓
+const DATA_URL    = '/api/data';
+const REFRESH_URL = '/api/refresh';
+const REFRESH_MS  = 5 * 60 * 1000;   // 網頁開著時每 5 分鐘重抓
 
 function fmt(n, dec = 0) {
   return Number(n).toLocaleString('zh-TW', { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -341,10 +376,41 @@ function MarketStatus() {
   );
 }
 
+function DTEWarning({ dte }) {
+  if (dte == null || dte >= 5) return null;
+  return (
+    <div className="banner dte-warn">
+      ⚠ DTE {dte} 天，UI 已切換至次月計算。請確認現有月選倉位的平倉時機。
+    </div>
+  );
+}
+
+function MarketHoursNote() {
+  const [status, setStatus] = React.useState(getMarketStatus);
+  React.useEffect(() => {
+    const t = setInterval(() => setStatus(getMarketStatus()), 30000);
+    return () => clearInterval(t);
+  }, []);
+  if (status === 'open') return null;
+  const notes = {
+    after:  '盤後交易中（14:00–14:30），選擇權報價為日盤最後成交',
+    night:  '夜盤中（15:00–05:00），TXO 夜盤流動性低，報價僅供參考',
+    closed: '休市中，報價為最近交易日收盤價',
+  };
+  return (
+    <div className="banner mkt-note">
+      {notes[status]}
+    </div>
+  );
+}
+
 function IndicatorBar({ indicators, targets, dte }) {
   if (!indicators) return null;
-  const { atr, bb_upper, bb_lower, ma20, hv_2330 } = indicators;
-  const method = targets?.method === 'bb_atr' ? 'BB+ATR' : '靜態';
+  const { atr, bb_upper, bb_lower, ma20, hv_2330, hv_taiex, hv_source } = indicators;
+  const method    = targets?.method === 'bb_atr' ? 'BB+ATR' : '靜態';
+  const hvLabel   = hv_source === 'tx_direct' ? 'HV-TX' : 'HV(代理)';
+  const hvColor   = hv_source === 'tx_direct' ? '' : 'lo';
+  const hvDisplay = hv_taiex ? (hv_taiex * 100).toFixed(1) + '%' : (hv_2330 ? (hv_2330 * 100).toFixed(1) + '%' : '—');
   return (
     <div className="indicator-bar">
       <div className="ind-cell">
@@ -364,8 +430,8 @@ function IndicatorBar({ indicators, targets, dte }) {
         <span className="ind-val lo">{bb_lower?.toFixed(0)}</span>
       </div>
       <div className="ind-cell">
-        <span className="ind-key">HV(20)</span>
-        <span className="ind-val">{hv_2330 ? (hv_2330 * 100).toFixed(1) + '%' : '—'}</span>
+        <span className="ind-key">{hvLabel}</span>
+        <span className={`ind-val ${hvColor}`}>{hvDisplay}</span>
       </div>
       <div className="ind-cell">
         <span className="ind-key">DTE</span>
@@ -419,13 +485,22 @@ function MarketStrip({ market, txo_month }) {
   );
 }
 
-function OptionCard({ type, data }) {
+function OptionCard({ type, data, taiex }) {
   if (!data) return null;
+  const spread    = data.ask - data.bid;
+  const spreadPct = data.mid > 0 ? spread / data.mid * 100 : 0;
+  const spreadCls = spreadPct > 25 ? 'warn' : spreadPct > 15 ? 'caution' : 'ok';
+  const dist      = taiex > 0 ? (data.strike - taiex) / taiex * 100 : null;
   return (
     <div className="option-card">
       <div className="opt-header">
         <span className={`opt-badge ${type}`}>{type.toUpperCase()}</span>
         <span className="opt-strike">{fmt(data.strike)}</span>
+        {dist != null && (
+          <span className={`dist-badge ${type}`}>
+            {dist >= 0 ? '+' : ''}{dist.toFixed(1)}%
+          </span>
+        )}
       </div>
       <div className="opt-prices">
         <span><span className="pkey">ASK</span><span className="pval">{data.ask}</span></span>
@@ -434,13 +509,22 @@ function OptionCard({ type, data }) {
         <span><span className="pkey">VOL</span><span className="pval">{data.volume}</span></span>
         <span><span className="pkey">δ</span><span className="pval">{data.delta != null ? data.delta.toFixed(3) : '—'}</span></span>
       </div>
+      <div className="spread-row">
+        <span>Bid-Ask Spread</span>
+        <span className={`spread-val ${spreadCls}`}>
+          {spread} pts ({spreadPct.toFixed(0)}%){spreadPct > 25 ? ' ⚠' : ''}
+        </span>
+      </div>
       <div className="opt-symbol">{data.symbol}</div>
     </div>
   );
 }
 
-function StructCard({ s, isRecommended }) {
-  const pct = Math.min(100, s.protection_pct);
+function StructCard({ s, isRecommended, taiex }) {
+  const pct     = Math.min(100, s.protection_pct);
+  const putDist = s.puts > 0 && taiex > 0
+    ? (s.put_strike - taiex) / taiex * 100
+    : null;
   return (
     <div className={`struct-card ${isRecommended ? 'recommended' : ''}`}>
       {isRecommended && <div className="recommended-badge">推薦</div>}
@@ -457,7 +541,13 @@ function StructCard({ s, isRecommended }) {
       <div className="struct-protection">
         <div className="struct-protection-fill" style={{ width: `${pct}%` }} />
       </div>
-      <div className="struct-pct-label">保護 {pct.toFixed(0)}%</div>
+      <div className="struct-pct-label">避險覆蓋 {pct.toFixed(0)}%</div>
+      <div className="struct-pct-label" style={{marginTop:'3px'}}>
+        {putDist != null
+          ? <span style={{color:'#94a3b8'}}>Put 生效需跌 <span style={{color:'#fca5a5', fontWeight:700}}>{Math.abs(putDist).toFixed(1)}%</span></span>
+          : <span style={{color:'#475569'}}>無下行保護</span>
+        }
+      </div>
       <div className={s.is_net_credit ? 'credit-tag' : 'debit-tag'}>
         {s.is_net_credit ? '✓ Credit' : '✗ Debit'}
       </div>
@@ -465,7 +555,7 @@ function StructCard({ s, isRecommended }) {
   );
 }
 
-function Section0050({ collar }) {
+function Section0050({ collar, taiex }) {
   if (!collar) return null;
   const { price_0050, lots, lot_size, notional, beta, beta_adj_ratio, recommended_contracts, structures } = collar;
   return (
@@ -497,7 +587,7 @@ function Section0050({ collar }) {
       </div>
       <div className="structures">
         {structures?.map((s, i) => (
-          <StructCard key={s.name} s={s} isRecommended={i === 0} />
+          <StructCard key={s.name} s={s} isRecommended={i === 0} taiex={taiex} />
         ))}
       </div>
     </>
@@ -511,9 +601,9 @@ function App() {
   const [refreshing, setRefreshing] = React.useState(false);
   const countdownRef = React.useRef(null);
 
-  async function fetchFirebase() {
+  async function fetchData() {
     try {
-      const res = await fetch(FIREBASE_URL);
+      const res = await fetch(DATA_URL);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       setData(json);
@@ -530,7 +620,7 @@ function App() {
     try {
       await fetch(REFRESH_URL);   // 等 shioaji_collar.py 跑完（約 5s）
     } catch (_) {}               // 若非 server.py 啟動，靜默跳過
-    await fetchFirebase();
+    await fetchData();
     setRefreshing(false);
   }
 
@@ -545,6 +635,11 @@ function App() {
       <div className="header">
         <h1>2330 0050對應大盤選擇權領口策略</h1>
         <div className="header-right">
+          {data && !refreshing && (
+            <span style={{color:'#334155', fontSize:'11px'}}>
+              資料 {fmtTime(data.timestamp)}
+            </span>
+          )}
           {refreshing && <span style={{color:'#475569'}}>更新中…</span>}
         </div>
       </div>
@@ -559,17 +654,26 @@ function App() {
       ) : data ? (
         <>
           <MarketStrip market={data.market} txo_month={data.txo_month} />
+          <DTEWarning dte={data.dte} />
           <IndicatorBar indicators={data.indicators} targets={data.targets} dte={data.dte} />
+          <MarketHoursNote />
           <div className="options-row">
-            <OptionCard type="put" data={data.selected_options?.put} />
-            <OptionCard type="call" data={data.selected_options?.call} />
+            <OptionCard type="put" data={data.selected_options?.put} taiex={data.market?.taiex} />
+            <OptionCard type="call" data={data.selected_options?.call} taiex={data.market?.taiex} />
           </div>
           <div className="structures">
             {data.structures?.map((s, i) => (
-              <StructCard key={s.name} s={s} isRecommended={i === 0} />
+              <StructCard key={s.name} s={s} isRecommended={i === 0} taiex={data.market?.taiex} />
             ))}
           </div>
-          <Section0050 collar={data.collar_0050} />
+          <Section0050 collar={data.collar_0050} taiex={data.market?.taiex} />
+          <div style={{
+            marginTop:'24px', padding:'12px 0',
+            borderTop:'1px solid #1e2535',
+            fontSize:'11px', color:'#334155', lineHeight:'1.8',
+          }}>
+            ⚠ TXO 領式對沖的是加權指數系統性風險，無法涵蓋台積電或 0050 的個股特定風險。當標的因個別消息劇烈波動而大盤未同步下跌時，Put 保護效果有限。
+          </div>
         </>
       ) : null}
     </div>

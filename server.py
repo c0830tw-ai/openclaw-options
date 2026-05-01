@@ -17,6 +17,7 @@ PORT    = 8080
 ROOT    = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(ROOT, 'web')
 SCRIPT  = os.path.join(ROOT, 'shioaji_collar.py')
+DATA    = os.path.join(ROOT, 'latest_collar.json')
 
 _lock    = threading.Lock()
 _running = False
@@ -41,6 +42,8 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/api/refresh':
             self._refresh()
+        elif self.path == '/api/data':
+            self._data()
         elif self.path == '/api/status':
             self._status()
         else:
@@ -68,6 +71,19 @@ class Handler(SimpleHTTPRequestHandler):
         finally:
             with _lock:
                 _running = False
+
+    def _data(self):
+        if not os.path.exists(DATA):
+            self._json(404, {'error': 'no data yet'})
+            return
+        with open(DATA, encoding='utf-8') as f:
+            raw = f.read()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Content-Length', len(raw.encode()))
+        self.end_headers()
+        self.wfile.write(raw.encode())
 
     def _status(self):
         self._json(200, {'running': _running})
