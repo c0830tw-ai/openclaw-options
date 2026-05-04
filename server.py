@@ -13,7 +13,7 @@ server.py
 import os, sys, json, subprocess, threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
-PORT    = 8080
+PORT    = 8081
 ROOT    = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(ROOT, 'web')
 SCRIPT  = os.path.join(ROOT, 'shioaji_collar.py')
@@ -96,6 +96,11 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header('Content-Length', len(data))
         self.end_headers()
         self.wfile.write(data)
+
+    def end_headers(self):
+        if not getattr(self, 'path', '').startswith('/api'):
+            self.send_header('Cache-Control', 'no-store')
+        super().end_headers()
 
     def log_message(self, fmt, *args):
         method, path, _ = args[0].split(' ', 2) if ' ' in args[0] else (args[0], '', '')

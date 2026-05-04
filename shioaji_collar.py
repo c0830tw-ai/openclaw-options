@@ -221,6 +221,52 @@ def _calc_bollinger(closes: list, period: int) -> Tuple[float, float, float]:
     return ma, ma + 2 * std, ma - 2 * std   # (ma, upper, lower)
 
 
+def _calc_adx(highs: list, lows: list, closes: list, period: int = 14) -> float:
+    """Wilder 平滑法 ADX（平均趨向指數）。"""
+    n = len(closes)
+    if n < period * 2 + 1:
+        return 0.0
+
+    plus_dms, minus_dms, trs = [], [], []
+    for i in range(1, n):
+        up   = highs[i]  - highs[i - 1]
+        down = lows[i - 1] - lows[i]
+        plus_dms.append(up   if up > down and up > 0   else 0.0)
+        minus_dms.append(down if down > up and down > 0 else 0.0)
+        trs.append(max(highs[i] - lows[i],
+                       abs(highs[i]  - closes[i - 1]),
+                       abs(lows[i]   - closes[i - 1])))
+
+    def wilder_smooth(data):
+        s = sum(data[:period])
+        result = [s]
+        for x in data[period:]:
+            s = s - s / period + x
+            result.append(s)
+        return result
+
+    s_plus  = wilder_smooth(plus_dms)
+    s_minus = wilder_smooth(minus_dms)
+    s_tr    = wilder_smooth(trs)
+
+    dxs = []
+    for p, m, t in zip(s_plus, s_minus, s_tr):
+        if t == 0:
+            continue
+        di_plus  = 100 * p / t
+        di_minus = 100 * m / t
+        denom = di_plus + di_minus
+        dxs.append(100 * abs(di_plus - di_minus) / denom if denom else 0.0)
+
+    if len(dxs) < period:
+        return 0.0
+
+    adx = sum(dxs[:period]) / period
+    for dx in dxs[period:]:
+        adx = (adx * (period - 1) + dx) / period
+    return adx
+
+
 def _calc_hv(closes: list, period: int) -> float:
     """年化歷史波動率（對數報酬）。"""
     n = min(period, len(closes) - 1)
@@ -259,39 +305,44 @@ def bs_delta(S: float, K: float, T: float, sigma: float, is_put: bool,
 # ── 履約價選擇 ────────────────────────────────────────────────
 
 def compute_target_strikes(
-    price_2330: float, taiex: float, indicators: Optional[dict], dte: int
+    price: float, taiex: float, indicators: Optional[dict], dte: int,
+    beta: Optional[float] = None,
+    fallback_protect: Optional[float] = None,
+    fallback_cap: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     動態：BB 下/上軌 + ATR × 乘數（隨 DTE 縮放），轉換為 TAIEX 目標點。
-    fallback：kbar 失敗時用 Config 靜態比例。
+    fallback：kbar 失敗時用靜態比例。
+    beta / fallback_* 預設使用 2330 設定。
     """
+    _beta    = beta            if beta            is not None else CFG.beta
+    _protect = fallback_protect if fallback_protect is not None else CFG.protect_pct_2330
+    _cap     = fallback_cap    if fallback_cap    is not None else CFG.cap_pct_2330
+
     if indicators:
         mult = CFG.atr_mult_base * (0.75 + 0.25 * min(dte, 20) / 20)
         atr  = indicators['atr']
 
-        # Put：BB 下軌 vs ATR 下界，取較近現價者（ATR 反映近期波動，BB 反映歷史範圍）
-        # 取 max 避免兩個指標疊加都往 OTM 推，讓 delta filter 做最終篩選
-        put_2330_bb  = min(indicators['bb_lower'], price_2330 - 1)
-        put_2330_atr = price_2330 - mult * atr
-        put_2330     = max(put_2330_bb, put_2330_atr)
+        put_bb  = min(indicators['bb_lower'], price - 1)
+        put_atr = price - mult * atr
+        put_tgt = max(put_bb, put_atr)
 
-        # Call：BB 上軌 vs ATR 上界，取較近現價者
-        call_2330_bb  = max(indicators['bb_upper'], price_2330 + 1)
-        call_2330_atr = price_2330 + mult * atr
-        call_2330     = min(call_2330_bb, call_2330_atr)
+        call_bb  = max(indicators['bb_upper'], price + 1)
+        call_atr = price + mult * atr
+        call_tgt = min(call_bb, call_atr)
 
-        r_put  = (put_2330  - price_2330) / price_2330
-        r_call = (call_2330 - price_2330) / price_2330
+        r_put  = (put_tgt  - price) / price
+        r_call = (call_tgt - price) / price
         method = 'bb_atr'
     else:
-        r_put  = CFG.protect_pct_2330
-        r_call = CFG.cap_pct_2330
+        r_put  = _protect
+        r_call = _cap
         mult   = CFG.atr_mult_base
         method = 'static_fallback'
 
     return {
-        'put_strike':  round(taiex * (1 + r_put  / CFG.beta) / 50) * 50,
-        'call_strike': round(taiex * (1 + r_call / CFG.beta) / 50) * 50,
+        'put_strike':  round(taiex * (1 + r_put  / _beta) / 50) * 50,
+        'call_strike': round(taiex * (1 + r_call / _beta) / 50) * 50,
         'atr_mult': mult,
         'method': method,
     }
@@ -409,10 +460,13 @@ def build_structures(
             is_net_credit=(net > 0),
         )
 
+    half = max(1, n_contracts // 2)
     return [
-        make('symmetric', '對稱領式 NC/NP', n_contracts, n_contracts),
-        make('skewed', f'偏賣方 {n_contracts}C/{max(1, n_contracts // 2)}P', n_contracts, max(1, n_contracts // 2)),
-        make('covered_call', '純 Covered Call', n_contracts, 0),
+        make('symmetric',       '對稱領式 NC/NP',                        n_contracts, n_contracts),
+        make('skewed',          f'偏賣方 {n_contracts}C/{half}P',         n_contracts, half),
+        make('covered_call',    '純 Covered Call',                        n_contracts, 0),
+        make('defensive',       f'偏防守 {half}C/{n_contracts}P',         half,        n_contracts),
+        make('protective_put',  '純保護 Put 0C/NP',                       0,           n_contracts),
     ]
 
 
@@ -443,15 +497,11 @@ def _resample_daily(kbars) -> dict:
     }
 
 
-def fetch_kbars_2330(api) -> Optional[dict]:
-    """
-    抓 2330 分鐘 K 棒後重採樣為日K，計算 ATR / BB / HV。
-    失敗時回傳 None（主流程退回靜態備援）。
-    """
+def fetch_kbars(api, stock_code: str) -> Optional[dict]:
+    """抓個股日K，計算 ATR / BB / HV / ADX。失敗回傳 None。"""
     try:
-        contract = api.Contracts.Stocks.TSE['2330']
+        contract = api.Contracts.Stocks.TSE[stock_code]
         end_dt   = datetime.now()
-        # bb_period 個交易日 ≈ 1.5 倍日曆天
         start_dt = end_dt - timedelta(days=int(CFG.bb_period * 1.5 * 7 / 5) + 10)
         kbars = api.kbars(
             contract=contract,
@@ -465,26 +515,24 @@ def fetch_kbars_2330(api) -> Optional[dict]:
         n_days = daily['days']
 
         if n_days < CFG.bb_period + 1:
-            log.warning(f'日K不足（{n_days} 天），退回靜態備援')
+            log.warning(f'{stock_code} 日K不足（{n_days} 天），退回靜態備援')
             return None
 
         atr            = _calc_atr(highs, lows, closes, CFG.atr_period)
         ma, bb_u, bb_l = _calc_bollinger(closes, CFG.bb_period)
-        hv_2330        = _calc_hv(closes, CFG.bb_period)
-        hv_taiex       = hv_2330 / CFG.beta
+        hv             = _calc_hv(closes, CFG.bb_period)
+        adx            = _calc_adx(highs, lows, closes, CFG.atr_period)
 
         log.info(
-            f'日K {n_days}根  ATR({CFG.atr_period})={atr:.1f}  '
-            f'BB上={bb_u:.1f} 中={ma:.1f} 下={bb_l:.1f}  '
-            f'HV={hv_2330:.1%}→TAIEX≈{hv_taiex:.1%}'
+            f'{stock_code} 日K {n_days}根  ATR({CFG.atr_period})={atr:.2f}  '
+            f'BB上={bb_u:.2f} 中={ma:.2f} 下={bb_l:.2f}  HV={hv:.1%}  ADX={adx:.1f}'
         )
         return {
             'atr': atr, 'bb_upper': bb_u, 'bb_lower': bb_l,
-            'ma20': ma, 'hv_2330': hv_2330, 'hv_taiex': hv_taiex,
-            'days': n_days,
+            'ma20': ma, 'hv': hv, 'adx': adx, 'days': n_days,
         }
     except Exception as e:
-        log.warning(f'kbar 抓取失敗（{e}），退回靜態備援')
+        log.warning(f'{stock_code} kbar 抓取失敗（{e}）')
         return None
 
 
@@ -495,7 +543,7 @@ def fetch_hv_tx(api, month: str) -> Optional[float]:
     失敗時回傳 None，主流程退回 hv_2330/beta 代理。
     """
     try:
-        all_tx = list(api.Contracts.Futures.TX)
+        all_tx = list(api.Contracts.Futures.TXF)
         candidates = sorted(
             [c for c in all_tx if c.delivery_month >= month],
             key=lambda c: c.delivery_month,
@@ -531,39 +579,128 @@ def fetch_hv_tx(api, month: str) -> Optional[float]:
 
 
 def fetch_market_snapshot(api):
-    """抓 2330、加權指數現貨，以及 TX 近月期貨。"""
-    c_2330  = api.Contracts.Stocks.TSE['2330']
-    c_taiex = api.Contracts.Indexs.TSE['TSE001']
+    """批次抓現貨（2330/0050/TAIEX/OTC）與期貨（TX近遠、台積電股期近遠、0050股期近遠）。"""
+    today_month = datetime.now().strftime('%Y%m')
+    registry: Dict[str, Any] = {}
 
-    snaps = api.snapshots([c_2330, c_taiex])
-    snap_2330, snap_taiex = snaps[0], snaps[1]
-    taiex = float(snap_taiex.close)
-
-    # TX 近月期貨（Black-76 定價基準）
-    tx_futures = None
+    # ── 現貨 ──────────────────────────────────────────────────
+    registry['2330']  = api.Contracts.Stocks.TSE['2330']
+    registry['taiex'] = api.Contracts.Indexs.TSE['TSE001']
+    registry['0050']  = api.Contracts.Stocks.TSE['0050']
     try:
-        today_month = datetime.now().strftime('%Y%m')
-        near_tx = next(
-            (c for c in sorted(api.Contracts.Futures.TX, key=lambda c: c.delivery_month)
-             if c.delivery_month >= today_month),
-            None
-        )
-        if near_tx:
-            tx_snap = api.snapshots([near_tx])[0]
-            tx_futures = float(tx_snap.close) if tx_snap.close else None
-            log.info(f'TX 期貨 {near_tx.symbol}: {tx_futures}  '
-                     f'基差 {tx_futures - taiex:+.1f}' if tx_futures else '')
+        registry['otc'] = api.Contracts.Indexs.OTC['OTC101']
     except Exception as e:
-        log.warning(f'TX 期貨報價失敗（{e}），落回現貨')
+        log.warning(f'OTC 合約失敗：{e}')
+
+    # ── TX 近/遠月 ─────────────────────────────────────────────
+    try:
+        tx_sorted = sorted(
+            [c for c in api.Contracts.Futures.TXF
+             if c.delivery_month >= today_month
+             and c.symbol == f'TXF{c.delivery_month}'],   # 排除 TXFR1/TXFR2 滾動合約
+            key=lambda c: c.delivery_month,
+        )
+        if len(tx_sorted) >= 1: registry['tx_near'] = tx_sorted[0]
+        if len(tx_sorted) >= 2: registry['tx_far']  = tx_sorted[1]
+        log.info(f"TX 近月={tx_sorted[0].delivery_month if tx_sorted else '—'}  遠月={tx_sorted[1].delivery_month if len(tx_sorted)>=2 else '—'}")
+    except Exception as e:
+        log.warning(f'TX 期貨合約：{e}')
+
+    # ── 台積電股期 近/遠月（CDF，排除 CDFR1/CDFR2 滾動合約）──────
+    try:
+        tf_sorted = sorted(
+            [c for c in api.Contracts.Futures.CDF
+             if c.delivery_month >= today_month
+             and c.symbol == f'CDF{c.delivery_month}'],
+            key=lambda c: c.delivery_month,
+        )
+        if len(tf_sorted) >= 1: registry['tf_near'] = tf_sorted[0]
+        if len(tf_sorted) >= 2: registry['tf_far']  = tf_sorted[1]
+        log.info(f"台積電股期 近={tf_sorted[0].delivery_month if tf_sorted else '—'}  遠={tf_sorted[1].delivery_month if len(tf_sorted)>=2 else '—'}")
+    except Exception as e:
+        log.warning(f'台積電股期（CDF）：{e}')
+
+    # ── 0050 ETF 股期 近/遠月（NYF，排除 NYFR1/NYFR2 滾動合約）──
+    try:
+        etf_sorted = sorted(
+            [c for c in api.Contracts.Futures.NYF
+             if c.delivery_month >= today_month
+             and c.symbol == f'NYF{c.delivery_month}'],
+            key=lambda c: c.delivery_month,
+        )
+        if len(etf_sorted) >= 1: registry['etf_near'] = etf_sorted[0]
+        if len(etf_sorted) >= 2: registry['etf_far']  = etf_sorted[1]
+        log.info(f"0050股期 近={etf_sorted[0].delivery_month if etf_sorted else '—'}  遠={etf_sorted[1].delivery_month if len(etf_sorted)>=2 else '—'}")
+    except Exception as e:
+        log.warning(f'0050 ETF 股期（NYF）：{e}')
+
+    # ── 批次 snapshot ──────────────────────────────────────────
+    keys      = list(registry.keys())
+    snap_list = api.snapshots(list(registry.values()))
+    smap      = dict(zip(keys, snap_list))
+
+    def sv(key, field, cast=float):
+        s = smap.get(key)
+        if s is None: return None
+        v = getattr(s, field, None)
+        try:   return cast(v) if v is not None else None
+        except (ValueError, TypeError): return None
+
+    def mo(key):
+        c = registry.get(key)
+        return getattr(c, 'delivery_month', None) if c else None
+
+    taiex    = sv('taiex', 'close') or 0.0
+    tx_near  = sv('tx_near', 'close')
+    basis    = round(tx_near - taiex, 1) if tx_near and taiex else None
+    if tx_near:
+        log.info(f"TX 近月 {mo('tx_near')}: {tx_near}  基差 {basis:+.1f}")
 
     return {
-        'price_2330':      float(snap_2330.close),
-        'price_2330_open': float(snap_2330.open) if snap_2330.open else None,
-        'price_2330_high': float(snap_2330.high) if snap_2330.high else None,
-        'price_2330_low':  float(snap_2330.low)  if snap_2330.low  else None,
-        'taiex':           taiex,
-        'tx_futures':      tx_futures,
-        'volume_2330':     int(snap_2330.volume) if snap_2330.volume else 0,
+        # 現貨
+        'price_2330':       sv('2330', 'close'),
+        'price_2330_open':  sv('2330', 'open'),
+        'price_2330_high':  sv('2330', 'high'),
+        'price_2330_low':   sv('2330', 'low'),
+        'chg_2330':         sv('2330', 'change_price'),
+        'chgpct_2330':      sv('2330', 'change_rate'),
+        'volume_2330':      sv('2330', 'volume', cast=int),
+        'taiex':            taiex,
+        'chg_taiex':        sv('taiex', 'change_price'),
+        'chgpct_taiex':     sv('taiex', 'change_rate'),
+        'price_0050':       sv('0050', 'close'),
+        'chg_0050':         sv('0050', 'change_price'),
+        'chgpct_0050':      sv('0050', 'change_rate'),
+        'otc':              sv('otc',  'close'),
+        'chg_otc':          sv('otc',  'change_price'),
+        'chgpct_otc':       sv('otc',  'change_rate'),
+        # 台指期
+        'tx_futures':       tx_near,
+        'chg_tx':           sv('tx_near', 'change_price'),
+        'chgpct_tx':        sv('tx_near', 'change_rate'),
+        'tx_near_month':    mo('tx_near'),
+        'tx_far':           sv('tx_far', 'close'),
+        'chg_tx_far':       sv('tx_far', 'change_price'),
+        'chgpct_tx_far':    sv('tx_far', 'change_rate'),
+        'tx_far_month':     mo('tx_far'),
+        # 台積電股期
+        'tf_near':          sv('tf_near', 'close'),
+        'chg_tf_near':      sv('tf_near', 'change_price'),
+        'chgpct_tf_near':   sv('tf_near', 'change_rate'),
+        'tf_near_month':    mo('tf_near'),
+        'tf_far':           sv('tf_far', 'close'),
+        'chg_tf_far':       sv('tf_far', 'change_price'),
+        'chgpct_tf_far':    sv('tf_far', 'change_rate'),
+        'tf_far_month':     mo('tf_far'),
+        # 0050 股期
+        'etf_near':         sv('etf_near', 'close'),
+        'chg_etf_near':     sv('etf_near', 'change_price'),
+        'chgpct_etf_near':  sv('etf_near', 'change_rate'),
+        'etf_near_month':   mo('etf_near'),
+        'etf_far':          sv('etf_far', 'close'),
+        'chg_etf_far':      sv('etf_far', 'change_price'),
+        'chgpct_etf_far':   sv('etf_far', 'change_rate'),
+        'etf_far_month':    mo('etf_far'),
     }
 
 
@@ -727,20 +864,26 @@ def main():
 
     try:
         # 1. 抓現價
-        market = fetch_market_snapshot(api)
+        market      = fetch_market_snapshot(api)
         price_2330  = market['price_2330']
         taiex       = market['taiex']
         tx_futures  = market.get('tx_futures') or taiex   # Black-76 定價基準
-        bs_s        = tx_futures                           # S for all delta calcs
-        bs_r        = 0.0 if market.get('tx_futures') else None  # Black-76 r=0
-        snap_0050   = api.snapshots([api.Contracts.Stocks.TSE['0050']])[0]
-        price_0050  = float(snap_0050.close)
-        basis       = tx_futures - taiex if market.get('tx_futures') else 0.0
+        bs_s        = tx_futures
+        bs_r        = 0.0 if market.get('tx_futures') else None
+        price_0050  = market.get('price_0050') or 0.0
+        chg_0050    = market.get('chg_0050')
+        chgpct_0050 = market.get('chgpct_0050')
         log.info(f'2330: {price_2330} | TAIEX現: {taiex} | TX期: {tx_futures} '
-                 f'基差: {basis:+.1f} | 0050: {price_0050}')
+                 f'| 0050: {price_0050} | 櫃買: {market.get("otc")}')
 
         # 2. K棒指標（ATR / BB / HV）
-        indicators = fetch_kbars_2330(api)
+        indicators_raw  = fetch_kbars(api, '2330')
+        if indicators_raw:
+            hv_2330    = indicators_raw.pop('hv')
+            indicators = {**indicators_raw, 'hv_2330': hv_2330, 'hv_taiex': hv_2330 / CFG.beta}
+        else:
+            indicators = None
+        indicators_0050 = fetch_kbars(api, '0050')
 
         # 3. DTE（距結算天數）
         month, settlement_dt = get_txo_settlement()
@@ -758,7 +901,18 @@ def main():
 
         # 4. 動態履約價目標
         targets = compute_target_strikes(price_2330, taiex, indicators, dte)
-        log.info(f"目標履約價: Put @ {targets['put_strike']}  Call @ {targets['call_strike']}  [{targets['method']}]")
+        targets_0050 = compute_target_strikes(
+            price_0050, taiex, indicators_0050, dte,
+            beta=CFG.beta_0050,
+        )
+        log.info(f"目標履約價 2330: Put @ {targets['put_strike']}  Call @ {targets['call_strike']}  [{targets['method']}]")
+        log.info(f"目標履約價 0050: Put @ {targets_0050['put_strike']}  Call @ {targets_0050['call_strike']}  [{targets_0050['method']}]")
+        if indicators_0050:
+            indicators_0050.update({
+                'target_put_strike':  targets_0050['put_strike'],
+                'target_call_strike': targets_0050['call_strike'],
+                'method':             targets_0050['method'],
+            })
 
         # 5. 口數
         contracts = compute_contract_count(price_2330, taiex)
@@ -949,6 +1103,7 @@ def main():
             'txo_month': month,
             'dte': dte,
             'indicators': indicators,
+            'indicators_0050': indicators_0050,
             'targets': {
                 'target_put_strike':  targets['put_strike'],
                 'target_call_strike': targets['call_strike'],
@@ -978,6 +1133,8 @@ def main():
             'structures': [asdict(s) for s in structures],
             'collar_0050': {
                 'price_0050':          price_0050,
+                'chg_0050':            chg_0050,
+                'chgpct_0050':         chgpct_0050,
                 'lots':                CFG.lots_0050,
                 'lot_size':            CFG.lot_size_0050,
                 'notional':            notional_0050,

@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>2330 0050對應大盤選擇權領口策略</title>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -10,13 +10,17 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    html { background: #0f1117; }
     body {
       background: #0f1117;
       color: #e2e8f0;
       font-family: 'SF Mono', 'Fira Code', monospace;
       font-size: 14px;
       min-height: 100vh;
+      min-height: -webkit-fill-available;
       padding: 20px;
+      padding-bottom: max(20px, calc(env(safe-area-inset-bottom) + 20px));
+      overscroll-behavior-y: none;
     }
     @media (max-width: 600px) {
       body { padding: 12px 10px; font-size: 13px; }
@@ -39,33 +43,51 @@
     @media (max-width: 600px) {
       .header h1 { font-size: 15px; }
     }
-    /* Market strip */
+    /* Market strip — 三區分組 */
+    .market-wrapper { margin-bottom: 16px; display: flex; flex-direction: column; gap: 4px; }
+    .market-group   { border-radius: 8px; overflow: hidden; border: 1px solid #1e2535; }
+    .group-header   {
+      background: #0d1220;
+      padding: 4px 12px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: #475569;
+    }
+    .group-header.spot    { color: #7dd3fc; }
+    .group-header.futures { color: #c4b5fd; }
+    .group-header.stock-f { color: #fcd34d; }
     .market-strip {
       display: grid;
-      grid-template-columns: repeat(6, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 1px;
       background: #1e2535;
-      border-radius: 8px;
-      overflow: hidden;
-      margin-bottom: 16px;
     }
+    .market-strip.cols-3 { grid-template-columns: repeat(3, 1fr); }
     @media (max-width: 600px) {
-      .market-strip { grid-template-columns: repeat(3, 1fr); }
+      .market-strip        { grid-template-columns: repeat(2, 1fr); }
+      .market-strip.cols-3 { grid-template-columns: repeat(3, 1fr); }
     }
     .market-cell {
       background: #13192a;
-      padding: 12px 16px;
+      padding: 10px 14px;
     }
     @media (max-width: 600px) {
-      .market-cell { padding: 10px 12px; }
+      .market-cell { padding: 9px 11px; }
     }
-    .market-cell .label { font-size: 11px; color: #475569; margin-bottom: 4px; }
-    .market-cell .value { font-size: 20px; font-weight: 600; color: #f1f5f9; }
-    .market-cell .value.down { color: #f87171; }
-    .market-cell .value.tag { font-size: 14px; color: #7dd3fc; }
+    .market-cell .label { font-size: 10px; color: #475569; margin-bottom: 3px; }
+    .market-cell .sub-label { font-size: 9px; color: #334155; margin-bottom: 2px; }
+    .market-cell .value { font-size: 18px; font-weight: 600; color: #f1f5f9; }
+    .market-cell .value.up   { color: #f87171; }
+    .market-cell .value.down { color: #4ade80; }
+    .market-cell .value.tag  { font-size: 13px; color: #7dd3fc; }
+    .market-cell .value.na   { color: #334155; font-size: 14px; }
+    .chg-label { font-size: 10px; margin-top: 2px; }
+    .chg-label.up   { color: #f87171; }
+    .chg-label.down { color: #4ade80; }
     @media (max-width: 600px) {
-      .market-cell .value { font-size: 16px; }
-      .market-cell .value.tag { font-size: 13px; }
+      .market-cell .value { font-size: 15px; }
+      .market-cell .value.tag { font-size: 12px; }
     }
 
     /* Indicator bar */
@@ -74,9 +96,9 @@
       flex-wrap: wrap;
       gap: 1px;
       background: #1e2535;
-      border-radius: 8px;
+      border-top: 1px solid #1e2535;
       overflow: hidden;
-      margin-bottom: 12px;
+      margin-bottom: 0;
     }
     .ind-cell {
       background: #13192a;
@@ -167,7 +189,7 @@
     .spread-val.warn    { color: #f87171; }
 
     /* Structure cards */
-    .structures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .structures { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
     @media (max-width: 600px) {
       .structures { grid-template-columns: 1fr; }
       /* compact cards (週選/遠月/0050) 手機上 2欄 */
@@ -263,6 +285,31 @@
       margin: 0 auto 12px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Pull-to-refresh indicator */
+    .ptr-bar {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding-bottom: 10px;
+      background: #0f1117;
+      z-index: 200;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .ptr-bar .ptr-spinner {
+      width: 18px; height: 18px;
+      border: 2px solid #1e2535;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    .ptr-bar .ptr-text {
+      font-size: 12px;
+      transition: color 0.15s;
+    }
 
     .error-box {
       background: #7f1d1d22;
@@ -377,6 +424,18 @@ function fmt(n, dec = 0) {
   return Number(n).toLocaleString('zh-TW', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
 
+function ChgLabel({ chg, chgpct, dec = 0 }) {
+  if (chg == null) return null;
+  const up  = chg >= 0;
+  const cls = up ? 'up' : 'down';
+  const sign = up ? '+' : '';
+  return (
+    <div className={`chg-label ${cls}`}>
+      {sign}{fmt(chg, dec)} ({sign}{chgpct != null ? chgpct.toFixed(2) : '—'}%)
+    </div>
+  );
+}
+
 function fmtTime(iso) {
   if (!iso) return '—';
   return iso.slice(11, 19);
@@ -405,12 +464,19 @@ function getMarketStatus() {
   return 'night';                                    // 15:00–24:00 夜盤
 }
 
-function MarketStatus() {
+const MarketStatusCtx = React.createContext('closed');
+
+function MarketStatusProvider({ children }) {
   const [status, setStatus] = React.useState(getMarketStatus);
   React.useEffect(() => {
     const t = setInterval(() => setStatus(getMarketStatus()), 30000);
     return () => clearInterval(t);
   }, []);
+  return <MarketStatusCtx.Provider value={status}>{children}</MarketStatusCtx.Provider>;
+}
+
+function MarketStatus() {
+  const status = React.useContext(MarketStatusCtx);
   const labels = { open: '日盤', after: '盤後', night: '夜盤', closed: '休市' };
   return (
     <span className={`market-status ${status}`}>
@@ -424,17 +490,13 @@ function DTEWarning({ dte }) {
   if (dte == null || dte >= 5) return null;
   return (
     <div className="banner dte-warn">
-      ⚠ DTE {dte} 天，UI 已切換至次月計算。請確認現有月選倉位的平倉時機。
+      ⚠ DTE（到期天數）{dte} 天，UI 已切換至次月計算。請確認現有月選倉位的平倉時機。
     </div>
   );
 }
 
 function MarketHoursNote() {
-  const [status, setStatus] = React.useState(getMarketStatus);
-  React.useEffect(() => {
-    const t = setInterval(() => setStatus(getMarketStatus()), 30000);
-    return () => clearInterval(t);
-  }, []);
+  const status = React.useContext(MarketStatusCtx);
   if (status === 'open') return null;
   const notes = {
     after:  '盤後交易中（14:00–14:30），選擇權報價為日盤最後成交',
@@ -448,97 +510,145 @@ function MarketHoursNote() {
   );
 }
 
-function IndicatorBar({ indicators, targets, dte }) {
+function adxState(adx) {
+  if (adx == null) return { color: '', label: '—' };
+  const val = adx.toFixed(1);
+  if (adx >= 25) return { color: 'hi', label: `${val} 趨勢` };
+  if (adx >= 20) return { color: '',   label: `${val} 弱趨` };
+  return            { color: 'lo', label: `${val} 盤整` };
+}
+
+function IndicatorBar({ indicators, targets, dec = 0 }) {
   if (!indicators) return null;
-  const { atr, bb_upper, bb_lower, ma20, hv_2330, hv_taiex, hv_source } = indicators;
-  const method    = targets?.method === 'bb_atr' ? 'BB+ATR' : '靜態';
-  const hvLabel   = hv_source === 'tx_direct' ? 'HV-TX' : 'HV(代理)';
-  const hvColor   = hv_source === 'tx_direct' ? '' : 'lo';
-  const hvDisplay = hv_taiex ? (hv_taiex * 100).toFixed(1) + '%' : (hv_2330 ? (hv_2330 * 100).toFixed(1) + '%' : '—');
+  const { atr, bb_upper, bb_lower, ma20, hv, hv_2330, hv_taiex, hv_source, adx } = indicators;
+  const hvVal     = hv_taiex ?? hv ?? hv_2330;
+  const hvLabel   = hv_source === 'tx_direct' ? 'HV（歷波）-TX'
+                  : hv_taiex  ? 'HV（歷波）代理'
+                  : 'HV（歷波）';
+  const hvColor   = hv_source === 'tx_direct' ? '' : hv_taiex ? 'lo' : '';
+  const hvDisplay = hvVal != null ? (hvVal * 100).toFixed(1) + '%' : '—';
+  const putTarget  = targets?.target_put_strike  ?? indicators.target_put_strike;
+  const callTarget = targets?.target_call_strike ?? indicators.target_call_strike;
+  const method     = targets?.method ?? indicators.method;
+  const { color: adxColor, label: adxLabel } = adxState(adx);
+  const f = v => v?.toFixed(dec);
   return (
     <div className="indicator-bar">
+      <div className="ind-cell" style={{background:'#0d1220', justifyContent:'center'}}>
+        <span style={{fontSize:'9px', fontWeight:700, color:'#475569', letterSpacing:'0.08em'}}>日K</span>
+      </div>
       <div className="ind-cell">
-        <span className="ind-key">ATR(14)</span>
-        <span className="ind-val">{atr?.toFixed(1)}</span>
+        <span className="ind-key">ATR(14)（均幅）</span>
+        <span className="ind-val">{f(atr)}</span>
       </div>
       <div className="ind-cell">
         <span className="ind-key">BB 上軌</span>
-        <span className="ind-val hi">{bb_upper?.toFixed(0)}</span>
+        <span className="ind-val hi">{f(bb_upper)}</span>
       </div>
       <div className="ind-cell">
         <span className="ind-key">BB 中線</span>
-        <span className="ind-val">{ma20?.toFixed(0)}</span>
+        <span className="ind-val">{f(ma20)}</span>
       </div>
       <div className="ind-cell">
         <span className="ind-key">BB 下軌</span>
-        <span className="ind-val lo">{bb_lower?.toFixed(0)}</span>
+        <span className="ind-val lo">{f(bb_lower)}</span>
       </div>
       <div className="ind-cell">
         <span className="ind-key">{hvLabel}</span>
         <span className={`ind-val ${hvColor}`}>{hvDisplay}</span>
       </div>
       <div className="ind-cell">
-        <span className="ind-key">DTE</span>
-        <span className="ind-val">{dte ?? '—'} 天</span>
+        <span className="ind-key">ADX(14)（趨向）</span>
+        <span className={`ind-val ${adxColor}`}>{adxLabel}</span>
       </div>
       <div className="ind-cell">
         <span className="ind-key">目標 Put</span>
-        <span className="ind-val lo">{targets?.target_put_strike?.toLocaleString()}</span>
+        <span className="ind-val lo">{putTarget?.toLocaleString()}</span>
       </div>
       <div className="ind-cell">
         <span className="ind-key">目標 Call</span>
-        <span className="ind-val hi">{targets?.target_call_strike?.toLocaleString()}</span>
+        <span className="ind-val hi">{callTarget?.toLocaleString()}</span>
       </div>
       <div className="ind-cell">
         <span className="ind-key">選法</span>
-        <span className="ind-val tag">{method}</span>
+        <span className="ind-val tag">{method === 'bb_atr' ? 'BB+ATR（布林+均幅）' : '靜態'}</span>
       </div>
     </div>
   );
 }
 
-function MarketStrip({ market, txo_month }) {
-  const price      = market?.price_2330;
-  const open       = market?.price_2330_open;
-  const taiex      = market?.taiex;
-  const txFutures  = market?.tx_futures;
-  const basis      = txFutures != null && taiex ? txFutures - taiex : null;
-  const vol        = market?.volume_2330;
-  const isDown     = open && price < open;
+function MCell({ label, subLabel, price, chg, chgpct, dec = 0, tag = false, children }) {
+  const cls = chg == null ? '' : chg > 0 ? 'up' : chg < 0 ? 'down' : '';
+  return (
+    <div className="market-cell">
+      <div className="label">{label}</div>
+      {subLabel && <div className="sub-label">{subLabel}</div>}
+      {children || (
+        price != null
+          ? <div className={`value ${tag ? 'tag' : cls}`}>{tag ? price : fmt(price, dec)}</div>
+          : <div className="value na">—</div>
+      )}
+      {!tag && !children && <ChgLabel chg={chg} chgpct={chgpct} dec={dec} />}
+    </div>
+  );
+}
+
+function fmtMonth(m) {
+  if (!m || m.length < 6) return m || '—';
+  return m.slice(0, 4) + '/' + m.slice(4, 6);
+}
+
+function MarketStrip({ market: m, txo_month, dte, indicators, targets, indicators0050 }) {
+  if (!m) return null;
+  const basis = m.tx_futures != null && m.taiex ? m.tx_futures - m.taiex : null;
+  const basisStr = basis != null
+    ? <span style={{marginLeft:'5px', fontSize:'9px', color: basis>=0?'#f87171':'#4ade80'}}>
+        {basis>=0?'+':''}{basis.toFixed(0)}
+      </span>
+    : null;
 
   return (
-    <div className="market-strip">
-      <div className="market-cell">
-        <div className="label">台積電 2330</div>
-        <div className={`value ${isDown ? 'down' : ''}`}>{price ? fmt(price) : '—'}</div>
-      </div>
-      <div className="market-cell">
-        <div className="label">加權現貨 TAIEX</div>
-        <div className="value">{taiex ? fmt(taiex, 2) : '—'}</div>
-      </div>
-      <div className="market-cell">
-        <div className="label">
-          TX 期貨
-          {basis != null && (
-            <span style={{marginLeft:'6px', fontSize:'10px',
-              color: basis >= 0 ? '#86efac' : '#fca5a5'}}>
-              {basis >= 0 ? '+' : ''}{basis.toFixed(0)}
-            </span>
-          )}
+    <div className="market-wrapper">
+
+      {/* ── 排1：大盤指數 + 台指期 ──────────── */}
+      <div className="market-group">
+        <div className="group-header futures">大盤 · 台指期 TXF</div>
+        <div className="market-strip">
+          <MCell label="加權指數 TAIEX" price={m.taiex}       chg={m.chg_taiex}   chgpct={m.chgpct_taiex}   dec={2} />
+          <MCell label="櫃買指數 OTC"   price={m.otc}         chg={m.chg_otc}     chgpct={m.chgpct_otc}     dec={2} />
+          <MCell label={<>TX 近月 {basisStr}</>} subLabel={fmtMonth(m.tx_near_month)}
+                 price={m.tx_futures} chg={m.chg_tx}     chgpct={m.chgpct_tx}     dec={2} />
+          <MCell label="TX 遠月" subLabel={fmtMonth(m.tx_far_month)}
+                 price={m.tx_far}     chg={m.chg_tx_far} chgpct={m.chgpct_tx_far} dec={2} />
         </div>
-        <div className="value">{txFutures ? fmt(txFutures, 2) : <span style={{color:'#334155'}}>—</span>}</div>
       </div>
-      <div className="market-cell">
-        <div className="label">成交量（張）</div>
-        <div className="value">{vol !== undefined ? fmt(vol) : '—'}</div>
+
+      {/* ── 排2：台積電現貨 + 股期近遠 ─────── */}
+      <div className="market-group">
+        <div className="group-header stock-f">台積電 2330</div>
+        <div className="market-strip cols-3">
+          <MCell label="現股" price={m.price_2330} chg={m.chg_2330} chgpct={m.chgpct_2330} />
+          <MCell label="股期 近" subLabel={fmtMonth(m.tf_near_month)}
+                 price={m.tf_near} chg={m.chg_tf_near} chgpct={m.chgpct_tf_near} />
+          <MCell label="股期 遠" subLabel={fmtMonth(m.tf_far_month)}
+                 price={m.tf_far}  chg={m.chg_tf_far}  chgpct={m.chgpct_tf_far} />
+        </div>
+        <IndicatorBar indicators={indicators} targets={targets} />
       </div>
-      <div className="market-cell">
-        <div className="label">TXO 月份</div>
-        <div className="value tag">{txo_month || '—'}</div>
+
+      {/* ── 排3：0050 現貨 + 股期近遠 ──────── */}
+      <div className="market-group">
+        <div className="group-header spot">元大台灣 0050</div>
+        <div className="market-strip cols-3">
+          <MCell label="現股" price={m.price_0050} chg={m.chg_0050} chgpct={m.chgpct_0050} dec={2} />
+          <MCell label="股期 近" subLabel={fmtMonth(m.etf_near_month)}
+                 price={m.etf_near} chg={m.chg_etf_near} chgpct={m.chgpct_etf_near} dec={2} />
+          <MCell label="股期 遠" subLabel={fmtMonth(m.etf_far_month)}
+                 price={m.etf_far}  chg={m.chg_etf_far}  chgpct={m.chgpct_etf_far} dec={2} />
+        </div>
+        <IndicatorBar indicators={indicators0050} dec={2} />
       </div>
-      <div className="market-cell" style={{display:'flex', alignItems:'center', justifyContent:'center'}}>
-        <MarketStatus />
-      </div>
+
     </div>
   );
 }
@@ -561,14 +671,14 @@ function OptionCard({ type, data, taiex }) {
         )}
       </div>
       <div className="opt-prices">
-        <span><span className="pkey">ASK</span><span className="pval">{data.ask}</span></span>
-        <span><span className="pkey">MID</span><span className="pval">{data.mid}</span></span>
-        <span><span className="pkey">BID</span><span className="pval">{data.bid}</span></span>
-        <span><span className="pkey">VOL</span><span className="pval">{data.volume}</span></span>
-        <span><span className="pkey">δ</span><span className="pval">{data.delta != null ? data.delta.toFixed(3) : '—'}</span></span>
+        <span><span className="pkey">ASK（賣）</span><span className="pval">{data.ask}</span></span>
+        <span><span className="pkey">MID（中）</span><span className="pval">{data.mid}</span></span>
+        <span><span className="pkey">BID（買）</span><span className="pval">{data.bid}</span></span>
+        <span><span className="pkey">VOL（量）</span><span className="pval">{data.volume}</span></span>
+        <span><span className="pkey">δ Delta</span><span className="pval">{data.delta != null ? data.delta.toFixed(3) : '—'}</span></span>
       </div>
       <div className="spread-row">
-        <span>Bid-Ask Spread</span>
+        <span>Bid-Ask Spread（買賣價差）</span>
         <span className={`spread-val ${spreadCls}`}>
           {spread} pts ({spreadPct.toFixed(0)}%){spreadPct > 25 ? ' ⚠' : ''}
         </span>
@@ -607,7 +717,7 @@ function StructCard({ s, isRecommended, taiex, compact = false }) {
         }
       </div>
       <div className={s.is_net_credit ? 'credit-tag' : 'debit-tag'}>
-        {s.is_net_credit ? '✓ Credit' : '✗ Debit'}
+        {s.is_net_credit ? '✓ Credit（收）' : '✗ Debit（付）'}
       </div>
     </div>
   );
@@ -681,7 +791,8 @@ function SectionFarMonth({ farMonth, taiex }) {
 
 function Section0050({ collar, taiex }) {
   if (!collar) return null;
-  const { price_0050, lots, lot_size, notional, beta, beta_adj_ratio, recommended_contracts, structures } = collar;
+  const { price_0050, chg_0050, chgpct_0050, lots, lot_size, notional, beta, beta_adj_ratio, recommended_contracts, structures } = collar;
+  const chgCls = chg_0050 == null ? '' : chg_0050 > 0 ? 'up' : chg_0050 < 0 ? 'down' : '';
   return (
     <>
       <div className="section-divider etf">
@@ -690,18 +801,25 @@ function Section0050({ collar, taiex }) {
       <div className="info-bar-0050">
         <div className="ib-item">
           <span className="ib-key">0050 現價</span>
-          <span className="ib-val">{price_0050?.toFixed(2)}</span>
+          <span className={`ib-val ${chgCls}`} style={chg_0050 != null ? {color: chg_0050 > 0 ? '#f87171' : chg_0050 < 0 ? '#4ade80' : undefined} : {}}>
+            {price_0050?.toFixed(2)}
+          </span>
+          {chg_0050 != null && (
+            <span className={`chg-label ${chgCls}`} style={{color: chg_0050 > 0 ? '#f87171' : '#4ade80'}}>
+              {chg_0050 >= 0 ? '+' : ''}{chg_0050.toFixed(2)} ({chg_0050 >= 0 ? '+' : ''}{chgpct_0050?.toFixed(2)}%)
+            </span>
+          )}
         </div>
         <div className="ib-item">
           <span className="ib-key">{lots}口名目（{lot_size.toLocaleString()}單位/口）</span>
           <span className="ib-val">{(notional / 10000).toFixed(0)} 萬</span>
         </div>
         <div className="ib-item">
-          <span className="ib-key">Beta vs TAIEX</span>
+          <span className="ib-key">Beta（貝塔）vs TAIEX</span>
           <span className="ib-val">{beta}</span>
         </div>
         <div className="ib-item">
-          <span className="ib-key">Beta 調整比例</span>
+          <span className="ib-key">Beta（貝塔）調整比例</span>
           <span className="ib-val">{beta_adj_ratio?.toFixed(2)}</span>
         </div>
         <div className="ib-item">
@@ -716,6 +834,56 @@ function Section0050({ collar, taiex }) {
       </div>
     </>
   );
+}
+
+const PTR_THRESHOLD = 70;
+
+function usePullToRefresh(onRefresh, enabled) {
+  const startY   = React.useRef(null);
+  const distRef  = React.useRef(0);
+  const [pullDist, setPullDist] = React.useState(0);
+
+  const cb = React.useRef(onRefresh);
+  React.useEffect(() => { cb.current = onRefresh; }, [onRefresh]);
+
+  React.useEffect(() => {
+    if (!enabled) return;
+
+    function onTouchStart(e) {
+      startY.current = e.touches[0].clientY;   // 永遠記錄，touchmove 再判斷
+    }
+    function onTouchMove(e) {
+      if (startY.current === null) return;
+      const d = e.touches[0].clientY - startY.current;
+      if (window.scrollY <= 0 && d > 0) {
+        // 頁面在頂部且往下拉：接管手勢
+        e.preventDefault();
+        distRef.current = Math.min(d, PTR_THRESHOLD * 1.5);
+        setPullDist(distRef.current);
+      } else if (d <= 0 || window.scrollY > 0) {
+        // 往上滑或不在頂部：放棄追蹤，讓瀏覽器正常捲動
+        if (distRef.current > 0) { distRef.current = 0; setPullDist(0); }
+        startY.current = null;
+      }
+    }
+    function onTouchEnd() {
+      if (distRef.current >= PTR_THRESHOLD) cb.current();
+      distRef.current = 0;
+      startY.current  = null;
+      setPullDist(0);
+    }
+
+    document.addEventListener('touchstart', onTouchStart, { passive: true });
+    document.addEventListener('touchmove',  onTouchMove,  { passive: false });
+    document.addEventListener('touchend',   onTouchEnd);
+    return () => {
+      document.removeEventListener('touchstart', onTouchStart);
+      document.removeEventListener('touchmove',  onTouchMove);
+      document.removeEventListener('touchend',   onTouchEnd);
+    };
+  }, [enabled]);
+
+  return pullDist;
 }
 
 function App() {
@@ -742,11 +910,15 @@ function App() {
   async function triggerRefresh() {
     setRefreshing(true);
     try {
-      await fetch(REFRESH_URL);   // 等 shioaji_collar.py 跑完（約 5s）
-    } catch (_) {}               // 若非 server.py 啟動，靜默跳過
+      await fetch(REFRESH_URL);
+    } catch (_) {}
     await fetchData();
     setRefreshing(false);
   }
+
+  const pullDist = usePullToRefresh(triggerRefresh, !refreshing);
+  const pulling  = pullDist > 0;
+  const ready    = pullDist >= PTR_THRESHOLD;
 
   React.useEffect(() => {
     triggerRefresh();
@@ -755,9 +927,22 @@ function App() {
   }, []);
 
   return (
+    <MarketStatusProvider>
     <div className="app">
+      {/* Pull-to-refresh indicator */}
+      {(pulling || refreshing) && (
+        <div className="ptr-bar" style={{ height: refreshing ? '44px' : `${Math.min(pullDist, PTR_THRESHOLD)}px` }}>
+          {refreshing
+            ? <div className="ptr-spinner" />
+            : <span className="ptr-text" style={{ color: ready ? '#4ade80' : '#475569' }}>
+                {ready ? '↑ 放開更新' : '↓ 繼續下拉'}
+              </span>
+          }
+        </div>
+      )}
+
       <div className="header">
-        <h1>2330 0050對應大盤選擇權領口策略</h1>
+        <h1>2330 0050 選擇權策略</h1>
         <div className="header-right">
           {data && !refreshing && (
             <span style={{color:'#334155', fontSize:'11px'}}>
@@ -765,6 +950,7 @@ function App() {
             </span>
           )}
           {refreshing && <span style={{color:'#475569'}}>更新中…</span>}
+          <MarketStatus />
         </div>
       </div>
 
@@ -777,9 +963,10 @@ function App() {
         </div>
       ) : data ? (
         <>
-          <MarketStrip market={data.market} txo_month={data.txo_month} />
+          <MarketStrip market={data.market} txo_month={data.txo_month} dte={data.dte}
+                       indicators={data.indicators} targets={data.targets}
+                       indicators0050={data.indicators_0050} />
           <DTEWarning dte={data.dte} />
-          <IndicatorBar indicators={data.indicators} targets={data.targets} dte={data.dte} />
           <MarketHoursNote />
           {(() => {
             const taiex = data.market?.taiex;
@@ -802,6 +989,7 @@ function App() {
         </>
       ) : null}
     </div>
+    </MarketStatusProvider>
   );
 }
 

@@ -1,4 +1,4 @@
-# collar-trading — OpenClaw 選擇權領口策略工具
+# options — OpenClaw 選擇權領口策略工具
 
 ## 專案目的
 
@@ -58,7 +58,9 @@ FIREBASE_URL=https://option-3047e-default-rtdb.asia-southeast1.firebasedatabase.
 python3 server.py
 
 # 然後開瀏覽器
-open http://localhost:8080
+open http://localhost:8081
+# Tailscale 遠端存取（需先啟動 Tailscale）
+# http://100.116.108.93:8081
 ```
 
 - 開啟頁面時立即觸發一次 `shioaji_collar.py`
@@ -99,13 +101,15 @@ beta調整比例 = 名目 × beta / (TAIEX × 50)
 - 2330（1口大台，2000股）：beta_ratio ≈ 2.6 → 2–3 口 TXO
 - 0050（2口股期，10,000單位/口）：beta_ratio ≈ 0.9 → 1 口 TXO
 
-### 三種結構
+### 五種結構
 
 | 名稱 | 組合 | 特性 |
 |---|---|---|
-| symmetric | NC/NP 對稱 | 最高保護，最低 credit |
-| skewed | 2C/1P 偏賣方 | 中度保護，較高 credit |
-| covered_call | 純 Covered Call | 無保護，最高 credit |
+| symmetric | NC/NP 對稱 | 均衡保護，接近 breakeven |
+| skewed | NC/halfP 偏賣方 | 中度保護，較高 credit |
+| covered_call | NC/0P 純賣Call | 無保護，最高 credit |
+| defensive | halfC/NP 偏防守 | 高保護，較低 credit |
+| protective_put | 0C/NP 純保護 | 最高保護，最低 credit |
 
 ---
 
@@ -115,6 +119,10 @@ beta調整比例 = 名目 × beta / (TAIEX × 50)
 |---|---|---|
 | TXO 合約 | `api.Contracts.Options.TXO`，用 `delivery_month` 篩月份 | `api.Contracts.Options.TXO202506` 不存在 |
 | 加權指數 | `api.Contracts.Indexs.TSE['TSE001']` | `TSE['001']` |
+| 櫃買指數 | `api.Contracts.Indexs.OTC['OTC101']` | `OTC['OTC001']` |
+| 台積電股期 | `api.Contracts.Futures.CDF`（台積電期貨） | `TF` 不存在 |
+| 0050 股期 | `api.Contracts.Futures.NYF`（元大台灣50ETF期貨） | `EWF`/`ETF50` 不存在 |
+| 滾動合約過濾 | `c.symbol == f'TXF{c.delivery_month}'`（CDF/NYF 同理） | 不過濾則 TXFR1/CDFR1/NYFR1 重複混入 |
 | K 棒 | `api.kbars()` 只有 1 分鐘，需自行重採樣成日K | 無 resolution 參數 |
 | Snapshot | `buy_price` = bid，`sell_price` = ask | |
 | 金鑰種類 | 正式盤金鑰（simulation=False），模擬盤報 400 | |
