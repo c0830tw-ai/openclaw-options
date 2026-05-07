@@ -1963,6 +1963,7 @@ def main():
             },
             'portfolio': portfolio_breakdown,   # None if no instruments[] config
             'ledger':    None,                  # filled below
+            'trend':     None,                  # filled below
             'market': market,
             'txo_month': month,
             'dte': dte,
@@ -2029,6 +2030,20 @@ def main():
                          f"MTD {_ls['mtd_realized']:+,.0f} / Lifetime {_ls['lifetime_realized']:+,.0f}")
         except Exception as _e:
             log.debug(f'ledger summary 失敗（可忽略）: {_e}')
+
+        # 14c. Daily snapshot capture + trend
+        try:
+            import snapshot as _S
+            _S.capture(result)
+            result['trend'] = _S.trend_summary(window_days=60)
+            if result.get('trend'):
+                _ch = result['trend']['changes']
+                _y = _ch.get('vs_yesterday')
+                if _y:
+                    log.info(f"Trend vs 昨日: TX {_y['tx_delta_pct']:+.2f}%  "
+                             f"unrealized Δ {_y['unrealized_delta'] or 0:+,.0f}")
+        except Exception as _e:
+            log.debug(f'snapshot 失敗（可忽略）: {_e}')
 
         # 報價回填保護：當「這次抓到 BS 估算」且「快取有真實報價」時才回填
         # （之前條件是 not is_market_hours，現在夜盤 TXO 也有真實報價，改用 quotes_source 直接判斷）

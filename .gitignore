@@ -6,6 +6,7 @@ taiwan_holidays_cache.json
 alerts_config.json
 alerts_state.json
 trades_ledger.json
+daily_snapshots.json
 .claude/
 *.code-workspace
 *.log

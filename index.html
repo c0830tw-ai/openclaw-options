@@ -1465,6 +1465,55 @@ function SimTable({ structures, selectedOptions, taiex }) {
   );
 }
 
+function TrendStrip({ data }) {
+  const tr = data?.trend;
+  if (!tr) return null;
+  const ch = tr.changes || {};
+  const fmt = n => n == null ? '—' : n.toLocaleString(undefined, {maximumFractionDigits: 0});
+  const sign = n => n == null ? '—' : (n >= 0 ? '+' : '') + fmt(n);
+  const pctSign = n => n == null ? '—' : (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+  const pnlColor = n => n == null ? '#64748b' : (n >= 0 ? '#4ade80' : '#f87171');
+
+  const Cell = ({ label, delta }) => {
+    if (!delta) return (
+      <div style={{flex:1, padding:'4px 8px', textAlign:'center', color:'#475569'}}>
+        <div style={{fontSize:'9px'}}>{label}</div>
+        <div style={{fontSize:'10px'}}>—</div>
+      </div>
+    );
+    return (
+      <div style={{flex:1, padding:'4px 8px', textAlign:'center'}}>
+        <div style={{fontSize:'9px', color:'#64748b'}}>{label}（{delta.base_date}）</div>
+        <div style={{fontSize:'11px', color:'#cbd5e1', marginTop:'2px'}}>
+          TX <b style={{color: pnlColor(delta.tx_delta_pct)}}>{pctSign(delta.tx_delta_pct)}</b>
+          <span style={{margin:'0 4px', color:'#1e2535'}}>·</span>
+          浮 <b style={{color: pnlColor(delta.unrealized_delta)}}>{sign(delta.unrealized_delta)}</b>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{
+      background: '#0a0e1c', border: '1px solid #1e2535',
+      borderRadius: '6px', padding: '6px 12px', margin: '8px 0',
+      fontSize: '11px',
+    }}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'4px'}}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>📈 Daily Trend</span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>
+          {tr.snapshot_count} 筆紀錄 · 起算日 {tr.first_date}
+        </span>
+      </div>
+      <div style={{display:'flex', justifyContent:'space-between', borderTop:'1px solid #1e2535'}}>
+        <Cell label="vs 昨日"   delta={ch.vs_yesterday} />
+        <Cell label="vs 一週前" delta={ch.vs_week_ago} />
+        <Cell label="vs 月初"   delta={ch.vs_month_start} />
+      </div>
+    </div>
+  );
+}
+
 function TradingLedger({ data }) {
   const lg = data?.ledger;
   if (!lg) return null;
@@ -1915,6 +1964,7 @@ function App() {
 
       <EngineStatus data={data} />
       <PortfolioBreakdown data={data} />
+      <TrendStrip data={data} />
       <TradingLedger data={data} />
 
       {error && <div className="error-box">⚠ 載入失敗：{error}</div>}
