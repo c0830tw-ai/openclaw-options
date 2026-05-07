@@ -810,16 +810,30 @@ function huiCapitalPct(dte) {
   return '10–15%';
 }
 
-function IndicatorBar({ indicators, targets, dec = 0 }) {
+function IndicatorBar({ indicators, targets, iv, ivSource, dec = 0 }) {
   if (!indicators) return null;
   const { atr, bb_upper, bb_lower, ma20, hv, hv_2330, hv_taiex, hv_source, adx, hv_pct } = indicators;
   const hvVal     = hv_taiex ?? hv ?? hv_2330;
   const hvSrc     = hv_source === 'tx_direct' ? 'TX' : hv_taiex ? '代理' : '';
   const hvColor   = hv_source === 'tx_direct' ? '' : hv_taiex ? 'lo' : '';
   const hvDisplay = hvVal != null ? (hvVal * 100).toFixed(1) + '%' : '—';
+  const ivDisplay = iv != null ? (iv * 100).toFixed(1) + '%' : null;
+  const ivLive    = ivSource === 'atm_market';
   const putTarget  = targets?.target_put_strike  ?? indicators.target_put_strike;
   const callTarget = targets?.target_call_strike ?? indicators.target_call_strike;
   const method     = targets?.method ?? indicators.method;
+  const adxRegime  = targets?.adx_regime ?? indicators.adx_regime;
+  // 顯示 method 標籤
+  const methodLabel = (
+    method === 'static_fallback' ? '靜態' :
+    method?.startsWith('bb_atr')  ? 'BB+ATR' :
+    method ?? '—'
+  );
+  const regimeBadge = (
+    adxRegime === 'trend'   ? { text: '趨勢', color: '#fb923c' } :
+    adxRegime === 'range'   ? { text: '盤整', color: '#60a5fa' } :
+    adxRegime === 'neutral' ? { text: '中性', color: '#94a3b8' } : null
+  );
   const hvm     = hvMood(hvVal);
   const adxm    = adxMood(adx);
   const overall = overallMood(hvVal, adx);
@@ -846,6 +860,13 @@ function IndicatorBar({ indicators, targets, dec = 0 }) {
         <span className="ind-key">BB ↓</span>
         <span className="ind-val lo">{f(bb_lower)}</span>
       </div>
+      {ivDisplay && (
+        <div className="ind-cell" title={ivSource === 'atm_market' ? '近月 ATM Call/Put 反推 IV' : 'ATM 抓不到，退回 HV'}>
+          <span className="ind-key">IV<span className="ind-src">{ivLive ? 'ATM' : 'HV'}</span></span>
+          <span className="ind-val" style={{color: ivLive ? '#fbbf24' : '#94a3b8'}}>{ivDisplay}</span>
+          {ivLive && <span className="ind-badge" style={{color:'#fbbf24'}}>市價</span>}
+        </div>
+      )}
       <div className={`ind-cell ${hvm.cls}`}>
         <span className="ind-key">HV{hvSrc && <span className="ind-src">{hvSrc}</span>}</span>
         <span className={`ind-val ${hvm.cls ? '' : hvColor}`}>
@@ -873,7 +894,8 @@ function IndicatorBar({ indicators, targets, dec = 0 }) {
           {adx?.toFixed(1) ?? '—'}
           {adxm.dot && adx != null && <span className="ind-mood-dot" style={{background: adxm.dot}} />}
         </span>
-        {adxm.label && <span className="ind-badge" style={{color: adxm.dot}}>{adxm.label}</span>}
+        {regimeBadge && <span className="ind-badge" style={{color: regimeBadge.color}}>{regimeBadge.text}</span>}
+        {!regimeBadge && adxm.label && <span className="ind-badge" style={{color: adxm.dot}}>{adxm.label}</span>}
       </div>
       <div className="ind-cell">
         <span className="ind-key">Put 目標</span>
@@ -885,7 +907,7 @@ function IndicatorBar({ indicators, targets, dec = 0 }) {
       </div>
       <div className="ind-cell">
         <span className="ind-key">選法</span>
-        <span className="ind-val tag">{method === 'bb_atr' ? 'BB+ATR' : '靜態'}</span>
+        <span className="ind-val tag">{methodLabel}</span>
       </div>
     </div>
   );
@@ -912,7 +934,7 @@ function fmtMonth(m) {
   return m.slice(0, 4) + '/' + m.slice(4, 6);
 }
 
-function MarketStrip({ market: m, txo_month, dte, indicators, targets, indicators0050 }) {
+function MarketStrip({ market: m, txo_month, dte, indicators, targets, indicators0050, iv, ivSource }) {
   if (!m) return null;
   const basis = m.tx_futures != null && m.taiex ? m.tx_futures - m.taiex : null;
   const basisStr = basis != null
@@ -947,7 +969,7 @@ function MarketStrip({ market: m, txo_month, dte, indicators, targets, indicator
           <MCell label="股期 遠" subLabel={fmtMonth(m.tf_far_month)}
                  price={m.tf_far}  chg={m.chg_tf_far}  chgpct={m.chgpct_tf_far} />
         </div>
-        <IndicatorBar indicators={indicators} targets={targets} />
+        <IndicatorBar indicators={indicators} targets={targets} iv={iv} ivSource={ivSource} />
       </div>
 
       {/* ── 排3：0050 現貨 + 股期近遠 ──────── */}
@@ -1443,11 +1465,77 @@ function SimTable({ structures, selectedOptions, taiex }) {
   );
 }
 
+function EngineStatus({ data }) {
+  if (!data) return null;
+  const b = data.betas;
+  const p = data.positions;
+  const cells = [];
+  if (b) {
+    const src2330 = b.beta_2330_source || '';
+    const src0050 = b.beta_0050_source || '';
+    const fmtSrc = s => s === 'computed_60d' ? '✓' : s.startsWith('config_default') ? '預設' : s;
+    cells.push(
+      <span key="b" title="2330 / 0050 對 TX 期貨 60 日迴歸 beta">
+        β <b style={{color:'#fbbf24'}}>{b.beta_2330?.toFixed(2)}</b>
+        <span style={{color:'#64748b'}}>{fmtSrc(src2330)}</span>
+        <span style={{color:'#1e2535', margin:'0 4px'}}>·</span>
+        <b style={{color:'#fbbf24'}}>{b.beta_0050?.toFixed(2)}</b>
+        <span style={{color:'#64748b'}}>{fmtSrc(src0050)}</span>
+      </span>
+    );
+  }
+  if (p) {
+    const isFile = p.source === 'positions_file';
+    cells.push(
+      <span key="p" title={isFile ? '從 positions.json 讀取' : '使用程式內建預設'}>
+        持倉 <b style={{color: isFile ? '#4ade80' : '#94a3b8'}}>
+          {p.large_futures_lots}口大台 · {p.lots_0050}口 0050 股期
+        </b>
+        <span style={{color: isFile ? '#4ade80' : '#64748b', marginLeft:'4px'}}>
+          {isFile ? '✓ 自訂' : '預設'}
+        </span>
+      </span>
+    );
+  }
+  if (data.market_session) {
+    const sess = data.market_session;
+    const sessLabel = sess === 'day' ? '🌞 日盤' : sess === 'night' ? '🌙 夜盤' : '🌑 收市';
+    cells.push(<span key="s" style={{color:'#94a3b8'}}>{sessLabel}</span>);
+  }
+  if (cells.length === 0) return null;
+  return (
+    <div style={{
+      display:'flex', flexWrap:'wrap', gap:'14px',
+      fontSize:'10px', color:'#64748b', padding:'6px 14px',
+      background:'#0a0e1c', borderBottom:'1px solid #1e2535',
+    }}>
+      {cells.map((c, i) => <React.Fragment key={i}>{c}</React.Fragment>)}
+    </div>
+  );
+}
+
+function SectionMeta({ dte, dteTrading, iv, ivSource }) {
+  const parts = [];
+  if (dte != null) {
+    parts.push(`DTE ${dte} 天${dteTrading != null ? `（交易日 ${dteTrading}）` : ''}`);
+  }
+  if (iv != null) {
+    const ivLabel = ivSource === 'atm_market' ? 'ATM' : 'HV';
+    parts.push(<>IV <span style={{color: ivSource === 'atm_market' ? '#fbbf24' : '#94a3b8'}}>{(iv*100).toFixed(1)}%</span><span style={{fontSize:'9px', color:'#64748b', marginLeft:'2px'}}>{ivLabel}</span></>);
+  }
+  return parts.length ? (
+    <span style={{fontSize:'11px', fontWeight:400, color:'#94a3b8', marginLeft:'8px'}}>
+      {parts.map((p, i) => <React.Fragment key={i}>{i > 0 && ' · '}{p}</React.Fragment>)}
+    </span>
+  ) : null;
+}
+
 function SectionNear({ data, taiex, taiexHigh, taiexLow, price2330, price0050, hvVal }) {
   return (
     <>
       <div className="section-divider near">
-        <span className="section-title">近月 {data.txo_month} · DTE {data.dte} 天</span>
+        <span className="section-title">近月 {data.txo_month}</span>
+        <SectionMeta dte={data.dte} dteTrading={data.dte_trading} iv={data.iv_used} ivSource={data.iv_source} />
       </div>
       <StrikeAlert selectedOptions={data.selected_options} taiex={taiex} dte={data.dte} />
       <HuiDistCheck selectedOptions={data.selected_options} taiex={taiex} />
@@ -1470,7 +1558,7 @@ function SectionNear({ data, taiex, taiexHigh, taiexLow, price2330, price0050, h
 
 function SectionWeekly({ weekly, label, taiex, taiexHigh, taiexLow, price2330, price0050, hvVal }) {
   if (!weekly) return null;
-  const { delivery_month, settlement_date, series, dte, selected_options, structures } = weekly;
+  const { delivery_month, settlement_date, series, dte, dte_trading, iv_used, iv_source, selected_options, structures } = weekly;
   const fmt8 = d => d ? `${d.slice(0,4)}/${d.slice(4,6)}/${d.slice(6,8)}` : d;
   const origLabel = fmt8(delivery_month);
   const adjLabel  = settlement_date && settlement_date !== delivery_month ? fmt8(settlement_date) : null;
@@ -1478,8 +1566,9 @@ function SectionWeekly({ weekly, label, taiex, taiexHigh, taiexLow, price2330, p
     <>
       <div className="section-divider weekly">
         <span className="section-title">
-          {label} {series} · {origLabel}{adjLabel ? ` → 結算 ${adjLabel}` : ''} · DTE {dte} 天
+          {label} {series} · {origLabel}{adjLabel ? ` → 結算 ${adjLabel}` : ''}
         </span>
+        <SectionMeta dte={dte} dteTrading={dte_trading} iv={iv_used} ivSource={iv_source} />
       </div>
       <StrikeAlert selectedOptions={selected_options} taiex={taiex} dte={dte} />
       <HuiDistCheck selectedOptions={selected_options} taiex={taiex} />
@@ -1501,11 +1590,12 @@ function SectionWeekly({ weekly, label, taiex, taiexHigh, taiexLow, price2330, p
 
 function SectionFarMonth({ farMonth, taiex, taiexHigh, taiexLow, price2330, price0050, hvVal }) {
   if (!farMonth) return null;
-  const { txo_month, dte, selected_options, structures } = farMonth;
+  const { txo_month, dte, dte_trading, iv_used, iv_source, selected_options, structures } = farMonth;
   return (
     <>
       <div className="section-divider far">
-        <span className="section-title">遠月 {txo_month} · DTE {dte} 天 · 結算日換倉目標</span>
+        <span className="section-title">遠月 {txo_month} · 結算日換倉目標</span>
+        <SectionMeta dte={dte} dteTrading={dte_trading} iv={iv_used} ivSource={iv_source} />
       </div>
       <StrikeAlert selectedOptions={selected_options} taiex={taiex} dte={dte} />
       <HuiDistCheck selectedOptions={selected_options} taiex={taiex} />
@@ -1697,6 +1787,8 @@ function App() {
         </div>
       </div>
 
+      <EngineStatus data={data} />
+
       {error && <div className="error-box">⚠ 載入失敗：{error}</div>}
       {data?.quotes_source === 'bs_estimate' && (
         <div className="error-box" style={{background:'#17130a', borderColor:'#ca8a04', color:'#fde68a'}}>
@@ -1718,7 +1810,8 @@ function App() {
         <>
           <MarketStrip market={data.market} txo_month={data.txo_month} dte={data.dte}
                        indicators={data.indicators} targets={data.targets}
-                       indicators0050={data.indicators_0050} />
+                       indicators0050={data.indicators_0050}
+                       iv={data.iv_used} ivSource={data.iv_source} />
           <DTEWarning dte={data.dte} />
           <MarketHoursNote />
           {(() => {
