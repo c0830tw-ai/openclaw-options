@@ -1,5 +1,6 @@
 .env
 firebase-key.json
+positions.json
 *.log
 latest_collar.json
 __pycache__/
