@@ -1945,6 +1945,13 @@ def main():
         # 13. 推 Firebase
         push_to_firebase(result)
 
+        # 14. 觸發 alerts（不阻塞主流程；失敗不影響策略更新）
+        try:
+            import alerts
+            alerts.main()
+        except Exception as _e:
+            log.warning(f'alerts 模組執行失敗（不影響策略結果）: {_e}')
+
     except Exception as e:
         log.exception(f'Error: {e}')
         raise
