@@ -1,13 +1,39 @@
 {
   "_comment": "持倉設定。複製此檔成 positions.json（已 gitignore）並依實際持倉修改。",
-  "_fields": {
-    "large_futures_lots": "大台積電股期口數（CDF），1 口 = 2000 股",
-    "lots_0050": "0050 ETF 股期口數（NYF）",
-    "lot_size_0050": "0050 股期每口受益憑證單位數（合約規格，通常 10000）",
-    "cost_basis_0050": "0050 ETF 期 進場均價（NT/單位）；填 0 = 不啟用 unrealized P&L 計算"
+  "_legacy_fields_v0": {
+    "large_futures_lots": "大台積電股期口數（CDF），1 口 = 2000 股 — 舊版欄位",
+    "lots_0050":          "0050 ETF 股期口數（NYF）— 舊版欄位",
+    "lot_size_0050":      "0050 股期每口受益憑證單位數 — 舊版欄位",
+    "cost_basis_0050":    "0050 ETF 期 進場均價（NT/單位）；0 = 不啟用 unrealized P&L"
+  },
+  "_instruments_field_v1": {
+    "_intro": "新 schema：用 instruments[] 詳細列出所有持倉，系統會自動算 portfolio 名目、beta-adj、推薦 put 口數",
+    "_supported_types": [
+      "0050_etf_futures      (lots, lot_size=10000, cost_basis)",
+      "0050_etf_cash         (shares, cost_basis)",
+      "tsmc_mini_futures     (lots, lot_size=100,   cost_basis)",
+      "tsmc_large_futures    (lots, lot_size=2000,  cost_basis)",
+      "generic_taiex_proxy   (name, notional, cost_basis_total)  ← 用於 00981A 等系統不抓報價的台股"
+    ],
+    "_role": "core_long = 長期 hedge 需求；hedge_book / trading_book 預留給 Phase 2"
   },
   "large_futures_lots": 1,
-  "lots_0050": 2,
+  "lots_0050": 6,
   "lot_size_0050": 10000,
-  "cost_basis_0050": 0
+  "cost_basis_0050": 79.655,
+
+  "instruments": [
+    { "type": "0050_etf_futures",   "role": "core_long",
+      "lots": 6,  "lot_size": 10000, "cost_basis": 79.655 },
+
+    { "type": "tsmc_mini_futures",  "role": "core_long",
+      "lots": 10, "lot_size": 100,    "cost_basis": 2151.75 },
+
+    { "type": "tsmc_large_futures", "role": "core_long",
+      "lots": 0,  "lot_size": 2000,   "cost_basis": 0 },
+
+    { "type": "generic_taiex_proxy","role": "core_long",
+      "name": "00981A 主動統一",
+      "notional": 2360000, "cost_basis_total": 1500000 }
+  ]
 }

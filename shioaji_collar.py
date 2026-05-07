@@ -103,12 +103,17 @@ CFG = Config()
 _POSITIONS_FILE = Path(__file__).parent / 'positions.json'
 _POSITIONS_OVERRIDABLE = {'large_futures_lots', 'lots_0050', 'lot_size_0050', 'cost_basis_0050'}
 POSITIONS_SOURCE = 'config_default'   # 'positions_file' 表示來自檔案
+POSITIONS_INSTRUMENTS: List[Dict[str, Any]] = []   # 多商品 schema (Phase 1+)
 
 
 def _apply_positions_overrides() -> None:
     """從 ./positions.json 讀取持倉資料覆蓋 CFG。
-    只允許覆蓋 _POSITIONS_OVERRIDABLE 內的欄位（避免亂改其他配置）。"""
-    global POSITIONS_SOURCE
+    支援兩種 schema：
+      v0: 平面欄位（large_futures_lots / lots_0050 / lot_size_0050 / cost_basis_0050）
+      v1: instruments[] 陣列（多 instrument 詳細紀錄）
+    兩者可同時存在（v1 不影響 v0 的舊行為，給新功能用）。
+    只覆蓋白名單內欄位，避免亂改其他配置。"""
+    global POSITIONS_SOURCE, POSITIONS_INSTRUMENTS
     if not _POSITIONS_FILE.exists():
         return
     try:
@@ -119,11 +124,25 @@ def _apply_positions_overrides() -> None:
     if not isinstance(data, dict):
         log.warning('positions.json 格式錯誤（必須是 object），使用 CFG 預設值')
         return
+
+    # v0：平面欄位覆蓋
     applied = []
     for k, v in data.items():
         if k in _POSITIONS_OVERRIDABLE and isinstance(v, (int, float)):
             setattr(CFG, k, v)
             applied.append(f'{k}={v}')
+
+    # v1：instruments 陣列
+    insts = data.get('instruments')
+    if isinstance(insts, list):
+        valid = []
+        for it in insts:
+            if isinstance(it, dict) and it.get('type'):
+                valid.append(it)
+        POSITIONS_INSTRUMENTS = valid
+        if valid:
+            applied.append(f'instruments[{len(valid)}]')
+
     if applied:
         POSITIONS_SOURCE = 'positions_file'
         log.info(f'positions.json 覆蓋: {", ".join(applied)}')
@@ -654,6 +673,119 @@ def _find_spread_leg(chain: list, ref_strike: float, opt_right, is_put: bool, wi
     if not candidates:
         return None
     return min(candidates, key=lambda c: abs(c.strike_price - target))
+
+
+def compute_portfolio_breakdown(
+    instruments: List[Dict[str, Any]],
+    price_0050: float, price_2330: float, taiex: float,
+    beta_0050: float, beta_2330: float,
+) -> Dict[str, Any]:
+    """
+    從 positions.json 的 instruments[] 計算逐商品名目、未實現 P&L、整體 hedge ratio。
+    支援的 instrument types：
+      0050_etf_futures      lots × lot_size (10000) × price_0050        beta=beta_0050
+      0050_etf_cash         shares × price_0050                          beta=beta_0050
+      tsmc_mini_futures     lots × lot_size (100) × price_2330           beta=beta_2330
+      tsmc_large_futures    lots × lot_size (2000) × price_2330          beta=beta_2330
+      generic_taiex_proxy   notional 直接給（其他台股 ETF/個股）           beta=1.0
+    回傳：
+      {
+        'items': [...]                # 逐 instrument 結果
+        'totals': {
+          'core_long_notional': 總長期曝險,
+          'core_long_beta_adj': beta-adj 曝險（折成 TAIEX 等值）,
+          'core_long_unrealized': 已知 cost_basis 的 unrealized 加總,
+          'recommended_put_lots': ceil(beta_adj / TXO_unit_notional),
+        }
+      }
+    """
+    items = []
+    sum_notional = 0.0
+    sum_beta_adj = 0.0
+    sum_unrealized = 0.0
+    txo_unit = (taiex or 0) * 50
+
+    def _push(name, role, lots_or_shares, price, notional, unit_beta,
+              cost_basis, current_value):
+        nonlocal sum_notional, sum_beta_adj, sum_unrealized
+        beta_adj = notional * unit_beta
+        if role == 'core_long':
+            sum_notional   += notional
+            sum_beta_adj   += beta_adj
+            if cost_basis and current_value is not None:
+                sum_unrealized += (current_value - cost_basis)
+        items.append({
+            'name': name,
+            'role': role,
+            'qty': lots_or_shares,
+            'price': round(price, 4) if price else None,
+            'notional': round(notional, 0),
+            'beta': round(unit_beta, 3),
+            'beta_adj_notional': round(beta_adj, 0),
+            'cost_basis': cost_basis,
+            'unrealized': round(current_value - cost_basis, 0) if (cost_basis and current_value is not None) else None,
+        })
+
+    for it in instruments:
+        t    = it.get('type')
+        role = it.get('role', 'core_long')
+        if t == '0050_etf_futures':
+            lots = it.get('lots', 0) or 0
+            ls   = it.get('lot_size', 10000) or 10000
+            cb   = it.get('cost_basis', 0) or 0
+            notional = lots * ls * (price_0050 or 0)
+            cur_val  = lots * ls * (price_0050 or 0)
+            cb_val   = lots * ls * cb if cb else 0
+            _push(f'0050 ETF期 × {lots}口', role, lots, price_0050, notional,
+                  beta_0050, cb_val if cb else None, cur_val if cb else None)
+        elif t == '0050_etf_cash':
+            shares = it.get('shares', 0) or 0
+            cb     = it.get('cost_basis', 0) or 0
+            notional = shares * (price_0050 or 0)
+            cur_val  = shares * (price_0050 or 0)
+            cb_val   = shares * cb if cb else 0
+            _push(f'0050 現股 × {shares}股', role, shares, price_0050, notional,
+                  beta_0050, cb_val if cb else None, cur_val if cb else None)
+        elif t == 'tsmc_mini_futures':
+            lots = it.get('lots', 0) or 0
+            ls   = it.get('lot_size', 100) or 100
+            cb   = it.get('cost_basis', 0) or 0
+            notional = lots * ls * (price_2330 or 0)
+            cur_val  = lots * ls * (price_2330 or 0)
+            cb_val   = lots * ls * cb if cb else 0
+            _push(f'小台積電期 × {lots}口', role, lots, price_2330, notional,
+                  beta_2330, cb_val if cb else None, cur_val if cb else None)
+        elif t == 'tsmc_large_futures':
+            lots = it.get('lots', 0) or 0
+            ls   = it.get('lot_size', 2000) or 2000
+            cb   = it.get('cost_basis', 0) or 0
+            notional = lots * ls * (price_2330 or 0)
+            cur_val  = lots * ls * (price_2330 or 0)
+            cb_val   = lots * ls * cb if cb else 0
+            _push(f'大台積電期 × {lots}口', role, lots, price_2330, notional,
+                  beta_2330, cb_val if cb else None, cur_val if cb else None)
+        elif t == 'generic_taiex_proxy':
+            name     = it.get('name', '其他台股')
+            notional = it.get('notional', 0) or 0
+            cb_total = it.get('cost_basis_total', 0) or 0
+            _push(name, role, 1, None, notional, 1.0,
+                  cb_total if cb_total else None,
+                  notional if cb_total else None)
+        else:
+            log.debug(f'未知 instrument type: {t}，略過')
+
+    rec_lots = math.ceil(sum_beta_adj / txo_unit) if txo_unit > 0 else 0
+
+    return {
+        'items':  items,
+        'totals': {
+            'core_long_notional':   round(sum_notional, 0),
+            'core_long_beta_adj':   round(sum_beta_adj, 0),
+            'core_long_unrealized': round(sum_unrealized, 0),
+            'txo_unit_notional':    round(txo_unit, 0),
+            'recommended_put_lots': rec_lots,
+        },
+    }
 
 
 def compute_contract_count(price_2330: float, taiex: float,
@@ -1451,6 +1583,20 @@ def main():
         contracts = compute_contract_count(price_2330, taiex, beta=beta_2330_used)
         log.info(f"口數: {contracts['recommended_contracts']} (beta_ratio {contracts['beta_adjusted_ratio']:.2f})")
 
+        # 5b. 多商品 portfolio 拆解（若 positions.json 有 instruments[]）
+        portfolio_breakdown = None
+        if POSITIONS_INSTRUMENTS:
+            portfolio_breakdown = compute_portfolio_breakdown(
+                POSITIONS_INSTRUMENTS,
+                price_0050=price_0050, price_2330=price_2330, taiex=taiex,
+                beta_0050=beta_0050_used, beta_2330=beta_2330_used,
+            )
+            t = portfolio_breakdown['totals']
+            log.info(f"Portfolio core_long: 名目 {t['core_long_notional']:,.0f}  "
+                     f"beta-adj {t['core_long_beta_adj']:,.0f}  "
+                     f"建議 {t['recommended_put_lots']} 口 put hedge  "
+                     f"未實現 {t['core_long_unrealized']:+,.0f}")
+
         # 6. 抓 TXO 鏈
         chain = fetch_txo_chain(api, month)
 
@@ -1815,6 +1961,7 @@ def main():
                 'cost_basis_0050':    CFG.cost_basis_0050,
                 'source':             POSITIONS_SOURCE,
             },
+            'portfolio': portfolio_breakdown,   # None if no instruments[] config
             'market': market,
             'txo_month': month,
             'dte': dte,
