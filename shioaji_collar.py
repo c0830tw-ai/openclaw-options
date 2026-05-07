@@ -67,6 +67,7 @@ class Config:
     beta_0050: float = 0.97               # 0050 對加權的 beta
     lots_0050: int = 2                    # 0050 股期口數
     lot_size_0050: int = 10000            # 每口受益憑證單位數
+    cost_basis_0050: float = 0.0          # 進場均價（NT/單位）；0 = 未提供，用於計算 unrealized P&L
 
     # 動態履約價選擇
     delta_target: float = 0.10            # Put/Call delta 絕對值上限
@@ -100,7 +101,7 @@ CFG = Config()
 
 # ============ Positions Override ============
 _POSITIONS_FILE = Path(__file__).parent / 'positions.json'
-_POSITIONS_OVERRIDABLE = {'large_futures_lots', 'lots_0050', 'lot_size_0050'}
+_POSITIONS_OVERRIDABLE = {'large_futures_lots', 'lots_0050', 'lot_size_0050', 'cost_basis_0050'}
 POSITIONS_SOURCE = 'config_default'   # 'positions_file' 表示來自檔案
 
 
@@ -1811,6 +1812,7 @@ def main():
                 'large_futures_lots': CFG.large_futures_lots,
                 'lots_0050':          CFG.lots_0050,
                 'lot_size_0050':      CFG.lot_size_0050,
+                'cost_basis_0050':    CFG.cost_basis_0050,
                 'source':             POSITIONS_SOURCE,
             },
             'market': market,

@@ -31,6 +31,12 @@ DEFAULT_RULES = {
     'weekly_put_roll_dte':       1,     # weekly put 剩 DTE
     'iv_spike':                  0.35,  # ATM IV 上限
     'iv_crush':                  0.20,  # ATM IV 下限
+
+    # 6 口 portfolio 量身規則
+    'tx_anchor_price':           0,     # TX 基準價（0 = 不啟用此規則）
+    'tx_drawdown_alert_pct':    -10.0,  # 從 anchor 跌 X% 觸發平倉提醒
+    'profit_lock_threshold':     0,     # 0050 ETF期 unrealized 浮盈超過此 NT 觸發（0 = 不啟用）
+
     'cooldown_minutes':          60,    # 同一規則最少間隔分鐘
     'telegram_enabled':          True,
 }
@@ -141,6 +147,35 @@ def evaluate(data: dict, rules: dict) -> list:
             'level': '🟢',
             'msg':   f"ATM IV {iv*100:.1f}%（≤ {rules['iv_crush']*100:.0f}%）→ 賣方甜蜜點、保險便宜",
         })
+
+    # 7. TX drawdown from anchor — 從基準價跌 X% 提醒平倉
+    anchor = rules.get('tx_anchor_price', 0)
+    if anchor and tx:
+        drawdown_pct = (tx - anchor) / anchor * 100
+        if drawdown_pct <= rules['tx_drawdown_alert_pct']:
+            alerts.append({
+                'key':   'tx_drawdown',
+                'level': '🔴',
+                'msg':   (f"TX {tx:.0f} 從基準 {anchor:.0f} 跌 {drawdown_pct:.1f}%"
+                          f"（閾值 {rules['tx_drawdown_alert_pct']}%）→ 考慮平倉 1-2 口 0050 期鎖部分損失"),
+            })
+
+    # 8. Unrealized profit lock — 0050 ETF期浮盈超過閾值
+    threshold = rules.get('profit_lock_threshold', 0)
+    pos = data.get('positions') or {}
+    cost_basis = pos.get('cost_basis_0050', 0) or 0
+    lots = pos.get('lots_0050', 0) or 0
+    lot_size = pos.get('lot_size_0050', 10000) or 10000
+    cur_0050 = (market.get('price_0050') or 0)
+    if threshold and cost_basis > 0 and lots > 0 and cur_0050 > 0:
+        unrealized = (cur_0050 - cost_basis) * lot_size * lots
+        if unrealized >= threshold:
+            alerts.append({
+                'key':   'profit_lock',
+                'level': '🟡',
+                'msg':   (f"0050 ETF期浮盈 {unrealized:,.0f} NT（≥ {threshold:,.0f}）"
+                          f"→ 考慮減 1-2 口或加買 put 鎖獲利"),
+            })
 
     return alerts
 
