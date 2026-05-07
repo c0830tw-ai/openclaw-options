@@ -3,6 +3,8 @@ firebase-key.json
 positions.json
 night_probe.py
 taiwan_holidays_cache.json
+alerts_config.json
+alerts_state.json
 *.log
 latest_collar.json
 __pycache__/

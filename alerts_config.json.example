@@ -1,0 +1,21 @@
+{
+  "_comment": "alerts.py 觸發規則閾值；複製成 alerts_config.json 後修改",
+  "_fields": {
+    "tx_drop_pct":              "TX 當日跌幅（%）→ 觸發。數字越負越嚴格",
+    "tx_rise_pct":              "TX 當日漲幅（%）→ 觸發。考慮減碼",
+    "short_call_distance_sigma":"近月短 call 距現價 σ 數，小於此值觸發",
+    "weekly_put_roll_dte":      "週選剩餘交易日 ≤ 此值 → 提醒 roll",
+    "iv_spike":                 "ATM IV ≥ 此值 → 觸發（小數）",
+    "iv_crush":                 "ATM IV ≤ 此值 → 觸發（小數）",
+    "cooldown_minutes":         "同一規則至少間隔幾分鐘才再次通知",
+    "telegram_enabled":         "true 才送 Telegram；否則只 console"
+  },
+  "tx_drop_pct":              -1.5,
+  "tx_rise_pct":               2.0,
+  "short_call_distance_sigma": 1.0,
+  "weekly_put_roll_dte":       1,
+  "iv_spike":                  0.35,
+  "iv_crush":                  0.20,
+  "cooldown_minutes":          60,
+  "telegram_enabled":          true
+}
