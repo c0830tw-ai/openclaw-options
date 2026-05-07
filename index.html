@@ -1465,6 +1465,43 @@ function SimTable({ structures, selectedOptions, taiex }) {
   );
 }
 
+function RollSuggestions({ data }) {
+  const sugs = data?.roll_suggestions;
+  if (!sugs || !sugs.length) return null;
+  const fmt = n => n == null ? '—' : n.toLocaleString(undefined, {maximumFractionDigits: 0});
+  const colorFor = p => p === 'high' ? '#fb923c' : '#fbbf24';
+  return (
+    <div style={{margin:'8px 0'}}>
+      {sugs.map((s, i) => (
+        <div key={i} style={{
+          background: '#1c1610', border: `1px solid ${colorFor(s.priority)}`,
+          borderRadius: '6px', padding: '8px 12px', marginBottom: '6px',
+          fontSize: '11px', color: '#fde68a',
+        }}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'4px'}}>
+            <span style={{fontWeight:700, color: colorFor(s.priority)}}>
+              🔧 Roll 建議 [{s.priority}]
+            </span>
+            <span style={{fontSize:'10px', color:'#94a3b8'}}>{s.action}</span>
+          </div>
+          <div style={{color:'#e2e8f0', marginBottom:'4px'}}>{s.reason}</div>
+          {s.instructions?.length > 0 && (
+            <ul style={{margin:'4px 0 4px 16px', padding:0, color:'#cbd5e1'}}>
+              {s.instructions.map((ins, j) => <li key={j} style={{fontSize:'10px'}}>{ins}</li>)}
+            </ul>
+          )}
+          {s.estimates?.total_cost && (
+            <div style={{fontSize:'10px', color:'#94a3b8', marginTop:'4px'}}>
+              預估成本 ≈ NT$ {fmt(s.estimates.total_cost)}
+              {s.estimates.replacement_iv ? ` · IV ${(s.estimates.replacement_iv*100).toFixed(1)}%` : ''}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TrendStrip({ data }) {
   const tr = data?.trend;
   if (!tr) return null;
@@ -1963,6 +2000,7 @@ function App() {
       </div>
 
       <EngineStatus data={data} />
+      <RollSuggestions data={data} />
       <PortfolioBreakdown data={data} />
       <TrendStrip data={data} />
       <TradingLedger data={data} />

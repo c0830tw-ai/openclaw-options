@@ -1964,6 +1964,7 @@ def main():
             'portfolio': portfolio_breakdown,   # None if no instruments[] config
             'ledger':    None,                  # filled below
             'trend':     None,                  # filled below
+            'roll_suggestions': [],             # filled below
             'market': market,
             'txo_month': month,
             'dte': dte,
@@ -2044,6 +2045,15 @@ def main():
                              f"unrealized Δ {_y['unrealized_delta'] or 0:+,.0f}")
         except Exception as _e:
             log.debug(f'snapshot 失敗（可忽略）: {_e}')
+
+        # 14d. Roll 操作建議
+        try:
+            import roll_advisor as _RA
+            result['roll_suggestions'] = _RA.compute_roll_suggestions(result)
+            for _sug in result['roll_suggestions']:
+                log.info(f"Roll [{_sug['priority']}] {_sug['reason']}")
+        except Exception as _e:
+            log.debug(f'roll_advisor 失敗（可忽略）: {_e}')
 
         # 報價回填保護：當「這次抓到 BS 估算」且「快取有真實報價」時才回填
         # （之前條件是 not is_market_hours，現在夜盤 TXO 也有真實報價，改用 quotes_source 直接判斷）

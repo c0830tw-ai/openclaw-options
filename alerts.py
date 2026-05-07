@@ -210,6 +210,30 @@ def format_message(alerts: list, data: dict) -> str:
     iv_str = f"{iv*100:.1f}%" if iv else '?'
     header = f"📊 *Collar Alert* · TX {tx} · IV {iv_str} · {sess}"
     body = '\n'.join(f"{a['level']} {a['msg']}" for a in alerts)
+
+    # Append roll suggestions if any 與 alerts 相關（roll/call_close）
+    fired_keys = {a['key'] for a in alerts}
+    relevant_triggers = {
+        'roll_weekly_fri': ('週五週選_expiring',),
+        'roll_weekly_wed': ('週三週選_expiring',),
+        'call_close':      ('short_call_too_close',),
+    }
+    rolls = data.get('roll_suggestions') or []
+    extra_lines = []
+    for rs in rolls:
+        for fkey, triggers in relevant_triggers.items():
+            if fkey in fired_keys and any(t in rs.get('trigger', '') for t in triggers):
+                extra_lines.append(f"\n🔧 建議: {rs['reason']}")
+                for ins in rs.get('instructions', []):
+                    extra_lines.append(f"   • {ins}")
+                est = rs.get('estimates') or {}
+                if est.get('total_cost'):
+                    extra_lines.append(f"   ≈ NT$ {est['total_cost']:,.0f}")
+                break
+
+    if extra_lines:
+        body += '\n' + '\n'.join(extra_lines)
+
     return f"{header}\n\n{body}"
 
 
