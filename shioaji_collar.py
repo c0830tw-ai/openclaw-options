@@ -261,22 +261,29 @@ def is_market_hours() -> bool:
 
 
 def is_night_session() -> bool:
-    """TX/TXO 期貨夜盤：15:00 至隔日 05:00。
-    週日無夜盤；週六僅至 05:00；國定假日當天 15:00 後也無夜盤。"""
+    """TX/TXO 期貨夜盤：15:00 開盤 → 隔日 05:00 收盤。
+    必須前一個日盤是工作日（非週末、非國定假日）才會有對應的夜盤。
+    所以週一凌晨、週日凌晨、假日後一天凌晨都不算夜盤。"""
     now = datetime.now()
     h = now.hour
-    if now.weekday() == 6:                                  # 週日整天無夜盤
-        return False
-    # 週六：僅 00:00–05:00 屬於前日延續的夜盤
-    if now.weekday() == 5:
-        return h < 5
-    # 平日：15:00 後或 05:00 前
+
+    # 15:00–23:59：今晚的夜盤必須今天有日盤（工作日且非假日）
     if h >= 15:
+        if now.weekday() >= 5:
+            return False
         if now.strftime('%Y-%m-%d') in TAIWAN_HOLIDAYS:
             return False
         return True
+
+    # 00:00–04:59：昨晚夜盤的延續，必須昨天有日盤
     if h < 5:
+        yesterday = now - timedelta(days=1)
+        if yesterday.weekday() >= 5:
+            return False
+        if yesterday.strftime('%Y-%m-%d') in TAIWAN_HOLIDAYS:
+            return False
         return True
+
     return False
 
 
@@ -1348,7 +1355,8 @@ def main():
             hv_2330    = indicators_raw.pop('hv')
             closes_2330 = indicators_raw.pop('closes', [])
             dates_2330  = indicators_raw.pop('dates',  [])
-            indicators = {**indicators_raw, 'hv_2330': hv_2330, 'hv_taiex': hv_2330 / CFG.beta}
+            # hv_taiex 之後會在 3b/3b-2 用 TX kbar 或 dynamic beta 設定，這邊先留空
+            indicators = {**indicators_raw, 'hv_2330': hv_2330, 'hv_taiex': None}
         else:
             indicators = None
         indicators_0050 = fetch_kbars(api, '0050')

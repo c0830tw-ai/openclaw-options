@@ -1470,26 +1470,24 @@ function EngineStatus({ data }) {
   const b = data.betas;
   const p = data.positions;
   const cells = [];
-  if (b) {
-    const src2330 = b.beta_2330_source || '';
-    const src0050 = b.beta_0050_source || '';
-    const fmtSrc = s => s === 'computed_60d' ? '✓' : s.startsWith('config_default') ? '預設' : s;
+  if (b && (b.beta_2330 != null || b.beta_0050 != null)) {
+    const fmtSrc = s => !s ? '' : s === 'computed_60d' ? '✓' : s.startsWith('config_default') ? '預設' : s;
     cells.push(
       <span key="b" title="2330 / 0050 對 TX 期貨 60 日迴歸 beta">
-        β <b style={{color:'#fbbf24'}}>{b.beta_2330?.toFixed(2)}</b>
-        <span style={{color:'#64748b'}}>{fmtSrc(src2330)}</span>
+        β <b style={{color:'#fbbf24'}}>{b.beta_2330?.toFixed(2) ?? '—'}</b>
+        <span style={{color:'#64748b'}}>{fmtSrc(b.beta_2330_source)}</span>
         <span style={{color:'#1e2535', margin:'0 4px'}}>·</span>
-        <b style={{color:'#fbbf24'}}>{b.beta_0050?.toFixed(2)}</b>
-        <span style={{color:'#64748b'}}>{fmtSrc(src0050)}</span>
+        <b style={{color:'#fbbf24'}}>{b.beta_0050?.toFixed(2) ?? '—'}</b>
+        <span style={{color:'#64748b'}}>{fmtSrc(b.beta_0050_source)}</span>
       </span>
     );
   }
-  if (p) {
+  if (p && (p.large_futures_lots != null || p.lots_0050 != null)) {
     const isFile = p.source === 'positions_file';
     cells.push(
       <span key="p" title={isFile ? '從 positions.json 讀取' : '使用程式內建預設'}>
         持倉 <b style={{color: isFile ? '#4ade80' : '#94a3b8'}}>
-          {p.large_futures_lots}口大台 · {p.lots_0050}口 0050 股期
+          {p.large_futures_lots ?? '?'}口大台 · {p.lots_0050 ?? '?'}口 0050 股期
         </b>
         <span style={{color: isFile ? '#4ade80' : '#64748b', marginLeft:'4px'}}>
           {isFile ? '✓ 自訂' : '預設'}
