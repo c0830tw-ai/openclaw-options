@@ -5,6 +5,8 @@ night_probe.py
 taiwan_holidays_cache.json
 alerts_config.json
 alerts_state.json
+.claude/
+*.code-workspace
 *.log
 latest_collar.json
 __pycache__/
