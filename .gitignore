@@ -1,6 +1,7 @@
 .env
 firebase-key.json
 positions.json
+night_probe.py
 *.log
 latest_collar.json
 __pycache__/
