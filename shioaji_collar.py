@@ -1962,6 +1962,7 @@ def main():
                 'source':             POSITIONS_SOURCE,
             },
             'portfolio': portfolio_breakdown,   # None if no instruments[] config
+            'ledger':    None,                  # filled below
             'market': market,
             'txo_month': month,
             'dte': dte,
@@ -2017,6 +2018,17 @@ def main():
             'weekly_wed':  weekly_wed_data,
             'weekly_fri':  weekly_fri_data,
         }
+
+        # 14b. Trading ledger summary（若 trades_ledger.json 存在）
+        try:
+            import ledger as _L
+            result['ledger'] = _L.summary()
+            if result['ledger']:
+                _ls = result['ledger']
+                log.info(f"Ledger: {_ls['open_count']} open / {_ls['closed_count']} closed  "
+                         f"MTD {_ls['mtd_realized']:+,.0f} / Lifetime {_ls['lifetime_realized']:+,.0f}")
+        except Exception as _e:
+            log.debug(f'ledger summary 失敗（可忽略）: {_e}')
 
         # 報價回填保護：當「這次抓到 BS 估算」且「快取有真實報價」時才回填
         # （之前條件是 not is_market_hours，現在夜盤 TXO 也有真實報價，改用 quotes_source 直接判斷）

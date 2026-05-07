@@ -1465,6 +1465,74 @@ function SimTable({ structures, selectedOptions, taiex }) {
   );
 }
 
+function TradingLedger({ data }) {
+  const lg = data?.ledger;
+  if (!lg) return null;
+  const fmt = n => n == null ? '—' : n.toLocaleString(undefined, {maximumFractionDigits: 0});
+  const sign = n => n == null ? '—' : (n >= 0 ? '+' : '') + fmt(n);
+  const pnlColor = n => n == null ? '#64748b' : (n >= 0 ? '#4ade80' : '#f87171');
+  return (
+    <div style={{
+      background: '#0a0e1c', border: '1px solid #1e2535',
+      borderRadius: '6px', padding: '8px 12px', margin: '8px 0',
+      fontSize: '11px', color: '#cbd5e1',
+    }}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px'}}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>📒 Trading Ledger</span>
+        <span style={{fontSize:'10px', color:'#64748b'}}>
+          Open <b style={{color:'#fbbf24'}}>{lg.open_count}</b>
+          <span style={{margin:'0 4px', color:'#1e2535'}}>·</span>
+          Closed <b>{lg.closed_count}</b>
+          <span style={{margin:'0 4px', color:'#1e2535'}}>·</span>
+          MTD <b style={{color: pnlColor(lg.mtd_realized)}}>{sign(lg.mtd_realized)}</b>
+          <span style={{margin:'0 4px', color:'#1e2535'}}>·</span>
+          Lifetime <b style={{color: pnlColor(lg.lifetime_realized)}}>{sign(lg.lifetime_realized)}</b>
+        </span>
+      </div>
+
+      {Object.keys(lg.by_book || {}).length > 0 && (
+        <div style={{fontSize:'10px', color:'#64748b', marginBottom:'4px'}}>
+          By book: {Object.entries(lg.by_book || {}).map(([book, pnl], i) => (
+            <span key={book} style={{marginRight:'10px'}}>
+              {i > 0 && <span style={{color:'#1e2535'}}>· </span>}
+              <span style={{color:'#94a3b8'}}>{book}</span> <b style={{color: pnlColor(pnl)}}>{sign(pnl)}</b>
+              <span style={{color:'#64748b'}}> ({(lg.by_book_count || {})[book] || 0})</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {lg.open_positions?.length > 0 && (
+        <table style={{width:'100%', borderCollapse:'collapse', fontSize:'10px', marginTop:'6px'}}>
+          <thead style={{color:'#64748b'}}>
+            <tr>
+              <th style={{textAlign:'left',  padding:'2px 4px'}}>ID</th>
+              <th style={{textAlign:'left',  padding:'2px 4px'}}>Side</th>
+              <th style={{textAlign:'left',  padding:'2px 4px'}}>Instrument</th>
+              <th style={{textAlign:'right', padding:'2px 4px'}}>Qty</th>
+              <th style={{textAlign:'right', padding:'2px 4px'}}>Open @</th>
+              <th style={{textAlign:'left',  padding:'2px 4px'}}>Book</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lg.open_positions.map((op, i) => (
+              <tr key={i} style={{borderTop:'1px solid #1e2535'}}>
+                <td style={{padding:'2px 4px', color:'#64748b', fontSize:'9px'}}>{op.id}</td>
+                <td style={{padding:'2px 4px',
+                            color: op.side?.startsWith('sell') ? '#f87171' : '#4ade80'}}>{op.side}</td>
+                <td style={{padding:'2px 4px'}}>{op.instrument}</td>
+                <td style={{padding:'2px 4px', textAlign:'right'}}>{op.qty}</td>
+                <td style={{padding:'2px 4px', textAlign:'right'}}>{op.open_price}</td>
+                <td style={{padding:'2px 4px', color:'#94a3b8'}}>{op.book}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function PortfolioBreakdown({ data }) {
   const pf = data?.portfolio;
   if (!pf || !pf.items?.length) return null;
@@ -1847,6 +1915,7 @@ function App() {
 
       <EngineStatus data={data} />
       <PortfolioBreakdown data={data} />
+      <TradingLedger data={data} />
 
       {error && <div className="error-box">⚠ 載入失敗：{error}</div>}
       {data?.quotes_source === 'bs_estimate' && (
