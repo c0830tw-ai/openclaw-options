@@ -97,6 +97,7 @@ def evaluate(data: dict, rules: dict) -> list:
             'key':   'tx_drop',
             'level': '🔴',
             'msg':   f"TX 急跌 {chgpct:.2f}%（閾值 {rules['tx_drop_pct']}%）→ 檢查保護是否足夠",
+            'tip':   '看新聞｜put 距 TX <5% 抱、>8% 加 closer put｜可減 1-2 口停損',
         })
 
     # 2. TX 急漲
@@ -105,6 +106,7 @@ def evaluate(data: dict, rules: dict) -> list:
             'key':   'tx_rise',
             'level': '🟡',
             'msg':   f"TX 急漲 +{chgpct:.2f}%（閾值 +{rules['tx_rise_pct']}%）→ 考慮減碼鎖獲利",
+            'tip':   '看 short call 距現價｜可減 1 口落袋｜不要追長',
         })
 
     # 3. 短 call 距現價過近
@@ -120,6 +122,7 @@ def evaluate(data: dict, rules: dict) -> list:
                 'key':   'call_close',
                 'level': '🟠',
                 'msg':   f"近月 Call {call_strike:.0f} 距現價剩 {distance_sigma:.2f}σ（閾值 < {rules['short_call_distance_sigma']}σ）→ 風險升高",
+                'tip':   '看下方建議單 roll up｜算 buyback 划算｜不要等 ITM',
             })
 
     # 4. Weekly put 即將失效
@@ -130,6 +133,7 @@ def evaluate(data: dict, rules: dict) -> list:
                 'key':   f'roll_{w_key}',
                 'level': '🟡',
                 'msg':   f"{w_label}（{wk.get('settlement_date','')}）剩交易日 {wk['dte_trading']} 天 → 該 roll 保護",
+                'tip':   '看下方建議單｜組合單避免分腿｜記得 add_trade.py 紀錄',
             })
 
     # 5. IV 飆
@@ -138,6 +142,7 @@ def evaluate(data: dict, rules: dict) -> list:
             'key':   'iv_spike',
             'level': '🔴',
             'msg':   f"ATM IV {iv*100:.1f}%（≥ {rules['iv_spike']*100:.0f}%）→ 賣方受傷、保險變貴",
+            'tip':   '暫緩 roll & 加買 put｜等 IV 回落再動｜別恐慌平倉',
         })
 
     # 6. IV 崩
@@ -146,6 +151,7 @@ def evaluate(data: dict, rules: dict) -> list:
             'key':   'iv_crush',
             'level': '🟢',
             'msg':   f"ATM IV {iv*100:.1f}%（≤ {rules['iv_crush']*100:.0f}%）→ 賣方甜蜜點、保險便宜",
+            'tip':   '加買 put 趁便宜｜可賣 call 收 premium｜不要 overload 賣方',
         })
 
     # 7. TX drawdown from anchor — 從基準價跌 X% 提醒平倉
@@ -158,6 +164,7 @@ def evaluate(data: dict, rules: dict) -> list:
                 'level': '🔴',
                 'msg':   (f"TX {tx:.0f} 從基準 {anchor:.0f} 跌 {drawdown_pct:.1f}%"
                           f"（閾值 {rules['tx_drawdown_alert_pct']}%）→ 考慮平倉 1-2 口 0050 期鎖部分損失"),
+                'tip':   '算實際浮虧｜減 1-2 口 0050 期｜深 ITM put 可 roll down 落袋',
             })
 
     # 8. Unrealized profit lock — 0050 ETF期浮盈超過閾值
@@ -175,6 +182,7 @@ def evaluate(data: dict, rules: dict) -> list:
                 'level': '🟡',
                 'msg':   (f"0050 ETF期浮盈 {unrealized:,.0f} NT（≥ {threshold:,.0f}）"
                           f"→ 考慮減 1-2 口或加買 put 鎖獲利"),
+                'tip':   '算「-10% 後剩多少」｜落袋 1-2 口｜roll up put 鎖獲利',
             })
 
     return alerts
@@ -188,8 +196,10 @@ def send_telegram(msg: str) -> bool:
         return False
     try:
         import urllib.request, urllib.parse
+        # 不用 Markdown parse_mode：訊息含中文括號、數字逗號等，
+        # 容易被 legacy Markdown 誤判為連結語法觸發 400 Bad Request
         data = urllib.parse.urlencode({
-            'chat_id': chat, 'text': msg, 'parse_mode': 'Markdown',
+            'chat_id': chat, 'text': msg,
         }).encode()
         req = urllib.request.Request(
             f'https://api.telegram.org/bot{token}/sendMessage',
@@ -208,8 +218,16 @@ def format_message(alerts: list, data: dict) -> str:
     sess   = data.get('market_session', '?')
     iv     = data.get('iv_used')
     iv_str = f"{iv*100:.1f}%" if iv else '?'
-    header = f"📊 *Collar Alert* · TX {tx} · IV {iv_str} · {sess}"
-    body = '\n'.join(f"{a['level']} {a['msg']}" for a in alerts)
+    header = f"📊 Collar Alert · TX {tx} · IV {iv_str} · {sess}"
+
+    def _fmt_alert(a: dict) -> str:
+        line = f"{a['level']} {a['msg']}"
+        tip  = a.get('tip')
+        if tip:
+            line += f"\n   📌 {tip}"
+        return line
+
+    body = '\n\n'.join(_fmt_alert(a) for a in alerts)
 
     # Append roll suggestions if any 與 alerts 相關（roll/call_close）
     fired_keys = {a['key'] for a in alerts}
@@ -252,6 +270,8 @@ def main(dry_run: bool = False):
     for a in fired:
         prefix = '[FIRED]' if a in new_fired else '[COOLDOWN]'
         print(f"{prefix} {a['level']} {a['msg']}")
+        if a.get('tip'):
+            print(f"        📌 {a['tip']}")
 
     if new_fired and not dry_run:
         msg = format_message(new_fired, data)
