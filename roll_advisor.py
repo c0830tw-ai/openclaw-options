@@ -30,6 +30,34 @@ def _format_settlement(d: str) -> str:
     return f'{int(d[4:6])}/{int(d[6:8])}'
 
 
+def _limit_ladder_buy(bid: float, mid: float, ask: float) -> Dict[str, Any]:
+    """買進的 3 段階梯限價：bid+2（試）→ mid（中位）→ ask（吃 ask）"""
+    bid = bid or 0
+    ask = ask or 0
+    mid = mid or ((bid + ask) / 2 if (bid and ask) else 0)
+    return {
+        'try_1': max(round(bid + 2), 1) if bid else round(mid * 0.97),
+        'try_2': round(mid) if mid else None,
+        'try_3': round(ask) if ask else None,
+        'wait_minutes': 8,
+        'side': 'buy',
+    }
+
+
+def _limit_ladder_sell(bid: float, mid: float, ask: float) -> Dict[str, Any]:
+    """賣出的 3 段階梯限價：ask-2（試）→ mid（中位）→ bid（吃 bid）"""
+    bid = bid or 0
+    ask = ask or 0
+    mid = mid or ((bid + ask) / 2 if (bid and ask) else 0)
+    return {
+        'try_1': max(round(ask - 2), 1) if ask else round(mid * 1.03),
+        'try_2': round(mid) if mid else None,
+        'try_3': round(bid) if bid else None,
+        'wait_minutes': 8,
+        'side': 'sell',
+    }
+
+
 def compute_roll_suggestions(result: Dict[str, Any]) -> List[Dict[str, Any]]:
     """從 result 推導 roll 建議；回傳 list (空時 = 沒事)。"""
     suggestions: List[Dict[str, Any]] = []
@@ -62,6 +90,7 @@ def compute_roll_suggestions(result: Dict[str, Any]) -> List[Dict[str, Any]]:
         if rec_hedge > 0 and near_put.get('strike') and near_put.get('ask'):
             cost_per_lot   = float(near_put['ask']) * TXO_MULTIPLIER
             total_cost     = cost_per_lot * rec_hedge
+            ladder = _limit_ladder_buy(near_put.get('bid'), near_put.get('mid'), near_put.get('ask'))
             suggestions.append({
                 'priority':  'high' if (w_dte or 0) == 0 else 'medium',
                 'trigger':   f'{label}_expiring',
@@ -69,9 +98,13 @@ def compute_roll_suggestions(result: Dict[str, Any]) -> List[Dict[str, Any]]:
                 'action':    'roll_to_monthly',
                 'instructions': [
                     f'若有 {label} put：殘值 ~{w_put.get("mid", 0)} 點，可放任歸零或市價平倉',
-                    f'買 {rec_hedge} 口 近月月選 Put K={near_put["strike"]:.0f} '
-                    f'@ ~{near_put["ask"]:.0f} 點',
+                    f'買 {rec_hedge} 口 近月月選 Put K={near_put["strike"]:.0f}',
+                    f'階梯限價（買進，每段等 {ladder["wait_minutes"]} 分）：',
+                    f'  1️⃣ 限價 {ladder["try_1"]} 點（bid+2，等對手送上門）',
+                    f'  2️⃣ 限價 {ladder["try_2"]} 點（mid，公平價）',
+                    f'  3️⃣ 限價 {ladder["try_3"]} 點（吃 ask，立即成交）',
                 ],
+                'limit_ladder': ladder,
                 'estimates': {
                     'replace_qty':    rec_hedge,
                     'replace_strike': near_put['strike'],
@@ -91,6 +124,9 @@ def compute_roll_suggestions(result: Dict[str, Any]) -> List[Dict[str, Any]]:
         if sd > 0:
             distance = (near_call['strike'] - bs_s) / sd
             if distance < 1.0:
+                # 買回 (close short) 用買進階梯
+                buyback_ladder = _limit_ladder_buy(
+                    near_call.get('bid'), near_call.get('mid'), near_call.get('ask'))
                 suggestions.append({
                     'priority':  'high' if distance < 0.5 else 'medium',
                     'trigger':   'short_call_too_close',
@@ -98,10 +134,15 @@ def compute_roll_suggestions(result: Dict[str, Any]) -> List[Dict[str, Any]]:
                                  f'距現價剩 {distance:.2f}σ（< 1σ）',
                     'action':    'roll_up_call',
                     'instructions': [
-                        f'買回 short call K={near_call["strike"]:.0f} '
-                        f'@ ~{near_call.get("ask", 0):.0f} 點',
-                        '賣新 call delta ≈ 0.05 (較遠 OTM)，下次 refresh 系統會選新履約',
+                        f'步驟 1：買回現有 short call K={near_call["strike"]:.0f}',
+                        f'  階梯限價（買進，每段等 {buyback_ladder["wait_minutes"]} 分）：',
+                        f'    1️⃣ 限價 {buyback_ladder["try_1"]} 點',
+                        f'    2️⃣ 限價 {buyback_ladder["try_2"]} 點',
+                        f'    3️⃣ 限價 {buyback_ladder["try_3"]} 點（吃 ask）',
+                        '步驟 2：賣新 call delta ≈ 0.05（更遠 OTM）',
+                        '  下次 refresh 系統會自動選新履約，到時候再用賣方階梯',
                     ],
+                    'limit_ladder': buyback_ladder,
                     'estimates': {
                         'distance_sigma': round(distance, 2),
                         'current_strike': near_call['strike'],

@@ -243,7 +243,11 @@ def format_message(alerts: list, data: dict) -> str:
             if fkey in fired_keys and any(t in rs.get('trigger', '') for t in triggers):
                 extra_lines.append(f"\n🔧 建議: {rs['reason']}")
                 for ins in rs.get('instructions', []):
-                    extra_lines.append(f"   • {ins}")
+                    # 已縮排的子項目（開頭是空格）保留 indent 不加 bullet
+                    if ins.startswith('  '):
+                        extra_lines.append(f"  {ins}")
+                    else:
+                        extra_lines.append(f"   • {ins}")
                 est = rs.get('estimates') or {}
                 if est.get('total_cost'):
                     extra_lines.append(f"   ≈ NT$ {est['total_cost']:,.0f}")
