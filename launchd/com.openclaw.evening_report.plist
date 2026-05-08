@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openclaw.evening_report</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/chenchinghung/openclaw/options/evening_report.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/chenchinghung/openclaw/options</string>
+
+    <!-- 每天 15:00 推 Telegram（日盤 13:30 收 + 盤後 14:00-14:30 + 餘裕；夜盤 15:00 開）。
+         週末由腳本內 _is_weekend() 跳過 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>15</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/chenchinghung/openclaw/options/logs/evening_report.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/chenchinghung/openclaw/options/logs/evening_report.log</string>
+</dict>
+</plist>
