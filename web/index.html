@@ -1919,6 +1919,7 @@ function TradingLedger({ data }) {
 }
 
 function PortfolioBreakdown({ data }) {
+  const [open, setOpen] = React.useState(false);
   const pf = data?.portfolio;
   if (!pf || !pf.items?.length) return null;
   const t = pf.totals || {};
@@ -1930,50 +1931,65 @@ function PortfolioBreakdown({ data }) {
       borderRadius: '6px', padding: '8px 12px', margin: '8px 0',
       fontSize: '11px', color: '#cbd5e1',
     }}>
-      <div style={{display:'flex', justifyContent:'space-between', marginBottom:'6px'}}>
-        <span style={{fontWeight:700, color:'#94a3b8'}}>Portfolio Breakdown · core long 持倉</span>
+      <div onClick={() => setOpen(!open)}
+           style={{display:'flex', justifyContent:'space-between', alignItems:'center',
+                   marginBottom: open ? '6px' : '0', cursor:'pointer', userSelect:'none'}}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>
+          {open ? '▼' : '▶'} 📊 Portfolio Breakdown · core long 持倉
+        </span>
         <span style={{color:'#64748b'}}>
           建議 hedge: <b style={{color:'#fbbf24'}}>{t.recommended_put_lots ?? '—'} 口 put</b>
         </span>
       </div>
-      <table style={{width:'100%', borderCollapse:'collapse', fontSize:'10px'}}>
-        <thead style={{color:'#64748b'}}>
-          <tr>
-            <th style={{textAlign:'left',  padding:'2px 4px'}}>商品</th>
-            <th style={{textAlign:'right', padding:'2px 4px'}}>數量</th>
-            <th style={{textAlign:'right', padding:'2px 4px'}}>名目</th>
-            <th style={{textAlign:'right', padding:'2px 4px'}}>β-adj</th>
-            <th style={{textAlign:'right', padding:'2px 4px'}}>未實現</th>
-          </tr>
-        </thead>
-        <tbody>
-          {pf.items.map((it, i) => (
-            <tr key={i} style={{borderTop:'1px solid #1e2535'}}>
-              <td style={{padding:'2px 4px'}}>{it.name}</td>
-              <td style={{padding:'2px 4px', textAlign:'right'}}>{it.qty}</td>
-              <td style={{padding:'2px 4px', textAlign:'right'}}>{fmt(it.notional)}</td>
-              <td style={{padding:'2px 4px', textAlign:'right', color:'#64748b'}}>{fmt(it.beta_adj_notional)}</td>
-              <td style={{padding:'2px 4px', textAlign:'right',
-                          color: it.unrealized == null ? '#64748b' : (it.unrealized >= 0 ? '#4ade80' : '#f87171')}}>
-                {fmtSign(it.unrealized)}
-              </td>
-            </tr>
-          ))}
-          <tr style={{borderTop:'2px solid #334155', fontWeight:700, color:'#cbd5e1'}}>
-            <td style={{padding:'2px 4px'}}>合計</td>
-            <td style={{padding:'2px 4px'}}></td>
-            <td style={{padding:'2px 4px', textAlign:'right'}}>{fmt(t.core_long_notional)}</td>
-            <td style={{padding:'2px 4px', textAlign:'right'}}>{fmt(t.core_long_beta_adj)}</td>
-            <td style={{padding:'2px 4px', textAlign:'right',
-                        color: (t.core_long_unrealized || 0) >= 0 ? '#4ade80' : '#f87171'}}>
-              {fmtSign(t.core_long_unrealized)}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <div style={{fontSize:'9px', color:'#475569', marginTop:'4px'}}>
-        TXO 1 口名目 {fmt(t.txo_unit_notional)} · β-adj 名目 ÷ TXO 1 口 = 推薦 put 口數
-      </div>
+      {!open && (
+        <div style={{fontSize:'9px', color:'#475569', marginTop:'2px'}}>
+          {pf.items.length} 筆 · 名目 {fmt(t.core_long_notional)} · 未實現
+          <span style={{color: (t.core_long_unrealized || 0) >= 0 ? '#4ade80' : '#f87171'}}> {fmtSign(t.core_long_unrealized)}</span>
+          <span style={{color:'#64748b'}}>　（點上面展開明細）</span>
+        </div>
+      )}
+      {open && (
+        <>
+          <table style={{width:'100%', borderCollapse:'collapse', fontSize:'10px'}}>
+            <thead style={{color:'#64748b'}}>
+              <tr>
+                <th style={{textAlign:'left',  padding:'2px 4px'}}>商品</th>
+                <th style={{textAlign:'right', padding:'2px 4px'}}>數量</th>
+                <th style={{textAlign:'right', padding:'2px 4px'}}>名目</th>
+                <th style={{textAlign:'right', padding:'2px 4px'}}>β-adj</th>
+                <th style={{textAlign:'right', padding:'2px 4px'}}>未實現</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pf.items.map((it, i) => (
+                <tr key={i} style={{borderTop:'1px solid #1e2535'}}>
+                  <td style={{padding:'2px 4px'}}>{it.name}</td>
+                  <td style={{padding:'2px 4px', textAlign:'right'}}>{it.qty}</td>
+                  <td style={{padding:'2px 4px', textAlign:'right'}}>{fmt(it.notional)}</td>
+                  <td style={{padding:'2px 4px', textAlign:'right', color:'#64748b'}}>{fmt(it.beta_adj_notional)}</td>
+                  <td style={{padding:'2px 4px', textAlign:'right',
+                              color: it.unrealized == null ? '#64748b' : (it.unrealized >= 0 ? '#4ade80' : '#f87171')}}>
+                    {fmtSign(it.unrealized)}
+                  </td>
+                </tr>
+              ))}
+              <tr style={{borderTop:'2px solid #334155', fontWeight:700, color:'#cbd5e1'}}>
+                <td style={{padding:'2px 4px'}}>合計</td>
+                <td style={{padding:'2px 4px'}}></td>
+                <td style={{padding:'2px 4px', textAlign:'right'}}>{fmt(t.core_long_notional)}</td>
+                <td style={{padding:'2px 4px', textAlign:'right'}}>{fmt(t.core_long_beta_adj)}</td>
+                <td style={{padding:'2px 4px', textAlign:'right',
+                            color: (t.core_long_unrealized || 0) >= 0 ? '#4ade80' : '#f87171'}}>
+                  {fmtSign(t.core_long_unrealized)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div style={{fontSize:'9px', color:'#475569', marginTop:'4px'}}>
+            TXO 1 口名目 {fmt(t.txo_unit_notional)} · β-adj 名目 ÷ TXO 1 口 = 推薦 put 口數
+          </div>
+        </>
+      )}
     </div>
   );
 }
