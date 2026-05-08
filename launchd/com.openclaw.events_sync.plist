@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openclaw.events_sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/chenchinghung/openclaw/options/events_sync.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/chenchinghung/openclaw/options</string>
+
+    <!-- 每月 1 日 03:30 執行（避開 03:00 的 gdrive backup） -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Day</key>
+        <integer>1</integer>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <!-- 開機若錯過排程時間，補跑一次 -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/chenchinghung/openclaw/options/logs/events_sync.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/chenchinghung/openclaw/options/logs/events_sync.log</string>
+</dict>
+</plist>
