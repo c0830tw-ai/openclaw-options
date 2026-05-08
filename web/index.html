@@ -2434,6 +2434,121 @@ function PortfolioBreakdown({ data }) {
   );
 }
 
+function IndicatorGrid({ data }) {
+  if (!data) return null;
+  const tx     = data.market?.tx_futures;
+  const px2330 = data.market?.price_2330;
+  const px0050 = data.market?.price_0050;
+  const ind2330 = data.indicators;
+  const ind0050 = data.indicators_0050;
+  const tgt     = data.targets || {};
+
+  const Cell = ({ label, value, color, tag, tagColor, sub, accent }) => (
+    <div style={{
+      flex:'1 1 30%', minWidth:'105px', maxWidth:'33%',
+      padding:'7px 10px',
+      borderLeft: `3px solid ${accent || '#1e2535'}`,
+      background:'#070b15', borderRadius:'4px',
+    }}>
+      <div style={{fontSize:'10px', color:'#64748b'}}>{label}</div>
+      <div style={{fontSize:'15px', color: color || '#cbd5e1', fontWeight:700, marginTop:'1px'}}>
+        {value}
+      </div>
+      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginTop:'3px', minHeight:'14px'}}>
+        {tag ? (
+          <span style={{
+            fontSize:'9px', padding:'1px 5px', borderRadius:'3px',
+            color: tagColor || '#94a3b8',
+            background: `${tagColor || '#475569'}20`,
+            border:`1px solid ${tagColor || '#475569'}`,
+          }}>{tag}</span>
+        ) : <span/>}
+        {sub && <span style={{fontSize:'9px', color:'#475569'}}>{sub}</span>}
+      </div>
+    </div>
+  );
+
+  const renderBlock = (title, badge, ind, price, tagColor, putK, callK) => {
+    if (!ind || !price) return null;
+    const atr = ind.atr;
+    const bbU = ind.bb_upper, bbL = ind.bb_lower, ma = ind.ma20;
+    const hv  = ind.hv_2330 ?? ind.hv;
+    const adx = ind.adx;
+
+    const distUp = (bbU != null && price > 0) ? (bbU - price) / price * 100 : null;
+    const distDn = (bbL != null && price > 0) ? (price - bbL) / price * 100 : null;
+    const aboveMa = ma != null && price > ma;
+    const atrPct = (atr != null && price > 0) ? atr / price * 100 : null;
+
+    const hvPct = hv != null ? hv * 100 : null;
+    let hvTag = '低波', hvColor = '#94a3b8';
+    if (hvPct >= 30) { hvTag = '中高波'; hvColor = '#fb923c'; }
+    else if (hvPct >= 20) { hvTag = '中波'; hvColor = '#fbbf24'; }
+
+    let adxTag = '盤整', adxColor = '#94a3b8';
+    if (adx >= 30) { adxTag = '多方趨勢'; adxColor = '#fca5a5'; }
+    else if (adx >= 20) { adxTag = '弱趨勢'; adxColor = '#fbbf24'; }
+
+    const fmt = n => n == null ? '—' : Number.isInteger(n) ? n : Number(n).toFixed(2);
+    const fmt0 = n => n == null ? '—' : Math.round(n).toLocaleString();
+    const fmt1pct = n => n == null ? '' : `${n.toFixed(1)}%`;
+
+    const putDistPct  = (putK  != null && tx > 0) ? (tx - putK) / tx * 100 : null;
+    const callDistPct = (callK != null && tx > 0) ? (callK - tx) / tx * 100 : null;
+
+    return (
+      <div style={{marginBottom:'10px'}}>
+        <div style={{
+          display:'inline-flex', alignItems:'baseline', gap:'6px',
+          padding:'3px 8px', marginBottom:'6px',
+          border:`1px solid ${tagColor}`, borderRadius:'3px',
+          background:`${tagColor}10`,
+        }}>
+          <span style={{fontSize:'11px', color: tagColor, fontWeight:700}}>{title}</span>
+          <span style={{fontSize:'10px', color:'#64748b'}}>{badge}</span>
+        </div>
+        <div style={{display:'flex', flexWrap:'wrap', gap:'5px'}}>
+          <Cell label="ATR"   value={fmt0(atr)} sub={fmt1pct(atrPct)} tag="日均波動" tagColor="#94a3b8" />
+          <Cell label="BB ↑"  value={fmt0(bbU)} color="#fca5a5" tag="上方壓力" tagColor="#fca5a5"
+                sub={distUp != null ? `+${distUp.toFixed(1)}%` : ''} accent="#fca5a5" />
+          <Cell label="MA20"  value={fmt0(ma)}  color="#cbd5e1"
+                tag={aboveMa ? '偏多' : '偏空'}
+                tagColor={aboveMa ? '#fca5a5' : '#86efac'} />
+          <Cell label="BB ↓"  value={fmt0(bbL)} color="#86efac" tag="支撐" tagColor="#86efac"
+                sub={distDn != null ? `-${distDn.toFixed(1)}%` : ''} accent="#86efac" />
+          <Cell label="HV"    value={hvPct != null ? `${hvPct.toFixed(1)}%` : '—'} color={hvColor}
+                tag={hvTag} tagColor={hvColor} accent={hvColor} />
+          <Cell label="ADX"   value={fmt(adx)} color={adxColor}
+                tag={adxTag} tagColor={adxColor} accent={adxColor} />
+          {putK != null && (
+            <Cell label="Put 目標" value={fmt0(putK)} color="#fca5a5" tag="保護位" tagColor="#86efac"
+                  sub={putDistPct != null ? `-${putDistPct.toFixed(1)}%` : ''} accent="#86efac" />
+          )}
+          {callK != null && (
+            <Cell label="Call 目標" value={fmt0(callK)} color="#fbbf24" tag="上檔位" tagColor="#fbbf24"
+                  sub={callDistPct != null ? `+${callDistPct.toFixed(1)}%` : ''} accent="#fbbf24" />
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{padding:'4px 0'}}>
+      {renderBlock(
+        '2330 台積電', px2330 ? `現價 ${px2330.toFixed(2)}` : '',
+        ind2330, px2330, '#fca5a5',
+        tgt.target_put_strike, tgt.target_call_strike,
+      )}
+      {renderBlock(
+        '0050 元大台灣', px0050 ? `現價 ${px0050.toFixed(2)}` : '',
+        ind0050, px0050, '#86efac',
+        ind0050?.target_put_strike, ind0050?.target_call_strike,
+      )}
+    </div>
+  );
+}
+
 function EngineStatus({ data }) {
   if (!data) return null;
   const b = data.betas;
@@ -2778,6 +2893,7 @@ function App() {
       {/* 💡 市場機會 — 想加倉時看 */}
       <Section title="💡 市場機會" defaultOpen={false}
                badge={data?.weekly_opportunities?.length ? `${data.weekly_opportunities.length} 週` : null}>
+        <IndicatorGrid data={data} />
         <WeeklyOpportunities data={data} />
       </Section>
 
