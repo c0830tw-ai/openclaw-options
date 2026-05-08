@@ -799,6 +799,14 @@ def compute_contract_count(price_2330: float, taiex: float,
     raw_ratio = notional / txo_notional
     beta_adj_ratio = raw_ratio * _beta
 
+    # Guard：沒有大台部位（large_futures_lots=0）→ 回最低 1 口讓下游 structures 還能算
+    if beta_adj_ratio <= 0:
+        return {
+            'notional': notional,
+            'beta_adjusted_ratio': beta_adj_ratio,
+            'recommended_contracts': 1,
+        }
+
     # 找符合 70-80% 保護的整數口數
     floor_n = int(beta_adj_ratio)
     ceil_n = floor_n + 1
@@ -835,7 +843,7 @@ def build_structures(
         call_income = call_bid * 50 * calls
         put_cost = put_ask * 50 * puts
         net = call_income - put_cost
-        protection = (puts / beta_adj_ratio * 100) if puts > 0 else 0.0
+        protection = (puts / beta_adj_ratio * 100) if (puts > 0 and beta_adj_ratio > 0) else 0.0
         return CollarStructure(
             name=name,
             desc=desc,
