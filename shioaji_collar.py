@@ -2529,6 +2529,7 @@ def main():
             'portfolio_greeks': None,           # broker 選擇權部位 Greeks 聚合
             'greeks_history':   None,           # 過去 30 天 Greeks 趨勢 + 累積 theta
             'health_check':     None,           # 持倉健診評分（對齊 SOP）
+            'collar_dashboard': None,           # collar 整合 dashboard（per-leg + 結構推薦）
             'upcoming_events': [],              # 未來 14 天高影響事件
             'market': market,
             'txo_month': month,
@@ -2673,6 +2674,17 @@ def main():
                          f"violations={len(hc['violations'])}  suggestions={len(hc['suggestions'])}")
         except Exception as _e:
             log.debug(f'health_check 失敗: {_e}')
+
+        # 14f-ter. Collar dashboard（per-leg triggers + 結構推薦）
+        try:
+            import collar_dashboard as _CD
+            cd = _CD.evaluate(result)
+            if cd:
+                result['collar_dashboard'] = cd
+                rs = cd.get('recommended_structure', {})
+                log.info(f"Collar 推薦結構: {rs.get('label', '?')}  ({rs.get('reason', '')})")
+        except Exception as _e:
+            log.debug(f'collar_dashboard 失敗: {_e}')
 
         # 14h. 高影響事件（events.json）— 未來 14 天清單
         try:

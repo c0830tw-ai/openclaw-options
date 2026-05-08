@@ -1673,6 +1673,97 @@ function UpcomingEvents({ data }) {
   );
 }
 
+function CollarDashboard({ data }) {
+  const cd = data?.collar_dashboard;
+  if (!cd) return null;
+  const { put_leg, call_leg, recommended_structure } = cd;
+  const fmt = n => n == null ? '—' : n.toLocaleString(undefined, {maximumFractionDigits: 0});
+  const lvlColor = l =>
+    l === 'high' ? '#f87171' :
+    l === 'medium' ? '#fbbf24' :
+    l === 'ok' ? '#4ade80' : '#94a3b8';
+
+  const Leg = ({ title, side, leg }) => {
+    if (!leg) return null;
+    const borderColor = leg.has_position
+      ? lvlColor(leg.triggers?.[0]?.level || 'ok')
+      : '#475569';
+    return (
+      <div style={{flex:'1 1 200px', padding:'8px 10px',
+                    border:`1px solid ${borderColor}`, borderRadius:'4px',
+                    background:'#070b15'}}>
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:'4px'}}>
+          <span style={{fontSize:'11px', color: side === 'put' ? '#86efac' : '#fca5a5', fontWeight:700}}>
+            {title}
+          </span>
+          {leg.has_position ? (
+            <span style={{fontSize:'10px', color:'#cbd5e1'}}>
+              {leg.qty} 口 × {fmt(leg.strike)}{side === 'put' ? 'P' : 'C'}
+              <span style={{color:'#64748b'}}>DTE {leg.dte}d</span>
+            </span>
+          ) : (
+            <span style={{fontSize:'10px', color:'#64748b'}}>無部位</span>
+          )}
+        </div>
+        {leg.has_position && (
+          <div style={{fontSize:'10px', color:'#94a3b8', marginBottom:'4px'}}>
+            距 TX {side === 'put' ? '-' : '+'}{Math.abs(leg.distance_pct)}%
+            {leg.sigma_distance != null && ` · ${leg.sigma_distance}σ`}
+            {leg.iv != null && ` · IV ${(leg.iv * 100).toFixed(1)}%`}
+          </div>
+        )}
+        {leg.triggers?.map((t, i) => (
+          <div key={i} style={{fontSize:'10px', color: lvlColor(t.level), padding:'2px 0'}}>
+            {t.msg}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const rs = recommended_structure;
+  const confColor = rs?.conf === 'high' ? '#4ade80' : '#fbbf24';
+
+  return (
+    <div style={{
+      background: '#0a0e1c', border: '1px solid #1e2535',
+      borderRadius: '6px', padding: '6px 12px', margin: '8px 0',
+      fontSize: '11px', color: '#cbd5e1',
+    }}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px'}}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>🎯 Collar Dashboard</span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>per-leg 觸發 + 結構推薦</span>
+      </div>
+
+      {/* Two-column: put leg | call leg */}
+      <div style={{display:'flex', gap:'6px', flexWrap:'wrap'}}>
+        <Leg title="📉 Put leg（保護）" side="put"  leg={put_leg} />
+        <Leg title="📈 Call leg（賣方）" side="call" leg={call_leg} />
+      </div>
+
+      {/* 結構推薦 */}
+      {rs && (
+        <div style={{marginTop:'6px', padding:'6px 10px',
+                      borderLeft:`3px solid ${confColor}`,
+                      background:'#0f1828', borderRadius:'3px'}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline'}}>
+            <span style={{fontSize:'11px', color: confColor, fontWeight:700}}>
+              💡 推薦結構：{rs.label}
+            </span>
+            <span style={{fontSize:'9px', color:'#64748b'}}>信心 {rs.conf}</span>
+          </div>
+          <div style={{fontSize:'10px', color:'#94a3b8', marginTop:'2px'}}>
+            條件：{rs.reason}
+          </div>
+          <div style={{fontSize:'10px', color:'#cbd5e1', marginTop:'2px'}}>
+            {rs.why}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HealthCheck({ data }) {
   const [open, setOpen] = React.useState(false);
   const hc = data?.health_check;
@@ -2683,6 +2774,7 @@ function App() {
 
       <EngineStatus data={data} />
       <UpcomingEvents data={data} />
+      <CollarDashboard data={data} />
       <HealthCheck data={data} />
       <RollSuggestions data={data} />
       <PortfolioGreeks data={data} />
