@@ -1721,13 +1721,25 @@ python3 add_trade.py add buy_to_open  "TXO ${monthCode} ${bc.buy_strike?.toFixed
           </Card>
 
           <Card title="📈 Bull Put Spread（看不跌）" color="#60a5fa" copyText={bpCmd} viable={bp.viable}>
-            <div>賣 <b style={{color:'#fca5a5'}}>{fmt(bp.sell_strike)}</b> 收 {bp.sell_premium} ／ 買 <b style={{color:'#86efac'}}>{fmt(bp.buy_strike)}</b> 付 {bp.buy_premium}</div>
+            <div>賣 <b style={{color:'#fca5a5'}}>{fmt(bp.sell_strike)}</b> 收 {bp.sell_premium} ／ 買 <b style={{color:'#86efac'}}>{fmt(bp.buy_strike)}</b> 付 {bp.buy_premium}
+              <span style={{fontSize:'9px', color: bp.buy_premium_source?.startsWith('real') ? '#4ade80' : '#fbbf24', marginLeft:'4px'}}>
+                {bp.buy_premium_source === 'real_ask' ? '[真實 ask]' :
+                 bp.buy_premium_source === 'real_mid' ? '[真實 mid]' :
+                 '[BS 估算]'}
+              </span>
+            </div>
             <div style={{marginTop:'2px'}}>淨收 <b>{bp.net_credit}</b> 點，最大賺 <b style={{color:'#4ade80'}}>NT$ {fmt(bp.max_profit)}</b> / 最大賠 <b style={{color:'#f87171'}}>NT$ {fmt(bp.max_loss)}</b></div>
             <div style={{marginTop:'2px'}}>損益平衡 <b>{fmt(bp.breakeven)}</b>　距現價 -{bp.distance_pct}%</div>
           </Card>
 
           <Card title="📉 Bear Call Spread（看不漲）" color="#fb923c" copyText={bcCmd} viable={bc.viable}>
-            <div>賣 <b style={{color:'#fca5a5'}}>{fmt(bc.sell_strike)}</b> 收 {bc.sell_premium} ／ 買 <b style={{color:'#86efac'}}>{fmt(bc.buy_strike)}</b> 付 {bc.buy_premium}</div>
+            <div>賣 <b style={{color:'#fca5a5'}}>{fmt(bc.sell_strike)}</b> 收 {bc.sell_premium} ／ 買 <b style={{color:'#86efac'}}>{fmt(bc.buy_strike)}</b> 付 {bc.buy_premium}
+              <span style={{fontSize:'9px', color: bc.buy_premium_source?.startsWith('real') ? '#4ade80' : '#fbbf24', marginLeft:'4px'}}>
+                {bc.buy_premium_source === 'real_ask' ? '[真實 ask]' :
+                 bc.buy_premium_source === 'real_mid' ? '[真實 mid]' :
+                 '[BS 估算]'}
+              </span>
+            </div>
             <div style={{marginTop:'2px'}}>淨收 <b>{bc.net_credit}</b> 點，最大賺 <b style={{color:'#4ade80'}}>NT$ {fmt(bc.max_profit)}</b> / 最大賠 <b style={{color:'#f87171'}}>NT$ {fmt(bc.max_loss)}</b></div>
             <div style={{marginTop:'2px'}}>損益平衡 <b>{fmt(bc.breakeven)}</b>　距現價 +{bc.distance_pct}%</div>
           </Card>
@@ -1748,7 +1760,7 @@ python3 add_trade.py add buy_to_open  "TXO ${monthCode} ${bc.buy_strike?.toFixed
       {wos.map((wo, i) => <SectionForOpp key={i} wo={wo} />)}
 
       <div style={{fontSize:'9px', color:'#475569', marginTop:'6px'}}>
-        ※ 價差外腳價格用 Black-Scholes 估算，實際下單請以券商即時報價為準。「市場不利」表示信用價差太薄不值得做。
+        ※「真實 ask」= 即時券商報價（最準）；「BS 估算」= 該外腳沒成交資料，用理論模型估算（會低估，因為 vol skew）。「市場不利」= 信用價差太薄不值得做。
       </div>
     </div>
   );

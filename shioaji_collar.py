@@ -755,20 +755,34 @@ def compute_weekly_opportunities(
     put_bid      = put.get('bid')  or 0
     call_bid     = call.get('bid') or 0
 
-    # Bull put spread: 賣高履約 put（收）+ 買低履約 put（付）
-    put_buy_strike  = put_strike - spread_width
-    put_buy_prem    = bs_price(bs_s, put_buy_strike,  T, iv, is_put=True,  r=0.0)
+    # 取得真實 spread legs 報價（_calc_weekly 已 snapshot）；缺則 fallback 到 BS 估算
+    spread_legs = weekly_data.get('spread_legs') or {}
+    put_leg     = spread_legs.get('put_buy')  or {}
+    call_leg    = spread_legs.get('call_buy') or {}
+
+    def _leg_buy_price(leg, fallback_strike, is_put):
+        """買進付價：優先用真實 ask，沒有 ask 用 mid，再退到 BS 估算。"""
+        if leg and (leg.get('ask') or 0) > 0:
+            return leg['ask'], leg['strike'], 'real_ask'
+        if leg and (leg.get('mid') or 0) > 0:
+            return leg['mid'], leg['strike'], 'real_mid'
+        bs_v = bs_price(bs_s, fallback_strike, T, iv, is_put=is_put, r=0.0)
+        return bs_v, fallback_strike, 'bs_estimate'
+
+    # Bull put spread: 賣高履約 put（收 bid）+ 買低履約 put（付真實 ask）
+    put_buy_prem, put_buy_strike, put_src = _leg_buy_price(put_leg, put_strike - spread_width, True)
+    actual_put_width = put_strike - put_buy_strike
     bull_put_credit = round(put_bid - put_buy_prem, 1)
     bull_put_max_p  = round(bull_put_credit * 50)
-    bull_put_max_l  = round(max(0, (spread_width - bull_put_credit)) * 50)
+    bull_put_max_l  = round(max(0, (actual_put_width - bull_put_credit)) * 50)
     bull_put_be     = round(put_strike - bull_put_credit)
 
-    # Bear call spread: 賣低履約 call（收）+ 買高履約 call（付）
-    call_buy_strike = call_strike + spread_width
-    call_buy_prem   = bs_price(bs_s, call_buy_strike, T, iv, is_put=False, r=0.0)
+    # Bear call spread: 賣低履約 call（收 bid）+ 買高履約 call（付真實 ask）
+    call_buy_prem, call_buy_strike, call_src = _leg_buy_price(call_leg, call_strike + spread_width, False)
+    actual_call_width = call_buy_strike - call_strike
     bear_call_credit = round(call_bid - call_buy_prem, 1)
     bear_call_max_p  = round(bear_call_credit * 50)
-    bear_call_max_l  = round(max(0, (spread_width - bear_call_credit)) * 50)
+    bear_call_max_l  = round(max(0, (actual_call_width - bear_call_credit)) * 50)
     bear_call_be     = round(call_strike + bear_call_credit)
 
     series = weekly_data.get('series') or ''
@@ -798,6 +812,7 @@ def compute_weekly_opportunities(
             'sell_premium':  put_bid,
             'buy_strike':    put_buy_strike,
             'buy_premium':   round(put_buy_prem, 1),
+            'buy_premium_source': put_src,
             'net_credit':    bull_put_credit,
             'max_profit':    bull_put_max_p,
             'max_loss':      bull_put_max_l,
@@ -810,6 +825,7 @@ def compute_weekly_opportunities(
             'sell_premium':  call_bid,
             'buy_strike':    call_buy_strike,
             'buy_premium':   round(call_buy_prem, 1),
+            'buy_premium_source': call_src,
             'net_credit':    bear_call_credit,
             'max_profit':    bear_call_max_p,
             'max_loss':      bear_call_max_l,
@@ -2134,6 +2150,32 @@ def main():
                     w_cd = bs_delta(bs_s, w_call_c.strike_price, w_T, w_iv, is_put=False, r=bs_r)
             log.info(f'{label} 最終: Put {w_put_c.strike_price:.0f} (δ={w_pd:+.3f})  Call {w_call_c.strike_price:.0f} (δ={w_cd:+.3f})')
             w_q = fetch_option_quotes(api, w_put_c, w_call_c, bs_s=bs_s, T=w_T, sigma=w_iv, r=bs_r or 0.0)
+
+            # 找價差另一腳並抓真實 bid/ask（取代 BS 估算，避免 vol skew 失真）
+            w_spread_legs: Dict[str, Any] = {}
+            try:
+                w_put_leg  = _find_spread_leg(w_chain, w_put_c.strike_price,  OptionRight.Put,  is_put=True,  width=CFG.spread_width)
+                w_call_leg = _find_spread_leg(w_chain, w_call_c.strike_price, OptionRight.Call, is_put=False, width=CFG.spread_width)
+                leg_contracts = [c for c in [w_put_leg, w_call_leg] if c]
+                if leg_contracts:
+                    leg_snaps = api.snapshots(leg_contracts)
+                    for c, s in zip(leg_contracts, leg_snaps):
+                        bid = float(s.buy_price)  if s.buy_price  else 0.0
+                        ask = float(s.sell_price) if s.sell_price else 0.0
+                        mid = float(s.close)      if s.close      else (bid + ask) / 2 if (bid and ask) else 0.0
+                        leg_data = {
+                            'strike': c.strike_price,
+                            'symbol': c.symbol,
+                            'bid':    bid,
+                            'ask':    ask,
+                            'mid':    mid,
+                        }
+                        if c.option_right == OptionRight.Put:
+                            w_spread_legs['put_buy']  = leg_data
+                        else:
+                            w_spread_legs['call_buy'] = leg_data
+            except Exception as _le:
+                log.debug(f'{label} spread legs snapshot 失敗（將用 BS 估算）: {_le}')
             w_structs = build_structures(
                 n_contracts=contracts['recommended_contracts'],
                 call_strike=w_call_c.strike_price,
@@ -2176,6 +2218,7 @@ def main():
                     },
                 },
                 'structures': [asdict(s) for s in w_structs],
+                'spread_legs': w_spread_legs,
             }
 
         # 10c. 週三週選
