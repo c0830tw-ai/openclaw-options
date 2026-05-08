@@ -1452,6 +1452,15 @@ def main():
     api.login(CFG.api_key, CFG.secret_key, contracts_timeout=30000)
     log.info('Shioaji logged in')
 
+    # 0b. 嘗試 activate CA + 抓 broker 真實持倉（read-only sync）
+    _broker_positions = None
+    try:
+        import broker_sync as _BS
+        _BS.activate_ca_if_configured(api)
+        _broker_positions = _BS.fetch_all_positions(api)
+    except Exception as _e:
+        log.debug(f'broker_sync 失敗（可忽略）: {_e}')
+
     try:
         # 1. 抓現價
         market      = fetch_market_snapshot(api)
@@ -1973,6 +1982,7 @@ def main():
             'ledger':    None,                  # filled below
             'trend':     None,                  # filled below
             'roll_suggestions': [],             # filled below
+            'broker':    None,                  # filled below if CA active
             'market': market,
             'txo_month': month,
             'dte': dte,
@@ -2062,6 +2072,17 @@ def main():
                 log.info(f"Roll [{_sug['priority']}] {_sug['reason']}")
         except Exception as _e:
             log.debug(f'roll_advisor 失敗（可忽略）: {_e}')
+
+        # 14e. Broker 真實持倉同步（在 login 階段已抓，這裡寫進 result）
+        if _broker_positions is not None:
+            try:
+                import broker_sync as _BS2
+                result['broker'] = _BS2.summary(_broker_positions)
+                if result['broker']:
+                    log.info(f"Broker: {result['broker']['total_positions']} 筆持倉  "
+                             f"總 P&L {result['broker']['total_pnl']:+,.0f}")
+            except Exception as _e:
+                log.debug(f'broker summary 失敗: {_e}')
 
         # 報價回填保護：當「這次抓到 BS 估算」且「快取有真實報價」時才回填
         # （之前條件是 not is_market_hours，現在夜盤 TXO 也有真實報價，改用 quotes_source 直接判斷）

@@ -14,3 +14,5 @@ latest_collar.json
 __pycache__/
 node_modules/
 logs/
+*.pfx
+Sinopac.pfx

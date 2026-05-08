@@ -1465,6 +1465,84 @@ function SimTable({ structures, selectedOptions, taiex }) {
   );
 }
 
+function BrokerPositions({ data }) {
+  const b = data?.broker;
+  if (!b || !b.positions?.length) return null;
+  const fmt = n => n == null ? '—' : n.toLocaleString(undefined, {maximumFractionDigits: 0});
+  const sign = n => n == null ? '—' : (n >= 0 ? '+' : '') + fmt(n);
+  const pnlColor = n => n == null ? '#64748b' : (n >= 0 ? '#4ade80' : '#f87171');
+
+  // 按 category 分組顯示
+  const cats = {};
+  b.positions.forEach(p => {
+    if (!cats[p.category]) cats[p.category] = [];
+    cats[p.category].push(p);
+  });
+  const catOrder = ['cash_stock', 'stock_futures', 'index_futures', 'index_option', 'unknown'];
+  const catLabel = {
+    cash_stock:    '現股',
+    stock_futures: '個股期貨',
+    index_futures: '指數期貨',
+    index_option:  '指數選擇權',
+    unknown:       '其他',
+  };
+
+  return (
+    <div style={{
+      background: '#0a0e1c', border: '1px solid #1e2535',
+      borderRadius: '6px', padding: '8px 12px', margin: '8px 0',
+      fontSize: '11px', color: '#cbd5e1',
+    }}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px'}}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>🏦 Broker 真實持倉（永豐 API 即時）</span>
+        <span style={{fontSize:'10px', color:'#64748b'}}>
+          {b.total_positions} 筆 · 總 P&L
+          <b style={{color: pnlColor(b.total_pnl), marginLeft: '4px'}}>{sign(b.total_pnl)}</b>
+        </span>
+      </div>
+
+      {catOrder.filter(c => cats[c]).map(c => (
+        <div key={c} style={{marginTop:'6px'}}>
+          <div style={{fontSize:'10px', color:'#64748b', marginBottom:'2px'}}>
+            {catLabel[c] || c} · {cats[c].length} 筆
+          </div>
+          <table style={{width:'100%', borderCollapse:'collapse', fontSize:'10px'}}>
+            <thead style={{color:'#64748b'}}>
+              <tr>
+                <th style={{textAlign:'left',  padding:'2px 4px'}}>商品</th>
+                <th style={{textAlign:'left',  padding:'2px 4px'}}>方向</th>
+                <th style={{textAlign:'right', padding:'2px 4px'}}>口數</th>
+                <th style={{textAlign:'right', padding:'2px 4px'}}>成本</th>
+                <th style={{textAlign:'right', padding:'2px 4px'}}>現價</th>
+                <th style={{textAlign:'right', padding:'2px 4px'}}>P&L</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cats[c].map((p, i) => (
+                <tr key={i} style={{borderTop:'1px solid #1e2535'}}>
+                  <td style={{padding:'2px 4px'}} title={p.code}>
+                    {p.name}
+                    <span style={{fontSize:'9px', color:'#475569', marginLeft:'4px'}}>{p.code}</span>
+                  </td>
+                  <td style={{padding:'2px 4px',
+                              color: p.direction === 'Buy' ? '#4ade80' : '#f87171'}}>
+                    {p.direction}
+                  </td>
+                  <td style={{padding:'2px 4px', textAlign:'right'}}>{p.quantity}</td>
+                  <td style={{padding:'2px 4px', textAlign:'right'}}>{p.price?.toFixed(2)}</td>
+                  <td style={{padding:'2px 4px', textAlign:'right'}}>{p.last_price?.toFixed(2)}</td>
+                  <td style={{padding:'2px 4px', textAlign:'right',
+                              color: pnlColor(p.pnl)}}>{sign(p.pnl)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function RollSuggestions({ data }) {
   const sugs = data?.roll_suggestions;
   if (!sugs || !sugs.length) return null;
@@ -2001,6 +2079,7 @@ function App() {
 
       <EngineStatus data={data} />
       <RollSuggestions data={data} />
+      <BrokerPositions data={data} />
       <PortfolioBreakdown data={data} />
       <TrendStrip data={data} />
       <TradingLedger data={data} />
