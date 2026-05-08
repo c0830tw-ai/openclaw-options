@@ -63,6 +63,12 @@ def load_events(path: str = _EVENTS_PATH) -> List[Dict[str, Any]]:
             # 對 cpi_us / fomc / cpi_tw 這類「每月最多一次」事件做月去重
             if ev.get('type', '') in ('cpi_us', 'fomc', 'cpi_tw') and tm in seen_type_month:
                 continue
+            # earnings 同日視為同一場（手動命名 vs 抓取命名可能不同）
+            if ev.get('type', '') == 'earnings':
+                etk = ('earnings', d)
+                if etk in seen_type_month:
+                    continue
+                seen_type_month.add(etk)
             seen_exact.add(ek)
             seen_type_month.add(tm)
             out.append(ev)

@@ -16,13 +16,14 @@ import sys
 import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Optional, Tuple
 
 
 _HERE = Path(__file__).resolve().parent
 OUT_PATH = _HERE / 'events_auto.json'
 
 FED_URL = 'https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm'
+TWSE_ANNOUNCE_URL = 'https://openapi.twse.com.tw/v1/opendata/t187ap04_L'
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
                   '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -131,12 +132,110 @@ def estimate_us_cpi_dates(year: int) -> List[Dict[str, Any]]:
     return out
 
 
+def _roc_to_date(roc_y: str, m: str, d: str) -> Optional[date]:
+    """民國年（115）→ 西元（2026）。"""
+    try:
+        return date(int(roc_y) + 1911, int(m), int(d))
+    except (ValueError, TypeError):
+        return None
+
+
+def _extract_dates_from_text(text: str) -> List[date]:
+    """從說明文字抽出所有可能的日期（ROC 與 AD 兩種格式）。"""
+    out: List[date] = []
+    # ROC: 115/05/07 或 115年5月7日
+    for m in re.finditer(r'(\d{2,3})\s*[/年]\s*(\d{1,2})\s*[/月]\s*(\d{1,2})\s*日?', text):
+        d = _roc_to_date(m.group(1), m.group(2), m.group(3))
+        if d:
+            out.append(d)
+    # AD: 2026/05/07 或 2026年5月7日 (4 位數年)
+    for m in re.finditer(r'(\d{4})\s*[/年]\s*(\d{1,2})\s*[/月]\s*(\d{1,2})\s*日?', text):
+        try:
+            out.append(date(int(m.group(1)), int(m.group(2)), int(m.group(3))))
+        except ValueError:
+            continue
+    return out
+
+
+def fetch_tsmc_conferences(today: date = None) -> List[Dict[str, Any]]:
+    """從 TWSE OpenAPI 抓 2330 重大訊息，過濾「法人說明會」字樣，
+    解析未來日期。注意：API 只回當日重大訊息，需要每日累積。"""
+    if today is None:
+        today = datetime.now().date()
+    try:
+        with urllib.request.urlopen(
+            urllib.request.Request(TWSE_ANNOUNCE_URL, headers=HEADERS),
+            timeout=15,
+        ) as resp:
+            announcements = json.loads(resp.read().decode('utf-8'))
+    except Exception as e:
+        print(f'[tsmc] fetch failed: {e}', file=sys.stderr)
+        return []
+
+    out: List[Dict[str, Any]] = []
+    seen_dates: set = set()
+    for a in announcements:
+        if a.get('公司代號') != '2330':
+            continue
+        subject = (a.get('主旨 ') or a.get('主旨') or '').strip()
+        body    = (a.get('說明') or '').strip()
+        if not any(k in subject + body for k in ('法人說明會', '法說會')):
+            continue
+        # 抽日期，留下未來的
+        dates = _extract_dates_from_text(body)
+        future = [d for d in dates if d >= today]
+        if not future:
+            continue
+        # 取最遠的（通常 body 含發布日期 + 會議日期，取較晚那個）
+        conf_d = max(future)
+        if conf_d in seen_dates:
+            continue
+        seen_dates.add(conf_d)
+        out.append({
+            'date':    conf_d.strftime('%Y-%m-%d'),
+            'type':    'earnings',
+            'name':    '2330 法人說明會',
+            'impact':  'high',
+            'iv_risk': 'high',
+            'note':    f'TSMC 法說（自 TWSE 重大訊息抓取）：{subject[:60]}',
+            '_source': 'twse_2330_scraped',
+        })
+    print(f'[tsmc] 找到 {len(out)} 筆未來法說會 (從今日 {len(announcements)} 筆重大訊息)', file=sys.stderr)
+    return out
+
+
+def _load_existing_persisted(out_path: Path, sources_to_keep: Tuple[str, ...]) -> List[Dict[str, Any]]:
+    """讀現有 events_auto.json，只保留指定 _source 的未來事件。
+    用途：每日 sync 不要把昨天抓到的 TSMC 法說洗掉。"""
+    if not out_path.exists():
+        return []
+    try:
+        raw = json.loads(out_path.read_text(encoding='utf-8'))
+    except json.JSONDecodeError:
+        return []
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    keep = []
+    for ev in raw.get('events') or []:
+        if ev.get('_source') not in sources_to_keep:
+            continue
+        if (ev.get('date') or '') < today_str:
+            continue
+        keep.append(ev)
+    return keep
+
+
 def sync(out_path: Path = OUT_PATH, years: Tuple[int, ...] = None) -> int:
     """執行所有來源，寫入 events_auto.json。回傳事件總筆數。"""
     if years is None:
         cur = datetime.now().year
         years = (cur, cur + 1)
     events: List[Dict[str, Any]] = []
+
+    # 保留先前抓到的 TSMC 法說（API 只回當日，需要持久化）
+    persisted_tsmc = _load_existing_persisted(out_path, sources_to_keep=('twse_2330_scraped',))
+    if persisted_tsmc:
+        print(f'[events_sync] 保留 {len(persisted_tsmc)} 筆先前抓到的 TSMC 法說', file=sys.stderr)
+    events += persisted_tsmc
 
     print(f'[events_sync] FOMC scrape ({min(years)}+)...', file=sys.stderr)
     events += fetch_fomc(min_year=min(years))
@@ -145,13 +244,21 @@ def sync(out_path: Path = OUT_PATH, years: Tuple[int, ...] = None) -> int:
         print(f'[events_sync] US CPI estimated ({y})...', file=sys.stderr)
         events += estimate_us_cpi_dates(y)
 
+    print(f'[events_sync] TSMC 2330 法說（TWSE 重大訊息）...', file=sys.stderr)
+    new_tsmc = fetch_tsmc_conferences()
+    # 合併新舊：dedup by (date, name)
+    existing_keys = {(e['date'], e.get('name')) for e in events}
+    for ev in new_tsmc:
+        if (ev['date'], ev.get('name')) not in existing_keys:
+            events.append(ev)
+
     # Sort by date
     events.sort(key=lambda e: e['date'])
 
     payload = {
         '_comment':  '由 events_sync.py 自動產生；勿手動修改。手動事件改維護 events.json',
         '_fetched':  datetime.now().isoformat(timespec='seconds'),
-        '_sources':  ['fed_scraped', 'us_cpi_estimated'],
+        '_sources':  ['fed_scraped', 'us_cpi_estimated', 'twse_2330_scraped'],
         'events':    events,
     }
     out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')

@@ -14,11 +14,10 @@
     <key>WorkingDirectory</key>
     <string>/Users/chenchinghung/openclaw/options</string>
 
-    <!-- 每月 1 日 03:30 執行（避開 03:00 的 gdrive backup） -->
+    <!-- 每日 03:30 執行（避開 03:00 的 gdrive backup）。
+         FOMC/CPI 變動慢，主要是為了 TSMC 法說當日抓取窗口（每日只回當日重大訊息） -->
     <key>StartCalendarInterval</key>
     <dict>
-        <key>Day</key>
-        <integer>1</integer>
         <key>Hour</key>
         <integer>3</integer>
         <key>Minute</key>
