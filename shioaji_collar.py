@@ -771,8 +771,16 @@ def compute_weekly_opportunities(
     bear_call_max_l  = round(max(0, (spread_width - bear_call_credit)) * 50)
     bear_call_be     = round(call_strike + bear_call_credit)
 
+    series = weekly_data.get('series') or ''
+    weekday_label = (
+        '週三' if series in ('TX1', 'TX2', 'TX4', 'TX5') else
+        '週五' if series in ('TXU', 'TXV', 'TXX', 'TXY', 'TXZ') else
+        '週選'
+    )
+
     return {
-        'series':          weekly_data.get('series'),
+        'series':          series,
+        'weekday_label':   weekday_label,
         'settlement_date': weekly_data.get('settlement_date'),
         'dte_trading':     dte_t,
         'iv':              round(iv, 4),
@@ -2317,18 +2325,23 @@ def main():
         except Exception as _e:
             log.debug(f'roll_advisor 失敗（可忽略）: {_e}')
 
-        # 14e-bis. 本週機會（從 weekly_fri 算，沒就用 weekly_wed）
+        # 14e-bis. 本週機會（週三 + 週五各算一份，按 DTE 升序）
         try:
-            target_weekly = weekly_fri_data or weekly_wed_data
-            if target_weekly:
-                result['weekly_opportunities'] = compute_weekly_opportunities(
-                    target_weekly, bs_s, spread_width=CFG.spread_width
-                )
-                if result['weekly_opportunities']:
-                    wo = result['weekly_opportunities']
-                    log.info(f"本週機會: {wo['series']} 賣call@{wo['sell_call']['strike']:.0f} "
-                             f"收{wo['sell_call']['income_ntd']:,} | bull put {wo['bull_put_spread']['sell_strike']:.0f}/{wo['bull_put_spread']['buy_strike']:.0f} "
-                             f"收{wo['bull_put_spread']['max_profit']:,}")
+            opps = []
+            for wd in (weekly_wed_data, weekly_fri_data):
+                if not wd:
+                    continue
+                o = compute_weekly_opportunities(wd, bs_s, spread_width=CFG.spread_width)
+                if o:
+                    opps.append(o)
+            opps.sort(key=lambda x: x.get('dte_trading', 999))
+            if opps:
+                result['weekly_opportunities'] = opps
+                for o in opps:
+                    log.info(f"本週機會 {o['weekday_label']}{o['series']}: "
+                             f"賣call@{o['sell_call']['strike']:.0f} 收{o['sell_call']['income_ntd']:,} | "
+                             f"bull put {o['bull_put_spread']['sell_strike']:.0f}/{o['bull_put_spread']['buy_strike']:.0f} "
+                             f"收{o['bull_put_spread']['max_profit']:,}")
         except Exception as _e:
             log.debug(f'weekly_opportunities 失敗: {_e}')
 
