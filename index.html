@@ -4015,6 +4015,120 @@ function PastEventImpact({ data }) {
   );
 }
 
+function IVSmile({ data }) {
+  const tx = data?.market?.tx_futures;
+  const skewWed = (data?.weekly_wed?.skew || []).slice().sort((a,b) => a.strike - b.strike);
+  const skewFri = (data?.weekly_fri?.skew || []).slice().sort((a,b) => a.strike - b.strike);
+  if (!tx || (skewWed.length < 3 && skewFri.length < 3)) return null;
+
+  // 持倉履約
+  const holdings = ((data?.portfolio_greeks?.legs) || [])
+    .filter(L => L.right === 'put' || L.right === 'call')
+    .map(L => ({ strike: L.strike, qty: L.qty_signed, right: L.right }));
+
+  const allStrikes = [...skewWed.map(s => s.strike), ...skewFri.map(s => s.strike)];
+  const xMin = Math.min(...allStrikes, tx - 200);
+  const xMax = Math.max(...allStrikes, tx + 200);
+  const allIvs = [...skewWed.map(s => s.iv), ...skewFri.map(s => s.iv)];
+  const yMin = Math.min(...allIvs) * 100 - 1;
+  const yMax = Math.max(...allIvs) * 100 + 1;
+  const xRange = xMax - xMin;
+  const yRange = yMax - yMin || 1;
+
+  const W = 320, H = 160;
+  const padL = 36, padR = 12, padT = 12, padB = 22;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const px = (s) => padL + ((s - xMin) / xRange) * innerW;
+  const py = (iv_pct) => padT + ((yMax - iv_pct) / yRange) * innerH;
+
+  const polyOf = (skew, color) => {
+    if (skew.length < 2) return null;
+    const pts = skew.map(s => `${px(s.strike).toFixed(1)},${py(s.iv * 100).toFixed(1)}`).join(' ');
+    return <polyline fill="none" stroke={color} strokeWidth="1.5" points={pts} />;
+  };
+
+  return (
+    <div style={{
+      background:'#0a0e1c', border:'1px solid #1e2535',
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:'4px'}}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>😊 IV Smile</span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>
+          ATM TX {Math.round(tx).toLocaleString()}
+        </span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
+           style={{width:'100%', height:`${H}px`, display:'block'}}>
+        {/* Y axis labels */}
+        <text x="2" y={padT + 6} fontSize="9" fill="#64748b">{yMax.toFixed(0)}%</text>
+        <text x="2" y={H - padB} fontSize="9" fill="#64748b">{yMin.toFixed(0)}%</text>
+        {/* Border */}
+        <rect x={padL} y={padT} width={innerW} height={innerH} fill="none" stroke="#1e2535" strokeWidth="0.5" />
+        {/* ATM vertical line */}
+        <line x1={px(tx)} y1={padT} x2={px(tx)} y2={padT + innerH}
+              stroke="#fbbf24" strokeWidth="0.8" strokeDasharray="3,3" />
+        <text x={px(tx) + 2} y={padT + 10} fontSize="9" fill="#fbbf24">ATM</text>
+        {/* Smile curves */}
+        {polyOf(skewWed, '#86efac')}
+        {polyOf(skewFri, '#7dd3fc')}
+        {/* Holding markers */}
+        {holdings.map((h, i) => {
+          // 找 skew 內插的 IV 標位置
+          const skew = skewWed.length >= 2 ? skewWed : skewFri;
+          if (skew.length < 2) return null;
+          let iv = skew[0].iv;
+          if (h.strike <= skew[0].strike) iv = skew[0].iv;
+          else if (h.strike >= skew[skew.length-1].strike) iv = skew[skew.length-1].iv;
+          else for (let j = 0; j < skew.length - 1; j++) {
+            const a = skew[j], b = skew[j+1];
+            if (h.strike >= a.strike && h.strike <= b.strike && b.strike > a.strike) {
+              iv = a.iv + (h.strike - a.strike)/(b.strike - a.strike) * (b.iv - a.iv);
+              break;
+            }
+          }
+          const cx = px(h.strike), cy = py(iv * 100);
+          const color = h.qty > 0 ? '#86efac' : '#fca5a5';
+          return (
+            <g key={i}>
+              <circle cx={cx} cy={cy} r="3.5" fill={color} stroke="#0a0e1c" strokeWidth="1" />
+              <text x={cx} y={cy - 6} fontSize="8" fill={color} textAnchor="middle">
+                {h.qty > 0 ? '+' : ''}{h.qty}
+              </text>
+            </g>
+          );
+        })}
+        {/* X axis labels */}
+        <text x={padL} y={H - 6} fontSize="9" fill="#64748b">{Math.round(xMin).toLocaleString()}</text>
+        <text x={padL + innerW} y={H - 6} fontSize="9" fill="#64748b" textAnchor="end">{Math.round(xMax).toLocaleString()}</text>
+      </svg>
+      <div style={{display:'flex', gap:'12px', flexWrap:'wrap', fontSize:'9px', color:'#94a3b8',
+                    marginTop:'2px', justifyContent:'center'}}>
+        {skewWed.length >= 2 && (
+          <span><span style={{display:'inline-block', width:'12px', height:'2px',
+                              background:'#86efac', marginRight:'4px', verticalAlign:'middle'}} />
+                週三週選 (n={skewWed.length})</span>
+        )}
+        {skewFri.length >= 2 && (
+          <span><span style={{display:'inline-block', width:'12px', height:'2px',
+                              background:'#7dd3fc', marginRight:'4px', verticalAlign:'middle'}} />
+                週五週選 (n={skewFri.length})</span>
+        )}
+        {holdings.length > 0 && (
+          <span><span style={{display:'inline-block', width:'8px', height:'8px',
+                              background:'#86efac', borderRadius:'50%', marginRight:'4px',
+                              verticalAlign:'middle'}} />
+                持倉 {holdings.length} 腳</span>
+        )}
+      </div>
+      <div style={{fontSize:'9px', color:'#64748b', marginTop:'2px'}}>
+        左下傾斜 = put 高 vol（典型台股 skew）；右上凹 = call 高 vol；對稱 = U 型 smile
+      </div>
+    </div>
+  );
+}
+
 function TxoChainGrid({ data }) {
   const [open, setOpen] = React.useState(false);
   const tx  = data?.market?.tx_futures;
@@ -4633,6 +4747,7 @@ function App() {
       <Section title="💡 市場機會" defaultOpen={false} accent="blue"
                badge={data?.weekly_opportunities?.length ? `${data.weekly_opportunities.length} 週` : null}>
         <IndicatorGrid data={data} />
+        <IVSmile data={data} />
         <TxoChainGrid data={data} />
         <WeeklyOpportunities data={data} />
       </Section>
