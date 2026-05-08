@@ -2304,6 +2304,19 @@ function CalendarView({ data }) {
     addMarker(ev.date, ev.type, ev.name, c);
   });
 
+  // Past events with TX impact (from event_history)
+  const pastEvents = data?.event_history?.events || [];
+  pastEvents.forEach(ev => {
+    const t = ev.tx_change_T_pct;
+    // 顯示 TX% 變動為 label，色按方向
+    const c = t == null ? '#64748b' :
+              t >= 1   ? '#86efac' :
+              t <= -1  ? '#fca5a5' :
+                         '#94a3b8';
+    const label = t != null ? `${t >= 0 ? '+' : ''}${t.toFixed(1)}% ${ev.name}` : ev.name;
+    addMarker(ev.date, `past_${ev.type}`, label, c);
+  });
+
   // TXO 月選結算（從 data.settlement_date 或近月）
   const fmt8to10 = s => s && s.length === 8 ? `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}` : s;
   // far month
@@ -2412,7 +2425,8 @@ function CalendarView({ data }) {
         <span><span style={{color:'#fca5a5'}}>━</span> TXO 月選結算</span>
         <span><span style={{color:'#86efac'}}>━</span> 週三週選</span>
         <span><span style={{color:'#60a5fa'}}>━</span> 週五週選</span>
-        <span><span style={{color:'#fb923c'}}>━</span> 高影響事件</span>
+        <span><span style={{color:'#fb923c'}}>━</span> 未來高影響事件</span>
+        <span><span style={{color:'#86efac'}}>+%</span> / <span style={{color:'#fca5a5'}}>-%</span> 過去事件 TX 變動</span>
       </div>
     </div>
   );
