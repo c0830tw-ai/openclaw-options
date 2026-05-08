@@ -2112,13 +2112,14 @@ function CalendarSpreadHelper({ data }) {
   const so = data?.selected_options || {};
   const wedSO = data?.weekly_wed?.selected_options || {};
   const friSO = data?.weekly_fri?.selected_options || {};
-  if (!tx) return null;
 
-  // 預設履約：用近月 selected_options (依 right 切換)
+  // 預設履約：用近月 selected_options (依 right 切換) — 必須在 early return 之前
   React.useEffect(() => {
     const k = right === 'put' ? so.put?.strike : so.call?.strike;
     if (k && !strike) setStrike(k);
   }, [right, so.put?.strike, so.call?.strike]);
+
+  if (!tx) return null;
 
   // Near / Far 月份：
   // standard: near = 週選 (W or F), far = 近月 monthly
