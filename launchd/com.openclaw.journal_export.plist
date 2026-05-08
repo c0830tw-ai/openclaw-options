@@ -9,6 +9,7 @@
     <array>
         <string>/usr/bin/python3</string>
         <string>/Users/chenchinghung/openclaw/options/journal_export.py</string>
+        <string>--pdf</string>
     </array>
 
     <key>WorkingDirectory</key>

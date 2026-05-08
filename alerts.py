@@ -341,6 +341,43 @@ def evaluate(data: dict, rules: dict) -> list:
     return alerts
 
 
+def send_telegram_document(file_path: str, caption: str = '') -> bool:
+    """送檔案附件給 Telegram。回傳 True/False。"""
+    import os as _os
+    from pathlib import Path as _P
+    token = _os.environ.get('TELEGRAM_BOT_TOKEN')
+    chat  = _os.environ.get('TELEGRAM_CHAT_ID')
+    if not token or not chat:
+        return False
+    fp = _P(file_path)
+    if not fp.exists():
+        print(f'[alerts] sendDocument: 檔案不存在 {file_path}', file=sys.stderr)
+        return False
+    try:
+        import urllib.request
+        import uuid
+        boundary = uuid.uuid4().hex
+        body = b''
+        body += f'--{boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n{chat}\r\n'.encode()
+        if caption:
+            body += f'--{boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n{caption}\r\n'.encode()
+        body += f'--{boundary}\r\nContent-Disposition: form-data; name="document"; filename="{fp.name}"\r\n'.encode()
+        body += b'Content-Type: application/octet-stream\r\n\r\n'
+        body += fp.read_bytes()
+        body += f'\r\n--{boundary}--\r\n'.encode()
+
+        req = urllib.request.Request(
+            f'https://api.telegram.org/bot{token}/sendDocument',
+            data=body, method='POST',
+            headers={'Content-Type': f'multipart/form-data; boundary={boundary}'},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.status == 200
+    except Exception as e:
+        print(f'[alerts] sendDocument 失敗：{e}', file=sys.stderr)
+        return False
+
+
 def send_telegram(msg: str, buttons=None) -> bool:
     """送 Telegram；token/chat_id 沒設或失敗時回 False。
     buttons 可選：[[{'text':..., 'data':...}, ...], ...] 二維 inline keyboard。"""

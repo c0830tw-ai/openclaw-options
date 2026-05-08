@@ -35,7 +35,11 @@ def compute() -> Optional[Dict[str, Any]]:
     for s in snaps:
         eq = _equity_of(s)
         if eq is not None:
-            rows.append({'date': s.get('date'), 'equity': eq})
+            rows.append({
+                'date': s.get('date'),
+                'equity': eq,
+                'tx': (s.get('market') or {}).get('tx'),
+            })
     if len(rows) < 2:
         return None
 
@@ -64,6 +68,7 @@ def compute() -> Optional[Dict[str, Any]]:
             'date':   r['date'],
             'equity': round(eq),
             'dd_pct': round(dd, 2),
+            'tx':     round(r.get('tx'), 1) if r.get('tx') else None,
         })
 
     last = series[-1]

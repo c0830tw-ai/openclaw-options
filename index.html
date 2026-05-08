@@ -1039,6 +1039,8 @@ function EquityChart({ data }) {
   const dd = data?.drawdown;
   if (!dd || !dd.series || dd.series.length < 2) return null;
 
+  const baseEq = dd.series[0].equity;
+  const baseTx = dd.series[0].tx;
   const equitySeries = {
     label: 'Equity', color: '#7dd3fc',
     values: dd.series.map((r, i) => ({
@@ -1046,10 +1048,27 @@ function EquityChart({ data }) {
       label: i === 0 || i === dd.series.length - 1 ? r.date.slice(5) : '',
     })),
   };
+  // Benchmark：TX buy-and-hold（normalized 到 base equity）
+  const hasBench = !!baseTx && dd.series.every(r => r.tx);
+  const benchSeries = hasBench ? {
+    label: 'TX Buy-Hold', color: '#a78bfa',
+    values: dd.series.map((r, i) => ({
+      x: i, y: baseEq * (r.tx / baseTx), label: '',
+    })),
+  } : null;
+
+  // 報酬比較
+  const lastEq = dd.series[dd.series.length - 1].equity;
+  const eqRet = ((lastEq - baseEq) / baseEq * 100);
+  const benchRet = hasBench ? ((dd.series[dd.series.length - 1].tx - baseTx) / baseTx * 100) : null;
+
   const ddSeries = {
     label: 'Drawdown %', color: '#fca5a5',
     values: dd.series.map((r, i) => ({ x: i, y: r.dd_pct, label: '' })),
   };
+
+  const fmtPct = v => (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+  const colN = v => v >= 0 ? '#86efac' : '#fca5a5';
 
   return (
     <div style={{
@@ -1057,10 +1076,25 @@ function EquityChart({ data }) {
       borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
       fontSize:'11px', color:'#cbd5e1',
     }}>
-      <div style={{display:'flex', justifyContent:'space-between', marginBottom:'4px'}}>
-        <span style={{fontWeight:700, color:'#94a3b8'}}>💰 Equity 曲線（最近 {dd.series.length} 天）</span>
+      <div style={{display:'flex', justifyContent:'space-between', marginBottom:'4px', flexWrap:'wrap'}}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>💰 Equity 曲線（{dd.series.length} 天）</span>
+        <span style={{fontSize:'10px'}}>
+          <b style={{color: colN(eqRet)}}>{fmtPct(eqRet)}</b>
+          {benchRet != null && (
+            <>
+              <span style={{color:'#64748b', margin:'0 4px'}}>vs</span>
+              <b style={{color: colN(benchRet)}}>TX {fmtPct(benchRet)}</b>
+              <span style={{color:'#64748b', margin:'0 4px'}}>·</span>
+              <b style={{color: colN(eqRet - benchRet)}}>α {fmtPct(eqRet - benchRet)}</b>
+            </>
+          )}
+        </span>
       </div>
-      <LineChart series={[equitySeries]} height={100} showZero={false} yLabel="NT$" />
+      <LineChart
+        series={benchSeries ? [equitySeries, benchSeries] : [equitySeries]}
+        height={100} showZero={false} yLabel="NT$"
+      />
+      {benchSeries && <ChartLegend series={[equitySeries, benchSeries]} />}
       <div style={{marginTop:'6px'}}>
         <div style={{fontSize:'9px', color:'#64748b', marginBottom:'2px'}}>Drawdown %</div>
         <LineChart series={[ddSeries]} height={70} dateLabels={false} yLabel="%" />

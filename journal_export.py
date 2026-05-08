@@ -223,11 +223,26 @@ def export_pdf(md_path: Path) -> Optional[Path]:
         return None
 
 
+def _load_env():
+    """確保 launchd 環境也能讀到 .env 內 token。"""
+    env = _HERE / '.env'
+    if not env.exists():
+        return
+    import os as _os
+    for line in env.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        k, v = line.split('=', 1)
+        _os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--month', help='YYYY-MM (預設上月)')
     ap.add_argument('--current', action='store_true', help='本月（含至今）')
     ap.add_argument('--pdf', action='store_true', help='也輸出 PDF (需 pandoc)')
+    ap.add_argument('--no-push', action='store_true', help='不自動推 Telegram')
     args = ap.parse_args()
 
     if args.current:
@@ -236,7 +251,6 @@ def main():
     elif args.month:
         year, month = map(int, args.month.split('-'))
     else:
-        # 預設上月
         now = datetime.now()
         if now.month == 1:
             year, month = now.year - 1, 12
@@ -246,10 +260,27 @@ def main():
     md_path = export_markdown(year, month)
     print(f'[journal_export] wrote → {md_path}')
 
+    pdf_path = None
     if args.pdf:
-        pdf = export_pdf(md_path)
-        if pdf:
-            print(f'[journal_export] PDF → {pdf}')
+        pdf_path = export_pdf(md_path)
+        if pdf_path:
+            print(f'[journal_export] PDF → {pdf_path}')
+
+    if not args.no_push:
+        _load_env()
+        sys.path.insert(0, str(_HERE))
+        try:
+            import alerts as _A
+        except Exception as e:
+            print(f'[journal_export] 無法載入 alerts: {e}', file=sys.stderr)
+            return 0
+        # 偏好 PDF；無則 MD
+        target = pdf_path or md_path
+        caption = f'📓 交易日記月報 {year}-{month:02d}'
+        if _A.send_telegram_document(str(target), caption=caption):
+            print(f'[journal_export] Telegram 推送成功 ({target.name})')
+        else:
+            print('[journal_export] Telegram 未設定或失敗', file=sys.stderr)
 
 
 if __name__ == '__main__':
