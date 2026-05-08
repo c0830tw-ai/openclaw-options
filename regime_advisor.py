@@ -10,36 +10,42 @@ regime_advisor.py — 依當前市場 regime 推薦最佳 SOP 參數
 from typing import Any, Dict, List, Optional
 
 
-# ── Regime → 最佳參數（來自 backtest_regime.py 跑出來的 insight）─
+# ── Regime → 最佳策略（來自 backtest_all_regime.py 8 策略 sweep）─
+# 推薦順序：primary（積極派）/ fallback（保守派 = 你目前 SOP）
 REGIME_RECOMMENDATIONS = {
     'bull_strong': {
         'label':    '🐂 強勢牛市',
         'criteria': '30 天 TX 漲幅 > 10%',
         'dte':      30,
-        'delta':    0.05,
-        'strategy': 'collar',
-        'why':      '強牛遠 OTM call (Δ 0.05) 不易被軋，short DTE 30 與 month roll 對齊，'
-                    'collar 既賺 call premium 又留下漲空間',
-        'expected': 'Calmar 7.65（backtest Q2 +21% 那段最佳）',
+        'delta':    0.10,
+        'strategy': 'cal-reverse',
+        'fallback': 'put_only',
+        'why':      '【全策略 sweep】cal-reverse 牛市連 2 次奪冠（Calmar +4 ~ +5）。'
+                    '不熟 calendar 操作可 fallback put-only（穩定亞軍、DD 最小）。'
+                    '避免 collar/hui-full（call 被軋排第 7-8 名）',
+        'expected': 'cal-reverse +14 ~ +18%（小勝 naked 1-2%）',
     },
     'bull_mild': {
         'label':    '🐃 中等牛市',
         'criteria': '30 天 TX 漲幅 5-10%',
-        'dte':      45,
+        'dte':      30,
         'delta':    0.10,
-        'strategy': 'collar',
-        'why':      '中牛長 DTE 累積 theta 收益，Δ 0.10 平衡保護與 premium',
-        'expected': 'Calmar 3.91（backtest Q4 加速漲那段）',
+        'strategy': 'cal-reverse',
+        'fallback': 'put_only',
+        'why':      '【sweep 驗證】中牛 cal-reverse 仍領先（Calmar +4.13）。'
+                    'put-only 跟在後面（Calmar +3.63）',
+        'expected': 'cal-reverse +14% / put-only +12%（vs naked +13%）',
     },
     'sideways': {
         'label':    '😴 盤整',
         'criteria': '30 天 TX 變動 -5% ~ +5%',
-        'dte':      21,
-        'delta':    0.15,
-        'strategy': 'collar',
-        'why':      '盤整時 collar 唯一勝過裸長部位（call premium 補 put 成本）；'
-                    '短 DTE 21 + ATM-ish (Δ 0.15) 抓住小波動',
-        'expected': 'Calmar 1.42 + 勝裸長 +5.7%（backtest Q1）',
+        'dte':      30,
+        'delta':    0.10,
+        'strategy': 'iron-condor',
+        'fallback': 'put_only',
+        'why':      '【sweep 驗證】盤整 iron-condor (寶典 4 腳) 冠軍 Calmar +1.54，'
+                    '小贏 put-only。雙向收 credit 對中性市場最有效',
+        'expected': 'iron-condor +4.7%（小勝 naked +4.4%）',
     },
     'bear_mild': {
         'label':    '🐃↓ 中等熊市',
@@ -47,8 +53,10 @@ REGIME_RECOMMENDATIONS = {
         'dte':      21,
         'delta':    0.15,
         'strategy': 'put_only',
-        'why':      '下跌中 put_only 為主，避免 sell call 鎖死反彈',
-        'expected': '理論最佳（backtest 樣本不足，依合成情境推論）',
+        'fallback': 'cal-reverse',
+        'why':      'put-only 是熊市保護導向首選（DD 最小）。'
+                    'cal-reverse 在跌市能收 long near put 的 gamma 增值，可作 alternative',
+        'expected': 'put-only DD 最小（vs naked 多保 5-7%）',
     },
     'bear_strong': {
         'label':    '🐻 強勢熊市',
@@ -56,8 +64,10 @@ REGIME_RECOMMENDATIONS = {
         'dte':      15,
         'delta':    0.20,
         'strategy': 'put_only',
-        'why':      '崩跌中極短 DTE 高 delta put 緊跟現價提供最大保護；不要 sell call',
-        'expected': '崩跌情境保命為主',
+        'fallback': 'cal-reverse',
+        'why':      '崩跌期保命為主：put-only 緊跟現價（Δ 0.20）+ short DTE 快速 gamma'
+                    '。避免 hui-full（DD -28%）；cal-reverse 絕對虧損也少',
+        'expected': '崩跌情境保命，預期 -10 ~ -15% vs naked -20%+',
     },
 }
 
@@ -177,6 +187,7 @@ def evaluate(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             'dte':       rec['dte'],
             'delta':     rec['delta'],
             'strategy':  rec['strategy'],
+            'fallback':  rec.get('fallback', ''),
             'why':       rec['why'],
             'expected':  rec['expected'],
         },
