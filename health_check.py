@@ -183,6 +183,34 @@ def evaluate(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 suggestions.append('立即減 short put 部位')
             breakdown.append({'rule': '保證金壓力', 'score': r6_score, 'detail': r6_detail})
 
+    # ── Rule 7: Delta 目標偏差 (target band) ─────────────
+    # 從 alerts_config 讀 target + tolerance
+    try:
+        import alerts as _AL
+        rules = _AL.load_rules()
+        target_delta = rules.get('risk_target_delta_ntd_per_1pct_tx')
+        tol = rules.get('risk_target_delta_tolerance_ntd', 5000)
+        cur_delta = pg_totals.get('delta_ntd_per_1pct_tx')
+        if target_delta is not None and cur_delta is not None and tol > 0:
+            deviation = abs(cur_delta - target_delta)
+            if deviation <= tol:
+                r7_score = 100
+                r7_detail = f'Δ {int(cur_delta):+,} 在 ±{int(tol):,} band 內 (target {target_delta:+})'
+            elif deviation <= tol * 2:
+                r7_score = 70
+                r7_detail = f'Δ {int(cur_delta):+,} 偏離 target {target_delta:+} 達 {int(deviation):,}'
+            else:
+                r7_score = 40
+                r7_detail = f'Δ {int(cur_delta):+,} 嚴重偏離 target {target_delta:+}（diff {int(deviation):,}）'
+                violations.append(f'Delta 偏離目標：當前 {int(cur_delta):+,}、target {target_delta:+,}、tol ±{int(tol):,}')
+                if cur_delta > target_delta + tol:
+                    suggestions.append('Delta 偏多：考慮買 put 或減 call 短部位調整')
+                else:
+                    suggestions.append('Delta 偏空：考慮減 put 或加 long call 平衡')
+            breakdown.append({'rule': 'Δ 目標 band', 'score': r7_score, 'detail': r7_detail})
+    except Exception:
+        pass
+
     # ── Rule 4: 趨勢市賣 call 風險 ─────────────────────────
     if held_short_call_lots > 0:
         # 用 trend 區段 vs_week_ago 看上漲動能

@@ -2312,6 +2312,103 @@ function CalendarSpreadHelper({ data }) {
   );
 }
 
+function BuildPlanHelper({ data }) {
+  const [open, setOpen] = React.useState(false);
+  const [target, setTarget] = React.useState(5);
+  const [weeks, setWeeks] = React.useState(4);
+
+  if (!data) return null;
+  const today = new Date();
+
+  // 4 週分批建倉 schedule
+  const perBatch = Math.ceil(target / weeks);
+  const remainder = target - perBatch * weeks;
+  const batches = [];
+  let acc = 0;
+  for (let i = 0; i < weeks; i++) {
+    let qty = perBatch;
+    if (remainder < 0 && i === weeks - 1) qty = target - acc;   // 最後一週吸收餘數
+    if (qty <= 0) qty = 1;
+    acc += qty;
+    const d = new Date(today);
+    d.setDate(today.getDate() + i * 7);
+    batches.push({
+      week: i + 1,
+      qty,
+      date: d.toISOString().slice(0, 10),
+      cumulative: acc,
+    });
+  }
+  // 修正 over-shoot
+  if (acc > target) {
+    const over = acc - target;
+    batches[batches.length - 1].qty -= over;
+    batches[batches.length - 1].cumulative -= over;
+  }
+
+  return (
+    <div style={{
+      background:'#0a0e1c', border:'1px solid #60a5fa44',
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div onClick={() => setOpen(!open)} style={{
+        display:'flex', justifyContent:'space-between', alignItems:'center',
+        cursor:'pointer', userSelect:'none',
+      }}>
+        <span style={{fontWeight:700, color:'#60a5fa'}}>
+          📅 分批建倉助手（{weeks} 週均攤）
+        </span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>
+          目標 {target} 口　{open ? '▲' : '▼'}
+        </span>
+      </div>
+
+      {open && (
+        <>
+          <div style={{display:'flex', gap:'8px', marginTop:'6px', flexWrap:'wrap',
+                        padding:'6px', background:'#070b15', borderRadius:'3px', alignItems:'center'}}>
+            <span style={{fontSize:'10px', color:'#94a3b8'}}>目標總口數</span>
+            <input type="number" value={target} min="1" max="20"
+                   onChange={e => setTarget(Math.max(1, parseInt(e.target.value) || 1))}
+                   style={{width:'50px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}} />
+            <span style={{fontSize:'10px', color:'#94a3b8'}}>分散週數</span>
+            <input type="number" value={weeks} min="1" max="10"
+                   onChange={e => setWeeks(Math.max(1, parseInt(e.target.value) || 1))}
+                   style={{width:'50px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}} />
+          </div>
+
+          <div style={{marginTop:'6px', borderTop:'1px solid #1e2535', paddingTop:'6px'}}>
+            {batches.map((b, i) => (
+              <div key={i} style={{display:'flex', alignItems:'baseline', gap:'8px',
+                                    padding:'4px 8px', background: i === 0 ? '#0f1828' : 'transparent',
+                                    borderLeft: i === 0 ? '3px solid #4ade80' : '3px solid #334155',
+                                    borderRadius:'3px', marginBottom:'2px'}}>
+                <span style={{fontSize:'11px', color: i === 0 ? '#86efac' : '#94a3b8', fontWeight:700, minWidth:'50px'}}>
+                  第 {b.week} 週
+                </span>
+                <span style={{fontSize:'10px', color:'#64748b', minWidth:'90px'}}>{b.date}</span>
+                <span style={{fontSize:'13px', color:'#cbd5e1', fontWeight:700, minWidth:'60px'}}>
+                  +{b.qty} 口
+                </span>
+                <span style={{fontSize:'10px', color:'#64748b'}}>
+                  累計 {b.cumulative} / {target}
+                </span>
+                {i === 0 && <span style={{fontSize:'9px', color:'#86efac', marginLeft:'auto'}}>本週執行</span>}
+              </div>
+            ))}
+          </div>
+
+          <div style={{fontSize:'9px', color:'#64748b', marginTop:'6px'}}>
+            📌 寶典系統：每週開倉 {perBatch} 口，分散 timing risk；
+            建議在 IV 高點分批入手，降低被 IV crush 衝擊
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function HuiRatioHelper({ data }) {
   const [open, setOpen] = React.useState(false);
   const [sets, setSets] = React.useState(1);              // 幾組（1 組 = 1×BP+2×SP+1×SC）
@@ -2612,6 +2709,25 @@ function PretradeSimulator({ data }) {
           { id: newId(), side: 'buy',  right: 'put',  strike: so.put.strike,        dte, iv, qty: 1 },
           { id: newId(), side: 'sell', right: 'put',  strike: so.put.strike - 500, dte, iv, qty: 2 },
           { id: newId(), side: 'sell', right: 'call', strike: so.call.strike,       dte, iv, qty: 1 },
+        ];
+      },
+    },
+    {
+      label: '寶典 4 腳建構式 (BP+SP+SC+BC)',
+      desc:  '完整 4 腳對稱：買護腳 + 賣 credit 雙向（類 Iron Condor 但更穩固）',
+      build: () => {
+        if (!so.put?.strike || !so.call?.strike) return null;
+        const dte = data.dte_trading || 30;
+        const iv  = data.iv_used || 0.20;
+        const bpK = so.put.strike  + 200;     // BP 略 ATM 高（強保護）
+        const spK = so.put.strike  - 300;     // SP credit
+        const scK = so.call.strike + 300;     // SC credit
+        const bcK = so.call.strike - 200;     // BC 略 ATM 低（強保護）
+        return [
+          { id: newId(), side: 'buy',  right: 'put',  strike: bpK, dte, iv, qty: 1 },
+          { id: newId(), side: 'sell', right: 'put',  strike: spK, dte, iv, qty: 1 },
+          { id: newId(), side: 'sell', right: 'call', strike: scK, dte, iv, qty: 1 },
+          { id: newId(), side: 'buy',  right: 'call', strike: bcK, dte, iv, qty: 1 },
         ];
       },
     },
@@ -5582,6 +5698,7 @@ function App() {
         <OrderHelper data={data} />
         <HuiRatioHelper data={data} />
         <CalendarSpreadHelper data={data} />
+        <BuildPlanHelper data={data} />
         <PretradeSimulator data={data} />
         <RollSuggestions data={data} />
       </Section>

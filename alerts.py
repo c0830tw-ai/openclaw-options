@@ -53,6 +53,10 @@ DEFAULT_RULES = {
     'risk_max_short_call_lots':       4,
     'risk_max_drawdown_pct':         -10,
 
+    # Delta target band（保持中性 / 微負方向）
+    'risk_target_delta_ntd_per_1pct_tx':       0,      # 目標 0 = neutral
+    'risk_target_delta_tolerance_ntd':         5000,   # 允許偏離 ±5000
+
     'cooldown_minutes':          60,    # 同一規則最少間隔分鐘
     'telegram_enabled':          True,
 }

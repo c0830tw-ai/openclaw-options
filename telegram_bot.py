@@ -438,23 +438,29 @@ def cmd_positions(data, args_text=''):
 
 
 RISK_ALIASES = {
-    'delta':  'risk_max_delta_ntd_per_1pct_tx',
-    'theta':  'risk_max_theta_ntd_per_day',
-    'vega':   'risk_max_vega_ntd_per_pct_iv',
-    'puts':   'risk_max_put_lots',
-    'put':    'risk_max_put_lots',
-    'calls':  'risk_max_short_call_lots',
-    'call':   'risk_max_short_call_lots',
-    'dd':     'risk_max_drawdown_pct',
-    'drawdown': 'risk_max_drawdown_pct',
+    'delta':       'risk_max_delta_ntd_per_1pct_tx',
+    'theta':       'risk_max_theta_ntd_per_day',
+    'vega':        'risk_max_vega_ntd_per_pct_iv',
+    'puts':        'risk_max_put_lots',
+    'put':         'risk_max_put_lots',
+    'calls':       'risk_max_short_call_lots',
+    'call':        'risk_max_short_call_lots',
+    'dd':          'risk_max_drawdown_pct',
+    'drawdown':    'risk_max_drawdown_pct',
+    'tdelta':      'risk_target_delta_ntd_per_1pct_tx',
+    'targetdelta': 'risk_target_delta_ntd_per_1pct_tx',
+    'tol':         'risk_target_delta_tolerance_ntd',
+    'tolerance':   'risk_target_delta_tolerance_ntd',
 }
 RISK_LABELS = {
-    'risk_max_delta_ntd_per_1pct_tx': 'Delta 曝險 (NT/1%TX)',
-    'risk_max_theta_ntd_per_day':     'Theta 成本 (NT/天)',
-    'risk_max_vega_ntd_per_pct_iv':   'Vega 曝險 (NT/1%IV)',
-    'risk_max_put_lots':              'Long put 口數',
-    'risk_max_short_call_lots':       'Short call 口數',
-    'risk_max_drawdown_pct':          'Drawdown 警戒 (%)',
+    'risk_max_delta_ntd_per_1pct_tx':         'Delta 曝險上限 (NT/1%TX)',
+    'risk_max_theta_ntd_per_day':             'Theta 成本上限 (NT/天)',
+    'risk_max_vega_ntd_per_pct_iv':           'Vega 曝險上限 (NT/1%IV)',
+    'risk_max_put_lots':                      'Long put 口數',
+    'risk_max_short_call_lots':               'Short call 口數',
+    'risk_max_drawdown_pct':                  'Drawdown 警戒 (%)',
+    'risk_target_delta_ntd_per_1pct_tx':      'Delta 目標 (NT/1%TX)',
+    'risk_target_delta_tolerance_ntd':        'Delta 容忍 ±band (NT)',
 }
 
 
