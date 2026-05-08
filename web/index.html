@@ -1697,6 +1697,218 @@ function UpcomingEvents({ data }) {
   );
 }
 
+// ── Black-Scholes helpers (JS) ─────────────────────────────────
+function _normCdf(x) {
+  // Abramowitz approximation
+  const a1=0.254829592,a2=-0.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429,p=0.3275911;
+  const sign = x < 0 ? -1 : 1;
+  x = Math.abs(x) / Math.sqrt(2);
+  const t = 1 / (1 + p * x);
+  const y = 1 - (((((a5*t+a4)*t)+a3)*t+a2)*t+a1)*t*Math.exp(-x*x);
+  return 0.5 * (1 + sign * y);
+}
+
+function _bsGreeks(S, K, T, sigma, isPut) {
+  if (T <= 0 || sigma <= 0 || S <= 0 || K <= 0) {
+    return { delta: 0, theta_per_day: 0, vega_per_pct: 0 };
+  }
+  const sqrtT = Math.sqrt(T);
+  const d1 = (Math.log(S/K) + 0.5 * sigma * sigma * T) / (sigma * sqrtT);
+  const phi = Math.exp(-d1*d1/2) / Math.sqrt(2 * Math.PI);
+  const delta = isPut ? (_normCdf(d1) - 1) : _normCdf(d1);
+  const thetaYear = -S * phi * sigma / (2 * sqrtT);
+  return {
+    delta,
+    theta_per_day: thetaYear / 365,
+    vega_per_pct:  S * phi * sqrtT / 100,
+  };
+}
+
+function PretradeSimulator({ data }) {
+  const [open, setOpen] = React.useState(false);
+  const [side, setSide] = React.useState('buy');     // buy / sell
+  const [right, setRight] = React.useState('put');    // put / call
+  const [presetIdx, setPresetIdx] = React.useState(0);
+  const [qty, setQty] = React.useState(1);
+  const [strike, setStrike] = React.useState(0);
+  const [dte, setDte] = React.useState(30);
+  const [iv, setIv] = React.useState(0.20);
+
+  const t = data?.portfolio_greeks?.totals;
+  if (!t) return null;
+
+  // 從 selected_options 提供 quick presets
+  const presets = [];
+  const so = data?.selected_options || {};
+  if (so.put?.strike)  presets.push({ label: `近月 ${so.put.strike}P (Δ${so.put.delta?.toFixed(2)})`,
+                                       right: 'put', strike: so.put.strike,
+                                       iv: data.iv_used || 0.20, dte: data.dte_trading || 30 });
+  if (so.call?.strike) presets.push({ label: `近月 ${so.call.strike}C (Δ${so.call.delta?.toFixed(2)})`,
+                                       right: 'call', strike: so.call.strike,
+                                       iv: data.iv_used || 0.20, dte: data.dte_trading || 30 });
+  const fm = data?.far_month || {};
+  if (fm.selected_options?.put?.strike)
+    presets.push({ label: `遠月 ${fm.selected_options.put.strike}P`,
+                   right: 'put', strike: fm.selected_options.put.strike,
+                   iv: fm.iv_used || 0.20, dte: fm.dte_trading || 60 });
+
+  // Apply preset 切換
+  const applyPreset = (idx) => {
+    const p = presets[idx];
+    if (!p) return;
+    setPresetIdx(idx);
+    setRight(p.right);
+    setStrike(p.strike);
+    setIv(p.iv);
+    setDte(p.dte);
+  };
+  React.useEffect(() => { if (presets.length > 0 && !strike) applyPreset(0); }, [presets.length]);
+
+  const fmt = n => n == null ? '—' : Math.round(n).toLocaleString();
+  const fmtS = n => n == null ? '—' : (n > 0 ? '+' : '') + Math.round(n).toLocaleString();
+  const colN = n => n > 0 ? '#4ade80' : n < 0 ? '#f87171' : '#94a3b8';
+
+  // Compute single-leg greeks
+  const S = data?.market?.tx_futures || 0;
+  const K = parseFloat(strike) || 0;
+  const T = (parseInt(dte) || 0) / 365;
+  const ivf = parseFloat(iv) || 0;
+  const isPut = right === 'put';
+  const g = _bsGreeks(S, K, T, ivf, isPut);
+  const sign = (side === 'buy' ? 1 : -1) * (parseInt(qty) || 0);
+
+  // Per-contract → portfolio contribution
+  const TXO_MULT = 50;
+  const newDeltaTx = (g.delta * sign) * TXO_MULT * S * 0.01;     // NT$ / 1% TX
+  const newTheta   = g.theta_per_day * sign * TXO_MULT;          // NT$ / day
+  const newVega    = g.vega_per_pct  * sign * TXO_MULT;          // NT$ / 1% IV
+
+  const beforeDelta = t.delta_ntd_per_1pct_tx || 0;
+  const beforeTheta = t.theta_ntd_per_day || 0;
+  const beforeVega  = t.vega_ntd_per_pct_iv || 0;
+
+  const afterDelta = beforeDelta + newDeltaTx;
+  const afterTheta = beforeTheta + newTheta;
+  const afterVega  = beforeVega  + newVega;
+
+  // 200萬 hedge 對齊變化（put 相關）
+  const recLots = data?.portfolio?.totals?.recommended_put_lots || 0;
+  const heldPuts = (data?.portfolio_greeks?.legs || [])
+    .filter(L => L.right === 'put' && (L.qty_signed || 0) > 0)
+    .reduce((sum, L) => sum + (L.qty_signed || 0), 0);
+  const newHeldPuts = isPut ? heldPuts + sign : heldPuts;
+  const beforeGap = heldPuts - recLots;
+  const afterGap  = newHeldPuts - recLots;
+
+  return (
+    <div style={{
+      background:'#0a0e1c', border:'1px solid #1e2535',
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div onClick={() => setOpen(!open)} style={{
+        display:'flex', justifyContent:'space-between', alignItems:'center',
+        cursor:'pointer', userSelect:'none',
+      }}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>🧪 Pre-trade 模擬器</span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>下單前看曝險變化　{open ? '▲' : '▼'}</span>
+      </div>
+
+      {open && (
+        <>
+          {/* 預設選單 */}
+          {presets.length > 0 && (
+            <div style={{display:'flex', gap:'4px', flexWrap:'wrap', marginTop:'6px'}}>
+              {presets.map((p, i) => (
+                <button key={i} onClick={() => applyPreset(i)} style={{
+                  background: i === presetIdx ? '#0f1828' : 'transparent',
+                  border: i === presetIdx ? '1px solid #60a5fa' : '1px solid #334155',
+                  color: i === presetIdx ? '#60a5fa' : '#94a3b8',
+                  padding:'2px 8px', borderRadius:'3px', cursor:'pointer', fontSize:'10px',
+                }}>{p.label}</button>
+              ))}
+            </div>
+          )}
+
+          {/* 表單 */}
+          <div style={{display:'flex', gap:'6px', flexWrap:'wrap', marginTop:'6px',
+                        padding:'6px', background:'#070b15', borderRadius:'3px'}}>
+            <select value={side} onChange={e => setSide(e.target.value)}
+                    style={{background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}}>
+              <option value="buy">買進</option>
+              <option value="sell">賣出</option>
+            </select>
+            <input type="number" value={qty} onChange={e => setQty(e.target.value)} min="1"
+                   style={{width:'50px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}} />
+            <span style={{padding:'2px 4px', color:'#64748b'}}>口</span>
+            <select value={right} onChange={e => setRight(e.target.value)}
+                    style={{background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}}>
+              <option value="put">Put</option>
+              <option value="call">Call</option>
+            </select>
+            <input type="number" value={strike} onChange={e => setStrike(e.target.value)} placeholder="履約"
+                   style={{width:'80px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}} />
+            <span style={{padding:'2px 4px', color:'#64748b'}}>DTE</span>
+            <input type="number" value={dte} onChange={e => setDte(e.target.value)} min="1"
+                   style={{width:'50px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}} />
+            <span style={{padding:'2px 4px', color:'#64748b'}}>IV</span>
+            <input type="number" value={iv} onChange={e => setIv(e.target.value)} step="0.01" min="0.05"
+                   style={{width:'70px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}} />
+          </div>
+
+          {/* Before / After 比較 */}
+          <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', marginTop:'6px'}}>
+            {[
+              { label: '當前 (Before)', d: beforeDelta, t: beforeTheta, v: beforeVega, gap: beforeGap, dim: true },
+              { label: '加倉後 (After)', d: afterDelta,  t: afterTheta,  v: afterVega,  gap: afterGap,  dim: false },
+            ].map((col, i) => (
+              <div key={i} style={{padding:'6px 8px', background:'#070b15', borderRadius:'4px',
+                                    border: col.dim ? '1px solid #1e2535' : '1px solid #60a5fa'}}>
+                <div style={{fontSize:'10px', color:'#94a3b8', marginBottom:'4px', fontWeight:700}}>{col.label}</div>
+                <div style={{fontSize:'10px', display:'flex', justifyContent:'space-between'}}>
+                  <span>Δ NT/1%TX</span>
+                  <b style={{color: colN(col.d)}}>{fmtS(col.d)}</b>
+                </div>
+                <div style={{fontSize:'10px', display:'flex', justifyContent:'space-between'}}>
+                  <span>θ NT/天</span>
+                  <b style={{color: colN(col.t)}}>{fmtS(col.t)}</b>
+                </div>
+                <div style={{fontSize:'10px', display:'flex', justifyContent:'space-between'}}>
+                  <span>ν NT/1%IV</span>
+                  <b style={{color: colN(col.v)}}>{fmtS(col.v)}</b>
+                </div>
+                <div style={{fontSize:'10px', display:'flex', justifyContent:'space-between',
+                              borderTop:'1px solid #1e2535', marginTop:'2px', paddingTop:'2px'}}>
+                  <span>200萬 gap</span>
+                  <b style={{color: col.gap === 0 ? '#4ade80' : '#fbbf24'}}>
+                    {col.gap > 0 ? '+' : ''}{col.gap}
+                  </b>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 變動摘要 */}
+          <div style={{marginTop:'6px', padding:'4px 8px', background:'#0f1828', borderRadius:'3px',
+                        fontSize:'10px', color:'#cbd5e1'}}>
+            <span style={{color:'#94a3b8'}}>變化：</span>
+            ΔΔ <b style={{color: colN(newDeltaTx)}}>{fmtS(newDeltaTx)}</b>
+            {' · '}
+            Δθ <b style={{color: colN(newTheta)}}>{fmtS(newTheta)}</b>
+            {' (月 ≈ '}<b style={{color: colN(newTheta * 30)}}>{fmtS(newTheta * 30)}</b>{')'}
+            {' · '}
+            Δν <b style={{color: colN(newVega)}}>{fmtS(newVega)}</b>
+          </div>
+
+          <div style={{fontSize:'9px', color:'#64748b', marginTop:'4px'}}>
+            線性 BS 近似（單腳）；多腳結構請逐筆模擬累加
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function OrderHelper({ data }) {
   const [open, setOpen] = React.useState(false);
   const oh = data?.order_helper;
@@ -3534,6 +3746,7 @@ function App() {
         <UpcomingEvents data={data} />
         <CollarDashboard data={data} />
         <OrderHelper data={data} />
+        <PretradeSimulator data={data} />
         <RollSuggestions data={data} />
       </Section>
 
