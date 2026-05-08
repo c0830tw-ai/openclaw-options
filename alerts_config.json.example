@@ -14,7 +14,6 @@
     "max_short_calls":           "賣出 call 總口數上限。超過會 alert 提醒不要再加",
     "short_put_distance_sigma":  "你賣的 put 距現價幾個標準差以下警告（被指派風險）",
     "trading_loss_mtd_cap":      "短線交易本月累計虧損超過此金額（負數）就 alert 停手",
-    "intraday_bb_alert_enabled": "true = 啟用 5 分 K 近月期貨（TXF/CDF/NYF）開布林通知",
     "cooldown_minutes":          "同一規則至少間隔幾分鐘才再次通知",
     "telegram_enabled":          "true 才送 Telegram；否則只 console"
   },
@@ -31,7 +30,6 @@
   "max_short_calls":           6,
   "short_put_distance_sigma":  1.0,
   "trading_loss_mtd_cap":      -50000,
-  "intraday_bb_alert_enabled": true,
   "cooldown_minutes":          60,
   "telegram_enabled":          true
 }

@@ -1338,97 +1338,6 @@ def build_spreads(
 
 
 # ============ Shioaji Operations ============
-def _resample_5min(kbars) -> dict:
-    """1 分 K → 5 分 K（取每 5 分鐘 OHLC）。"""
-    bucket: dict = {}
-    for i, ts_ns in enumerate(kbars.ts):
-        bucket_key = (ts_ns // 1_000_000_000) // 300   # 5 min = 300 sec
-        o, h, l, c = kbars.Open[i], kbars.High[i], kbars.Low[i], kbars.Close[i]
-        if bucket_key not in bucket:
-            bucket[bucket_key] = [o, h, l, c]
-        else:
-            bucket[bucket_key][1] = max(bucket[bucket_key][1], h)
-            bucket[bucket_key][2] = min(bucket[bucket_key][2], l)
-            bucket[bucket_key][3] = c   # 最後一根 close
-    keys = sorted(bucket)
-    return {
-        'Open':  [bucket[k][0] for k in keys],
-        'High':  [bucket[k][1] for k in keys],
-        'Low':   [bucket[k][2] for k in keys],
-        'Close': [bucket[k][3] for k in keys],
-        'count': len(keys),
-    }
-
-
-def _calc_bb_widths(closes: list, period: int = 20) -> Optional[list]:
-    """Bollinger 軌寬時序：(上軌 − 下軌) / 中軌 × 100% = 4σ / mid × 100%。"""
-    if len(closes) < period:
-        return None
-    widths = []
-    for end in range(period, len(closes) + 1):
-        window = closes[end - period:end]
-        ma = sum(window) / period
-        if ma <= 0:
-            continue
-        std = math.sqrt(sum((x - ma) ** 2 for x in window) / period)
-        widths.append(4 * std / ma * 100)
-    return widths
-
-
-def fetch_intraday_bb_state(
-    api, contract, label: str,
-    period: int = 20, lookback_days: int = 3,
-    expand_ratio: float = 1.3, squeeze_ratio: float = 0.7,
-) -> Optional[Dict[str, Any]]:
-    """從近月期貨 1-min kbar 重採成 5-min，算 Bollinger 軌寬狀態。
-    開布林：當下軌寬 > 20-bar 平均 × expand_ratio
-    收口：< 20-bar 平均 × squeeze_ratio"""
-    try:
-        end_dt   = datetime.now()
-        start_dt = end_dt - timedelta(days=lookback_days + 5)
-        kbars = api.kbars(
-            contract=contract,
-            start=start_dt.strftime('%Y-%m-%d'),
-            end=end_dt.strftime('%Y-%m-%d'),
-        )
-    except Exception as e:
-        log.debug(f'{label} kbars 失敗: {e}')
-        return None
-
-    try:
-        bars   = _resample_5min(kbars)
-        closes = bars['Close']
-    except Exception as e:
-        log.debug(f'{label} resample 失敗: {e}')
-        return None
-
-    widths = _calc_bb_widths(closes, period=period)
-    if not widths or len(widths) < 20:
-        return None
-
-    current = widths[-1]
-    avg_20  = sum(widths[-20:]) / 20
-    if avg_20 <= 0:
-        return None
-    ratio = current / avg_20
-    if ratio > expand_ratio:
-        state = 'expanding'
-    elif ratio < squeeze_ratio:
-        state = 'squeezing'
-    else:
-        state = 'normal'
-
-    return {
-        'label':            label,
-        'symbol':           getattr(contract, 'symbol', None),
-        'bars_5min':        len(closes),
-        'bb_width':         round(current, 3),
-        'bb_width_avg_20':  round(avg_20, 3),
-        'bb_width_ratio':   round(ratio, 2),
-        'bb_state':         state,
-    }
-
-
 def _resample_daily(kbars) -> dict:
     """
     Shioaji kbars 固定回傳 1 分鐘 K，重採樣成日 K。
@@ -2525,7 +2434,6 @@ def main():
             'roll_suggestions': [],             # filled below
             'broker':    None,                  # filled below if CA active
             'weekly_opportunities': None,       # filled below
-            'intraday_bb': None,                # 5-min K BB 軌寬狀態
             'portfolio_greeks': None,           # broker 選擇權部位 Greeks 聚合
             'greeks_history':   None,           # 過去 30 天 Greeks 趨勢 + 累積 theta
             'health_check':     None,           # 持倉健診評分（對齊 SOP）
@@ -2695,32 +2603,6 @@ def main():
                          f"(最近：{result['upcoming_events'][0]['name']} +{result['upcoming_events'][0]['days_until']}d)")
         except Exception as _e:
             log.debug(f'events 失敗: {_e}')
-
-        # 14g. 近月期貨 5 分 K 布林軌道（盤中通知）
-        try:
-            today_month = datetime.now().strftime('%Y%m')
-            intraday_bb = {}
-            for family, label in [('TXF', '台指期'), ('CDF', '台積電股期'), ('NYF', '0050 ETF期')]:
-                try:
-                    sorted_c = sorted(
-                        [c for c in getattr(api.Contracts.Futures, family)
-                         if c.delivery_month >= today_month
-                         and c.symbol == f'{family}{c.delivery_month}'],
-                        key=lambda c: c.delivery_month,
-                    )
-                    if not sorted_c:
-                        continue
-                    bb = fetch_intraday_bb_state(api, sorted_c[0], label)
-                    if bb:
-                        intraday_bb[family.lower()] = bb
-                        log.info(f"{label} 5min BB: 軌寬 {bb['bb_width']:.2f}% "
-                                 f"(× {bb['bb_width_ratio']:.2f} avg) [{bb['bb_state']}]")
-                except Exception as _e:
-                    log.debug(f'{family} 5min BB 失敗: {_e}')
-            if intraday_bb:
-                result['intraday_bb'] = intraday_bb
-        except Exception as _e:
-            log.debug(f'intraday BB 整體失敗: {_e}')
 
         # 14i. Daily snapshot capture（在所有 enrichment 後，含 Greeks）+ greeks history
         try:

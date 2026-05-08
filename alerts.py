@@ -45,9 +45,6 @@ DEFAULT_RULES = {
     'short_put_distance_sigma':   1.0,   # 你賣的 put 距現價幾個標準差以下警告
     'trading_loss_mtd_cap':      -50000, # 短線交易（trading book）本月累計虧損上限
 
-    # 近月期貨 5 分 K 布林軌道（盤中進場訊號）
-    'intraday_bb_alert_enabled':  True,  # 啟用 5 分 K 開布林通知
-
     'cooldown_minutes':          60,    # 同一規則最少間隔分鐘
     'telegram_enabled':          True,
 }
@@ -280,22 +277,7 @@ def evaluate(data: dict, rules: dict) -> list:
             'tip':   '這個月已經輸太多。停止新建週選 / spread 部位，等下個月重來',
         })
 
-    # 13. 近月期貨（台指期/股期）5 分 K 布林開口（盤中進場訊號）
-    if rules.get('intraday_bb_alert_enabled', True):
-        intraday = data.get('intraday_bb') or {}
-        for fam_key, info in intraday.items():
-            if info.get('bb_state') == 'expanding':
-                label = info.get('label', fam_key.upper())
-                width = info.get('bb_width', 0)
-                ratio = info.get('bb_width_ratio', 0)
-                alerts.append({
-                    'key':   f'intraday_bb_{fam_key}',
-                    'level': '🟠',
-                    'msg':   f"{label} 5 分 K 開布林（軌寬 {width:.2f}%，是 20 根均的 {ratio:.2f} 倍）",
-                    'tip':   '盤中波動率釋放，可能進入趨勢段。順勢方向加碼或等回測,逆勢方向避免接刀',
-                })
-
-    # 14. 高影響事件（events.json）— 事件前 5 天 IV spike 風險
+    # 13. 高影響事件（events.json）— 事件前 5 天 IV spike 風險
     upcoming = data.get('upcoming_events') or []
     for ev in upcoming:
         if ev.get('impact') != 'high':

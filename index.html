@@ -2027,48 +2027,6 @@ function PortfolioGreeks({ data }) {
   );
 }
 
-function IntradayBB({ data }) {
-  const ib = data?.intraday_bb;
-  if (!ib || Object.keys(ib).length === 0) return null;
-  const stateColor = s =>
-    s === 'expanding' ? '#fb923c' :
-    s === 'squeezing' ? '#60a5fa' : '#94a3b8';
-  const stateLabel = s =>
-    s === 'expanding' ? '開布林' :
-    s === 'squeezing' ? '收口'   : '正常';
-
-  return (
-    <div style={{
-      background: '#0a0e1c', border: '1px solid #1e2535',
-      borderRadius: '6px', padding: '6px 12px', margin: '8px 0',
-      fontSize: '11px', color: '#cbd5e1',
-    }}>
-      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'4px'}}>
-        <span style={{fontWeight:700, color:'#94a3b8'}}>📐 近月期貨 5 分 K 布林軌道</span>
-        <span style={{fontSize:'9px', color:'#64748b'}}>軌寬 vs 20 根平均</span>
-      </div>
-      <div style={{display:'flex', gap:'12px', flexWrap:'wrap'}}>
-        {Object.entries(ib).map(([key, info]) => (
-          <div key={key} style={{flex:'1 1 200px', padding:'4px 8px',
-                                  borderLeft: `3px solid ${stateColor(info.bb_state)}`}}>
-            <div style={{fontSize:'10px', color:'#94a3b8'}}>
-              {info.label} <span style={{color:'#475569'}}>({info.symbol})</span>
-            </div>
-            <div style={{fontSize:'12px', marginTop:'2px'}}>
-              軌寬 <b style={{color: stateColor(info.bb_state)}}>{info.bb_width.toFixed(2)}%</b>
-              <span style={{color:'#64748b'}}> / 20根均 {info.bb_width_avg_20.toFixed(2)}%</span>
-              <span style={{margin:'0 6px', color:'#1e2535'}}>·</span>
-              <span style={{color: stateColor(info.bb_state), fontWeight: 700}}>
-                {info.bb_width_ratio.toFixed(2)}× {stateLabel(info.bb_state)}
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function WeeklyOpportunities({ data }) {
   // 兼容舊版單一 dict / 新版 list
   const raw = data?.weekly_opportunities;
@@ -2778,7 +2736,6 @@ function App() {
       <HealthCheck data={data} />
       <RollSuggestions data={data} />
       <PortfolioGreeks data={data} />
-      <IntradayBB data={data} />
       <WeeklyOpportunities data={data} />
       <BrokerPositions data={data} />
       <PortfolioBreakdown data={data} />
