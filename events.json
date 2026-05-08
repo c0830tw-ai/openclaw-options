@@ -1,30 +1,14 @@
 {
-  "_comment": "高影響事件清單 — 系統會在事件前 5 天內 alert IV spike 風險。手動維護，新增請依日期排序。",
+  "_comment": "手動維護的事件 — 主要是 events_sync.py 抓不到的（2330 法說、選舉、特殊事件）。FOMC 與美國 CPI 由 events_auto.json 自動處理（執行 python3 events_sync.py 更新）。",
   "_schema": {
-    "date":   "YYYY-MM-DD（事件當日；earnings 用法說/財報日）",
+    "date":   "YYYY-MM-DD（事件當日）",
     "type":   "earnings | fomc | cpi_us | cpi_tw | nfp | gdp | election | other",
     "name":   "顯示名稱（中文）",
-    "impact": "high | medium | low（對台股整體影響）",
-    "iv_risk": "high | medium | low（事件後 IV crush 風險或事件前 IV spike 預期）",
-    "note":   "備註（可選，用於提示具體影響）"
+    "impact": "high | medium | low",
+    "iv_risk": "high | medium | low",
+    "note":   "備註（可選）"
   },
   "events": [
-    {
-      "date":   "2026-05-15",
-      "type":   "cpi_us",
-      "name":   "美國 4 月 CPI",
-      "impact": "high",
-      "iv_risk": "medium",
-      "note":   "通膨數據；公布後若高於預期，TX 可能跳空"
-    },
-    {
-      "date":   "2026-06-11",
-      "type":   "fomc",
-      "name":   "FOMC 利率決議（6 月）",
-      "impact": "high",
-      "iv_risk": "high",
-      "note":   "利率政策；Powell 記者會通常在台北時間凌晨 02:00"
-    },
     {
       "date":   "2026-07-17",
       "type":   "earnings",
@@ -32,14 +16,6 @@
       "impact": "high",
       "iv_risk": "high",
       "note":   "台積電季度法說；台股權重 30%，IV 通常事前 spike、事後 crush"
-    },
-    {
-      "date":   "2026-07-30",
-      "type":   "fomc",
-      "name":   "FOMC 利率決議（7 月）",
-      "impact": "high",
-      "iv_risk": "high",
-      "note":   "利率政策"
     }
   ]
 }
