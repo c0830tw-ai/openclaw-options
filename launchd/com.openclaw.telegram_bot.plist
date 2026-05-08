@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openclaw.telegram_bot</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/chenchinghung/openclaw/options/telegram_bot.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/chenchinghung/openclaw/options</string>
+
+    <!-- 常駐執行；意外退出時自動重啟 -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- 失敗重啟間隔避免 tight loop -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/chenchinghung/openclaw/options/logs/telegram_bot.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/chenchinghung/openclaw/options/logs/telegram_bot.log</string>
+</dict>
+</plist>
