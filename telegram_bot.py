@@ -229,16 +229,33 @@ def cmd_regime(data):
         return '❌ regime advisor 資料不足'
     r = ra.get('recommendation', {})
     cur = ra.get('current', {}) or {}
-    lines = [f'🎯 {ra.get("regime_label", "?")}',
-             f'月 {ra.get("monthly_pct", 0):+.2f}%  週 {ra.get("weekly_pct", 0):+.2f}%',
-             '',
-             f'💡 推薦：DTE {r.get("dte")} / Δ {r.get("delta")} / {r.get("strategy")}',
-             f'   {r.get("why", "")[:80]}']
+    lines = [
+        f'🎯 {ra.get("regime_label", "?")}',
+        f'月 {ra.get("monthly_pct", 0):+.2f}%  週 {ra.get("weekly_pct", 0):+.2f}%',
+        f'條件：{ra.get("criteria", "")}',
+        '',
+        f'💡 主推：DTE {r.get("dte")} / Δ {r.get("delta")} / {r.get("strategy")}',
+    ]
+    if r.get('fallback'):
+        lines.append(f'🛡️ 保守 fallback：{r.get("fallback")}')
+    if r.get('expected'):
+        lines.append(f'📊 預期：{r.get("expected")}')
+    if r.get('why'):
+        # why 可能很長，截到 100 字
+        why = r['why']
+        lines.append('')
+        lines.append(f'📝 {why[:120]}')
+
     if cur.get('has_positions'):
         lines.append('')
-        lines.append(f'📍 當前：DTE {cur.get("avg_dte")} / Δ {cur.get("avg_put_delta", 0):.2f} / {cur.get("strategy")}')
+        lines.append(f'📍 當前：DTE {cur.get("avg_dte")} / '
+                     f'Δ {(cur.get("avg_put_delta") or 0):.2f} / {cur.get("strategy")}')
         if ra.get('deviations'):
-            lines.append(f'⚠ {len(ra["deviations"])} 條偏差')
+            lines.append(f'⚠️ 偏離 {len(ra["deviations"])} 項：')
+            for d in ra['deviations'][:3]:
+                lines.append(f'  • {d.get("param")}: 當前 {d.get("current")} → 推薦 {d.get("recommended")}')
+        elif ra.get('aligned'):
+            lines.append('✓ 當前部位與推薦一致')
     return '\n'.join(lines)
 
 
