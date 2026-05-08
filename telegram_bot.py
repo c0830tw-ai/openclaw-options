@@ -101,7 +101,7 @@ def _fmt_s(n) -> str:
 
 # ── 各 /command handler ──────────────────────────────────────
 def cmd_help(data):
-    return ('📚 可用命令：\n'
+    return ('📚 查詢命令：\n'
             '/status — 行情快照\n'
             '/health — 健診評分\n'
             '/greeks — 曝險 Δ/θ/ν\n'
@@ -111,7 +111,14 @@ def cmd_help(data):
             '/risk   — 風險限額\n'
             '/iv     — IV 百分位\n'
             '/regime — 情境推薦\n'
-            '/report — 完整早報')
+            '/report — 完整早報\n'
+            '\n📝 交易紀錄命令：\n'
+            '/buy <履約> <口> <價> [thesis]\n'
+            '/sell <履約> <口> <價> [thesis]\n'
+            '/close <id> <價> [outcome]\n'
+            '/positions — 未平倉清單\n'
+            '/last — 近 5 筆交易\n'
+            '\n例：/buy 39000P 3 50 hedge FOMC')
 
 
 def cmd_status(data):
@@ -240,6 +247,209 @@ def cmd_report(data):
         return f'❌ 產生 report 失敗: {e}'
 
 
+# ── 交易紀錄相關 ─────────────────────────────────────────
+import re as _re
+_INSTRUMENT_SHORT = _re.compile(r'^(\d{4,5})([PC])$', _re.I)
+
+
+def _expand_instrument(short: str, data: dict) -> str:
+    """39000P → 'TXO 202605 39000P'。若已是完整字串直接回傳。"""
+    m = _INSTRUMENT_SHORT.match(short.strip())
+    if not m:
+        return short
+    strike, right = m.group(1), m.group(2).upper()
+    month = data.get('txo_month') or datetime.now().strftime('%Y%m')
+    return f'TXO {month} {strike}{right}'
+
+
+def _capture_context_from(data: dict) -> dict:
+    m = data.get('market') or {}
+    evs = data.get('upcoming_events') or []
+    nearest = next((e for e in evs if (e.get('days_until') or 99) <= 5), None)
+    return {
+        'tx':       m.get('tx_futures'),
+        'taiex':    m.get('taiex'),
+        'iv_atm':   data.get('iv_used'),
+        'dte':      data.get('dte_trading'),
+        'session':  data.get('market_session'),
+        'next_event': f"{nearest['days_until']}d {nearest['name']}" if nearest else None,
+    }
+
+
+def _gen_trade_id(ledger_data: dict) -> str:
+    prefix = datetime.now().strftime('T%Y%m%d-%H%M')
+    existing_max = 0
+    for t in ledger_data.get('trades', []):
+        tid = t.get('id', '')
+        if tid.startswith(prefix):
+            try:
+                existing_max = max(existing_max, int(tid.rsplit('-', 1)[-1]))
+            except (ValueError, IndexError):
+                pass
+    return f'{prefix}-{existing_max + 1:03d}'
+
+
+def _open_trade(side: str, instrument: str, qty: int, price: float,
+                book: str, thesis: str, fee: float = 25):
+    sys.path.insert(0, str(_HERE))
+    import ledger as L
+    data_market = _load_data()
+    instrument = _expand_instrument(instrument, data_market)
+    ledger_data = L.load() or {'trades': []}
+    trade = {
+        'id':           _gen_trade_id(ledger_data),
+        'datetime':     datetime.now().isoformat(timespec='seconds'),
+        'side':         f'{side}_to_open',
+        'instrument':   instrument,
+        'qty':          qty,
+        'price':        price,
+        'fee':          fee,
+        'book':         book,
+        'status':       'open',
+        'linked_id':    None,
+        'realized_pnl': None,
+        'note':         '',
+        'thesis':       thesis or '',
+        'context':      _capture_context_from(data_market),
+    }
+    ledger_data['trades'].append(trade)
+    L.save(ledger_data)
+    return trade
+
+
+def _close_trade(trade_id: str, price: float, fee: float = 25, outcome: str = ''):
+    sys.path.insert(0, str(_HERE))
+    import ledger as L
+    ledger_data = L.load() or {'trades': []}
+    open_t = next((t for t in ledger_data['trades'] if t['id'] == trade_id), None)
+    if not open_t:
+        return None, f'找不到 ID: {trade_id}'
+    if open_t.get('status') != 'open':
+        return None, f'{trade_id} 已 closed'
+
+    pnl = L.compute_realized_pnl(open_t, price, fee)
+    close_side = 'buy_to_close' if open_t['side'].startswith('sell') else 'sell_to_close'
+    close_t = {
+        'id':           _gen_trade_id(ledger_data),
+        'datetime':     datetime.now().isoformat(timespec='seconds'),
+        'side':         close_side,
+        'instrument':   open_t['instrument'],
+        'qty':          open_t['qty'],
+        'price':        price,
+        'fee':          fee,
+        'book':         open_t['book'],
+        'status':       'closed',
+        'linked_id':    open_t['id'],
+        'realized_pnl': pnl['net_pnl'],
+        'note':         '',
+    }
+    ledger_data['trades'].append(close_t)
+    open_t['status']       = 'closed'
+    open_t['linked_id']    = close_t['id']
+    open_t['realized_pnl'] = pnl['net_pnl']
+    if outcome:
+        open_t['outcome'] = outcome
+    L.save(ledger_data)
+    return open_t, pnl
+
+
+def cmd_buy(data, args_text):
+    parts = args_text.split(maxsplit=3) if args_text else []
+    if len(parts) < 3:
+        return '用法：/buy <履約> <口數> <價格> [thesis]\n例：/buy 39000P 3 50 hedge FOMC'
+    try:
+        instrument, qty, price = parts[0], int(parts[1]), float(parts[2])
+        thesis = parts[3] if len(parts) > 3 else ''
+    except ValueError:
+        return '❌ 參數格式錯誤'
+    book = 'hedge' if 'P' in instrument.upper() else 'trading'
+    try:
+        trade = _open_trade('buy', instrument, qty, price, book, thesis)
+        msg = (f'✓ 開倉：{trade["id"]}\n'
+               f'  買 {qty} 口 {trade["instrument"]} @ {price}\n'
+               f'  book={book}')
+        if thesis: msg += f'\n  論點：{thesis}'
+        return msg
+    except Exception as e:
+        return f'❌ 開倉失敗：{e}'
+
+
+def cmd_sell(data, args_text):
+    parts = args_text.split(maxsplit=3) if args_text else []
+    if len(parts) < 3:
+        return '用法：/sell <履約> <口數> <價格> [thesis]\n例：/sell 44900C 1 95 covered call'
+    try:
+        instrument, qty, price = parts[0], int(parts[1]), float(parts[2])
+        thesis = parts[3] if len(parts) > 3 else ''
+    except ValueError:
+        return '❌ 參數格式錯誤'
+    try:
+        trade = _open_trade('sell', instrument, qty, price, 'trading', thesis)
+        msg = (f'✓ 開倉：{trade["id"]}\n'
+               f'  賣 {qty} 口 {trade["instrument"]} @ {price}')
+        if thesis: msg += f'\n  論點：{thesis}'
+        return msg
+    except Exception as e:
+        return f'❌ 開倉失敗：{e}'
+
+
+def cmd_close(data, args_text):
+    parts = args_text.split(maxsplit=2) if args_text else []
+    if len(parts) < 2:
+        return '用法：/close <id> <價格> [outcome]\n例：/close T20260508-1700-001 80 thesis 命中'
+    try:
+        trade_id, price = parts[0], float(parts[1])
+        outcome = parts[2] if len(parts) > 2 else ''
+    except ValueError:
+        return '❌ 參數格式錯誤'
+    try:
+        result, pnl = _close_trade(trade_id, price, outcome=outcome)
+        if result is None:
+            return f'❌ {pnl}'
+        sign = '+' if pnl['net_pnl'] >= 0 else ''
+        msg = (f'✓ 平倉：{trade_id}\n'
+               f'  {result["instrument"]}\n'
+               f'  open {result["price"]} → close {price}\n'
+               f'  P&L {sign}{pnl["net_pnl"]:,.0f} NT')
+        if outcome: msg += f'\n  反思：{outcome}'
+        return msg
+    except Exception as e:
+        return f'❌ 平倉失敗：{e}'
+
+
+def cmd_positions(data, args_text=''):
+    sys.path.insert(0, str(_HERE))
+    import ledger as L
+    ledger_data = L.load() or {'trades': []}
+    opens = [t for t in ledger_data.get('trades', [])
+             if t.get('status') == 'open' and t.get('side', '').endswith('_to_open')]
+    if not opens:
+        return '📭 沒有未平倉部位'
+    lines = [f'📂 未平倉 ({len(opens)})']
+    for t in opens[:10]:
+        side_tag = '買' if t['side'].startswith('buy') else '賣'
+        lines.append(f'  {t["id"][:18]} {side_tag} {t["qty"]} {t["instrument"][:24]} @ {t["price"]}')
+    return '\n'.join(lines)
+
+
+def cmd_last(data, args_text=''):
+    sys.path.insert(0, str(_HERE))
+    import ledger as L
+    ledger_data = L.load() or {'trades': []}
+    trades = ledger_data.get('trades', [])
+    if not trades:
+        return '📭 沒有交易紀錄'
+    recent = sorted(trades, key=lambda t: t.get('datetime', ''))[-5:]
+    lines = ['📋 近 5 筆交易']
+    for t in reversed(recent):
+        d = (t.get('datetime') or '')[:10]
+        side = t.get('side', '?')
+        pnl = t.get('realized_pnl')
+        pnl_str = f' P&L {_fmt_s(pnl)}' if pnl is not None else ''
+        lines.append(f'  {d} {side} {t.get("qty")} {t.get("instrument", "")[:20]} @ {t.get("price")}{pnl_str}')
+    return '\n'.join(lines)
+
+
 HANDLERS = {
     '/help':    cmd_help,
     '/start':   cmd_help,
@@ -254,22 +464,38 @@ HANDLERS = {
     '/regime':  cmd_regime,
     '/report':  cmd_report,
 }
+HANDLERS_WITH_ARGS = {
+    '/buy':       cmd_buy,
+    '/sell':      cmd_sell,
+    '/close':     cmd_close,
+    '/positions': cmd_positions,
+    '/last':      cmd_last,
+}
 
 
 def handle_message(token, chat_id, text):
     text = (text or '').strip()
     if not text.startswith('/'):
         return
-    cmd = text.split()[0].lower().split('@')[0]   # 去掉 @bot_username
-    fn = HANDLERS.get(cmd)
-    if not fn:
-        msg = f'未知命令：{cmd}\n用 /help 看清單'
-    else:
+    parts = text.split(maxsplit=1)
+    cmd = parts[0].lower().split('@')[0]
+    args_text = parts[1] if len(parts) > 1 else ''
+
+    data = _load_data()
+    if cmd in HANDLERS_WITH_ARGS:
+        fn = HANDLERS_WITH_ARGS[cmd]
         try:
-            data = _load_data()
+            msg = fn(data, args_text)
+        except Exception as e:
+            msg = f'❌ 處理失敗: {e}'
+    elif cmd in HANDLERS:
+        fn = HANDLERS[cmd]
+        try:
             msg = fn(data)
         except Exception as e:
             msg = f'❌ 處理失敗: {e}'
+    else:
+        msg = f'未知命令：{cmd}\n用 /help 看清單'
     try:
         _api_post(token, 'sendMessage', {'chat_id': chat_id, 'text': msg})
     except Exception as e:
