@@ -4015,6 +4015,185 @@ function PastEventImpact({ data }) {
   );
 }
 
+function IVHeatmap({ data }) {
+  const [open, setOpen] = React.useState(false);
+  const tx = data?.market?.tx_futures;
+  if (!tx) return null;
+
+  // 建 columns（每月份/週選）
+  const cols = [];
+  if (data.weekly_wed) cols.push({
+    label: `週三 ${data.weekly_wed.series || ''}`,
+    dte:   data.weekly_wed.dte_trading || 5,
+    iv:    data.weekly_wed.iv_used || 0.20,
+    skew:  data.weekly_wed.skew || [],
+  });
+  if (data.weekly_fri) cols.push({
+    label: `週五 ${data.weekly_fri.series || ''}`,
+    dte:   data.weekly_fri.dte_trading || 8,
+    iv:    data.weekly_fri.iv_used || 0.20,
+    skew:  data.weekly_fri.skew || [],
+  });
+  cols.push({
+    label: `近月 ${data.txo_month || ''}`,
+    dte:   data.dte_trading || 30,
+    iv:    data.iv_used || 0.20,
+    skew:  [],
+  });
+  if (data.far_month) cols.push({
+    label: `遠月 ${data.far_month.txo_month || ''}`,
+    dte:   data.far_month.dte_trading || 60,
+    iv:    data.far_month.iv_used || 0.20,
+    skew:  [],
+  });
+
+  // strike rows
+  const atm = Math.round(tx / 100) * 100;
+  const strikes = [];
+  for (let i = 8; i >= -8; i--) strikes.push(atm - i * 100);   // top = highest strike
+  // strikes[0] = atm + 800（call OTM）, strikes[16] = atm - 800（put OTM）
+
+  // IV per col
+  const interpIV = (col, K) => {
+    const skew = (col.skew || []).slice().sort((a, b) => a.strike - b.strike);
+    if (skew.length === 0) return col.iv;
+    if (K <= skew[0].strike) return skew[0].iv;
+    if (K >= skew[skew.length - 1].strike) return skew[skew.length - 1].iv;
+    for (let i = 0; i < skew.length - 1; i++) {
+      const a = skew[i], b = skew[i + 1];
+      if (K >= a.strike && K <= b.strike && b.strike > a.strike) {
+        const t = (K - a.strike) / (b.strike - a.strike);
+        return a.iv + t * (b.iv - a.iv);
+      }
+    }
+    return col.iv;
+  };
+
+  // 整個矩陣計算 + 找全域 min/max 為 colorscale
+  const matrix = strikes.map(K => cols.map(c => interpIV(c, K) * 100));
+  const allIvs = matrix.flat();
+  const ivMin = Math.min(...allIvs);
+  const ivMax = Math.max(...allIvs);
+
+  // 顏色：低 IV = 冷藍、高 IV = 暖橙
+  const cellColor = (iv_pct) => {
+    const t = (iv_pct - ivMin) / (ivMax - ivMin || 1);
+    // gradient: blue (low) → yellow (mid) → orange (high)
+    if (t < 0.5) {
+      const u = t * 2;
+      const r = Math.round(96 + u * (251 - 96));
+      const g = Math.round(165 + u * (191 - 165));
+      const b = Math.round(250 + u * (36 - 250));
+      return `rgba(${r},${g},${b},0.5)`;
+    } else {
+      const u = (t - 0.5) * 2;
+      const r = Math.round(251 + u * (251 - 251));
+      const g = Math.round(191 + u * (146 - 191));
+      const b = Math.round(36 + u * (60 - 36));
+      return `rgba(${r},${g},${b},${0.5 + u * 0.3})`;
+    }
+  };
+
+  // 持倉
+  const holdings = ((data?.portfolio_greeks?.legs) || []).reduce((m, L) => {
+    if (L.right === 'put' || L.right === 'call') {
+      const k = Math.round(L.strike / 100) * 100;
+      m[k] = (m[k] || 0) + (L.qty_signed || 0);
+    }
+    return m;
+  }, {});
+
+  return (
+    <div style={{
+      background:'#0a0e1c', border:'1px solid #1e2535',
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div onClick={() => setOpen(!open)} style={{
+        display:'flex', justifyContent:'space-between', alignItems:'center',
+        cursor:'pointer', userSelect:'none',
+      }}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>
+          🌡️ IV 熱圖（strike × 月份）
+        </span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>
+          {ivMin.toFixed(1)}% ~ {ivMax.toFixed(1)}%　{open ? '▲' : '▼'}
+        </span>
+      </div>
+
+      {open && (
+        <>
+          <div style={{overflowX:'auto', marginTop:'6px'}}>
+            <table style={{width:'100%', borderCollapse:'collapse', fontSize:'10px', minWidth:'320px'}}>
+              <thead>
+                <tr style={{color:'#94a3b8'}}>
+                  <th style={{padding:'4px 6px', textAlign:'left'}}>履約</th>
+                  {cols.map((c, i) => (
+                    <th key={i} style={{padding:'4px 6px', textAlign:'center'}}>
+                      <div>{c.label}</div>
+                      <div style={{fontSize:'8px', color:'#64748b', fontWeight:400}}>
+                        {c.dte}d · ATM {(c.iv * 100).toFixed(1)}%
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {strikes.map((K, ri) => {
+                  const isAtm = K === atm;
+                  const held = holdings[K];
+                  return (
+                    <tr key={K} style={{borderBottom:'1px solid #1e2535'}}>
+                      <td style={{padding:'3px 6px', fontWeight: isAtm ? 700 : 400,
+                                   color: isAtm ? '#fbbf24' : '#cbd5e1'}}>
+                        {K}
+                        {held ? <span style={{marginLeft:'4px',
+                                                color: held > 0 ? '#86efac' : '#fca5a5'}}>
+                          ★{held > 0 ? '+' : ''}{held}
+                        </span> : null}
+                        {isAtm && <span style={{marginLeft:'4px', fontSize:'8px', color:'#fbbf24'}}>ATM</span>}
+                      </td>
+                      {cols.map((c, ci) => {
+                        const iv_pct = matrix[ri][ci];
+                        return (
+                          <td key={ci} style={{
+                            padding:'3px 6px', textAlign:'center',
+                            background: cellColor(iv_pct),
+                            color: '#0a0e1c', fontWeight:600,
+                          }}>
+                            {iv_pct.toFixed(1)}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* color legend */}
+          <div style={{display:'flex', alignItems:'center', gap:'4px', marginTop:'6px', justifyContent:'center'}}>
+            <span style={{fontSize:'9px', color:'#64748b'}}>低 IV</span>
+            <div style={{display:'flex', height:'8px', flex:'1 1 200px', maxWidth:'200px'}}>
+              {Array.from({length: 20}, (_, i) => {
+                const v = ivMin + (i / 19) * (ivMax - ivMin);
+                return <div key={i} style={{flex:1, background: cellColor(v)}} />;
+              })}
+            </div>
+            <span style={{fontSize:'9px', color:'#64748b'}}>高 IV</span>
+          </div>
+
+          <div style={{fontSize:'9px', color:'#64748b', marginTop:'4px'}}>
+            單元格 IV%。週選有 skew 內插，月選暫用 ATM IV 平攤。
+            ★ 標記持倉履約，TX 整百行（{atm}）標 ATM
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function IVSmile({ data }) {
   const tx = data?.market?.tx_futures;
   const skewWed = (data?.weekly_wed?.skew || []).slice().sort((a,b) => a.strike - b.strike);
@@ -4748,6 +4927,7 @@ function App() {
                badge={data?.weekly_opportunities?.length ? `${data.weekly_opportunities.length} 週` : null}>
         <IndicatorGrid data={data} />
         <IVSmile data={data} />
+        <IVHeatmap data={data} />
         <TxoChainGrid data={data} />
         <WeeklyOpportunities data={data} />
       </Section>
