@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openclaw.backtest_report</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/chenchinghung/openclaw/options/backtest_report.py</string>
+        <string>--shioaji</string>
+        <string>--days</string>
+        <string>365</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/chenchinghung/openclaw/options</string>
+
+    <!-- 每月 1 日 06:30 跑（journal_export 06:00 + 30 分） -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Day</key>
+        <integer>1</integer>
+        <key>Hour</key>
+        <integer>6</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/chenchinghung/openclaw/options/logs/backtest_report.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/chenchinghung/openclaw/options/logs/backtest_report.log</string>
+</dict>
+</plist>
