@@ -5631,6 +5631,31 @@ function usePullToRefresh(onRefresh, enabled) {
   return pullDist;
 }
 
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null, info: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { this.setState({ info }); console.error('App crash:', error, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{padding:'16px', background:'#1c1610', border:'1px solid #fca5a5', borderRadius:'6px', margin:'16px 0', color:'#fde68a', fontSize:'12px'}}>
+          <div style={{fontSize:'14px', fontWeight:700, color:'#fca5a5', marginBottom:'6px'}}>⚠️ 元件 crash</div>
+          <div><b>Error:</b> {String(this.state.error?.message || this.state.error)}</div>
+          {this.state.error?.stack && (
+            <pre style={{fontSize:'10px', overflow:'auto', marginTop:'6px', whiteSpace:'pre-wrap', maxHeight:'200px'}}>
+              {this.state.error.stack}
+            </pre>
+          )}
+          <div style={{marginTop:'8px', fontSize:'10px', color:'#94a3b8'}}>
+            截圖傳給 Claude 看錯誤訊息以修正
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function App() {
   const [data, setData] = React.useState(null);
   const [error, setError] = React.useState(null);
@@ -5831,7 +5856,7 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><App /></ErrorBoundary>);
 </script>
 </body>
 </html>
