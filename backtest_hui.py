@@ -217,6 +217,43 @@ def report(res):
     print('━' * 80)
 
 
+def sweep_offsets(prices, hedge_lots, offsets):
+    """跑多個 sp_offset 對比。"""
+    rows = []
+    for o in offsets:
+        res = run_hui_backtest(prices, hedge_lots=hedge_lots, sp_offset=o)
+        if not res.equity_naked:
+            continue
+        base = res.equity_naked[0]
+        po_ret = (res.equity_put_only[-1] - base) / base * 100
+        rt_ret = (res.equity_hui_ratio[-1] - base) / base * 100
+        ft_ret = (res.equity_hui_full[-1]  - base) / base * 100
+        # max DD
+        def _mdd(eq):
+            peak, m = eq[0], 0.0
+            for v in eq:
+                peak = max(peak, v)
+                if peak > 0: m = min(m, (v - peak) / peak * 100)
+            return m
+        rt_dd = _mdd(res.equity_hui_ratio)
+        ft_dd = _mdd(res.equity_hui_full)
+        yrs = len(res.dates) / 252
+        rt_ann = ((1 + rt_ret/100) ** (1/max(yrs, 0.01)) - 1) * 100
+        ft_ann = ((1 + ft_ret/100) ** (1/max(yrs, 0.01)) - 1) * 100
+        rows.append({
+            'sp_offset':       o,
+            'put_only_ret':    round(po_ret, 2),
+            'ratio_ret':       round(rt_ret, 2),
+            'ratio_vs_po':     round(rt_ret - po_ret, 2),
+            'ratio_dd':        round(rt_dd, 2),
+            'ratio_calmar':    round(rt_ann / abs(rt_dd), 2) if rt_dd < 0 else 0,
+            'full_ret':        round(ft_ret, 2),
+            'full_dd':         round(ft_dd, 2),
+            'full_calmar':     round(ft_ann / abs(ft_dd), 2) if ft_dd < 0 else 0,
+        })
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--csv', help='Path to TX CSV')
@@ -224,12 +261,41 @@ def main():
     ap.add_argument('--days', type=int, default=252)
     ap.add_argument('--lots', type=int, default=5)
     ap.add_argument('--sp-offset', type=int, default=500, help='SP 履約距 BP 下方點數')
+    ap.add_argument('--sweep', action='store_true', help='Sweep 多個 sp_offset')
     ap.add_argument('--save', help='Save equity to CSV')
     args = ap.parse_args()
 
     if args.csv:        prices = B.load_csv(args.csv)
     elif args.shioaji:  prices = B.fetch_tx_history_shioaji(days=args.days + 30)
     else:               prices = B.synthetic_prices(days=args.days)
+
+    if args.sweep:
+        offsets = [200, 300, 400, 500, 700, 1000, 1500, 2000]
+        print(f'[backtest_hui] sweep {len(offsets)} 個 sp_offset · {len(prices)} 天', file=sys.stderr)
+        rows = sweep_offsets(prices, args.lots, offsets)
+        print()
+        print('━' * 90)
+        print(f'sp_offset sweep ({len(prices)} 天 · TX {prices[0][1]:.0f} → {prices[-1][1]:.0f})')
+        print('━' * 90)
+        print(f'{"offset":>7} │ {"put-only":>8} │ {"ratio":>8} {"vs po":>8} │ {"DD":>8} {"Calmar":>8} │ {"full":>8} {"DD":>8} {"Calmar":>8}')
+        print('─' * 90)
+        for r in rows:
+            print(f'{r["sp_offset"]:>7} │ {r["put_only_ret"]:>+7.2f}% │ '
+                  f'{r["ratio_ret"]:>+7.2f}% {r["ratio_vs_po"]:>+7.2f}% │ '
+                  f'{r["ratio_dd"]:>+7.2f}% {r["ratio_calmar"]:>+8.2f} │ '
+                  f'{r["full_ret"]:>+7.2f}% {r["full_dd"]:>+7.2f}% {r["full_calmar"]:>+8.2f}')
+        print('━' * 90)
+        # 最佳 offset by Calmar
+        best_r = max(rows, key=lambda r: r['ratio_calmar'])
+        best_f = max(rows, key=lambda r: r['full_calmar'])
+        print()
+        print(f'🏆 ratio Calmar 最高：sp_offset={best_r["sp_offset"]} '
+              f'(報酬 {best_r["ratio_ret"]:+.2f}%, DD {best_r["ratio_dd"]:+.2f}%, Calmar {best_r["ratio_calmar"]})')
+        print(f'🏆 full  Calmar 最高：sp_offset={best_f["sp_offset"]} '
+              f'(報酬 {best_f["full_ret"]:+.2f}%, DD {best_f["full_dd"]:+.2f}%, Calmar {best_f["full_calmar"]})')
+        print()
+        print('💡 觀察：offset 越大 → SP 越深 OTM → 收 credit 變少但 DD 風險變遠')
+        return
 
     print(f'[backtest_hui] {len(prices)} 天 · sp_offset={args.sp_offset}', file=sys.stderr)
     res = run_hui_backtest(prices, hedge_lots=args.lots, sp_offset=args.sp_offset)
