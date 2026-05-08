@@ -1697,6 +1697,89 @@ function UpcomingEvents({ data }) {
   );
 }
 
+function OrderHelper({ data }) {
+  const [open, setOpen] = React.useState(false);
+  const oh = data?.order_helper;
+  if (!oh || !oh.legs?.length) return null;
+
+  const fmt = n => n == null ? '—' : n.toLocaleString();
+  const copy = (s) => {
+    navigator.clipboard?.writeText(s).then(
+      () => alert('已複製：\n' + s),
+      () => alert('複製失敗'),
+    );
+  };
+
+  return (
+    <div style={{
+      background:'#0a0e1c', border:'1px solid #fbbf2444',
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div onClick={() => setOpen(!open)} style={{
+        display:'flex', justifyContent:'space-between', alignItems:'center',
+        cursor:'pointer', userSelect:'none',
+      }}>
+        <span style={{fontWeight:700, color:'#fbbf24'}}>
+          🛠️ Order Helper · {oh.label}
+        </span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>
+          {oh.legs.length} 腳　{open ? '▲ 收起' : '▼ 展開階梯'}
+        </span>
+      </div>
+
+      {open && (
+        <>
+          <div style={{fontSize:'10px', color:'#94a3b8', marginTop:'4px'}}>{oh.reason}</div>
+          {oh.legs.map((leg, i) => {
+            const isBuy = leg.leg === 'buy_put';
+            const color = isBuy ? '#86efac' : '#fca5a5';
+            return (
+              <div key={i} style={{
+                marginTop:'6px', padding:'6px 10px',
+                background:'#070b15', borderRadius:'4px',
+                borderLeft:`3px solid ${color}`,
+              }}>
+                <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline'}}>
+                  <span style={{fontSize:'11px', fontWeight:700, color}}>
+                    {isBuy ? '📥 買進' : '📤 賣出'} {leg.qty} 口 {leg.instrument}
+                  </span>
+                  <span style={{fontSize:'9px', color:'#64748b'}}>{leg.ladder.wait}</span>
+                </div>
+                {/* 3-tier ladder buttons */}
+                <div style={{display:'flex', gap:'4px', marginTop:'4px', flexWrap:'wrap'}}>
+                  {[
+                    { label: '1️⃣ 試探', price: leg.ladder.try_1, cmd: leg.commands[0] },
+                    { label: '2️⃣ 中位', price: leg.ladder.try_2, cmd: leg.commands[1] },
+                    { label: '3️⃣ 主動', price: leg.ladder.try_3, cmd: leg.commands[2] },
+                  ].map((tier, j) => (
+                    <div key={j} style={{flex:'1 1 100px', padding:'4px 6px',
+                                          background:'#0a0e1c', borderRadius:'3px',
+                                          border:'1px solid #1e2535'}}>
+                      <div style={{fontSize:'9px', color:'#94a3b8'}}>{tier.label}</div>
+                      <div style={{fontSize:'13px', color, fontWeight:700}}>
+                        {fmt(tier.price)} 點
+                      </div>
+                      <button onClick={() => copy(tier.cmd)} style={{
+                        marginTop:'2px', fontSize:'9px',
+                        background:'transparent', border:`1px solid ${color}`,
+                        color, padding:'1px 6px', borderRadius:'2px', cursor:'pointer',
+                      }}>📋 複製命令</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          <div style={{fontSize:'9px', color:'#64748b', marginTop:'6px'}}>
+            點「複製命令」貼到 terminal 執行 add_trade.py，已含 thesis 自動填入
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function CollarDashboard({ data }) {
   const cd = data?.collar_dashboard;
   if (!cd) return null;
@@ -3450,6 +3533,7 @@ function App() {
         <CalendarView data={data} />
         <UpcomingEvents data={data} />
         <CollarDashboard data={data} />
+        <OrderHelper data={data} />
         <RollSuggestions data={data} />
       </Section>
 
