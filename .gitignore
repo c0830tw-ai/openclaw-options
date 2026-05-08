@@ -15,6 +15,7 @@ events_auto.json
 event_history.json
 iv_history.json
 telegram_bot_state.json
+journal_exports/
 __pycache__/
 node_modules/
 logs/
