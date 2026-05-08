@@ -139,6 +139,20 @@ def build_report(data: Dict[str, Any], now: datetime = None) -> str:
             if e.get('thesis'):
                 lines.append(f'  論點：{e["thesis"][:50]}')
 
+    # ━━━ 策略推薦（regime advisor） ━━━
+    ra = data.get('regime_advisor') or {}
+    if ra and ra.get('recommendation'):
+        r = ra['recommendation']
+        cur = ra.get('current') or {}
+        lines.append('')
+        lines.append(f'🎯 {ra.get("regime_label", "?")}（月 {ra.get("monthly_pct", 0):+.1f}%）')
+        lines.append(f'💡 主推 {r.get("strategy")}')
+        if r.get('fallback'):
+            lines.append(f'🛡️ Fallback {r.get("fallback")}')
+        if cur.get('has_positions') and ra.get('deviations'):
+            n = len(ra['deviations'])
+            lines.append(f'⚠️ 當前 {cur.get("strategy")} 偏離 {n} 項')
+
     # ━━━ 明日重點 ━━━
     lines.append('')
     lines.append('🎯 明日重點')
