@@ -1863,6 +1863,102 @@ function HealthCheck({ data }) {
   );
 }
 
+function StressTest({ data }) {
+  const [open, setOpen] = React.useState(false);
+  const t = data?.portfolio_greeks?.totals;
+  if (!t) return null;
+
+  // 6 個預設情境（依歷史事件 + What-if 經驗）
+  const SCENARIOS = [
+    { label: '黑天鵝崩跌',     emoji: '🦢', tx: -15, iv: 30,  d: 1,
+      note: '2008/2020 級單日大跌 + IV 暴衝' },
+    { label: '事件突發',       emoji: '⚡', tx: -5,  iv: 15,  d: 1,
+      note: '突發地緣 / 政策意外' },
+    { label: '法說 miss',      emoji: '📉', tx: -8,  iv: -10, d: 1,
+      note: '財報差於預期，TX 跌但 IV crush' },
+    { label: 'FOMC 意外',      emoji: '🏦', tx: -3,  iv: 20,  d: 1,
+      note: '鷹派意外：TX 軟 + IV spike' },
+    { label: '盤整漂移',       emoji: '😴', tx: 0,   iv: -5,  d: 14,
+      note: '兩週橫盤 + IV 緩降（theta 純成本期）' },
+    { label: '牛市 melt-up',   emoji: '🚀', tx: 10,  iv: -10, d: 7,
+      note: '一週急漲 + IV crush' },
+  ];
+
+  const fmtS = n => n == null ? '—' : (n > 0 ? '+' : '') + Math.round(n).toLocaleString();
+  const colN = n => n > 0 ? '#4ade80' : n < 0 ? '#f87171' : '#94a3b8';
+
+  const calc = (s) => {
+    const dpl = (t.delta_ntd_per_1pct_tx || 0) * s.tx;
+    const tpl = (t.theta_ntd_per_day      || 0) * s.d;
+    const vpl = (t.vega_ntd_per_pct_iv    || 0) * s.iv;
+    return { delta_pl: dpl, theta_pl: tpl, vega_pl: vpl, total: dpl + tpl + vpl };
+  };
+
+  const results = SCENARIOS.map(s => ({ ...s, ...calc(s) }))
+                            .sort((a, b) => a.total - b.total);   // 最差先看
+
+  return (
+    <div style={{
+      background: '#0a0e1c', border: '1px solid #1e2535',
+      borderRadius: '6px', padding: '6px 12px', margin: '8px 0',
+      fontSize: '11px', color: '#cbd5e1',
+    }}>
+      <div onClick={() => setOpen(!open)} style={{
+        display:'flex', justifyContent:'space-between', alignItems:'center',
+        cursor:'pointer', userSelect:'none',
+      }}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>
+          💥 Stress Test 情境庫
+        </span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>
+          {results.length} 情境　{open ? '▲ 收起' : '▼ 展開試算'}
+        </span>
+      </div>
+
+      {open && (
+        <>
+          <div style={{display:'flex', flexWrap:'wrap', gap:'6px', marginTop:'6px'}}>
+            {results.map((s, i) => (
+              <div key={i} style={{
+                flex:'1 1 200px', minWidth:'180px',
+                padding:'8px 10px',
+                borderLeft: `3px solid ${colN(s.total)}`,
+                background:'#070b15', borderRadius:'4px',
+              }}>
+                <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline'}}>
+                  <span style={{fontSize:'12px', fontWeight:700}}>
+                    {s.emoji} {s.label}
+                  </span>
+                  <span style={{fontSize:'9px', color:'#64748b'}}>
+                    {s.tx >= 0 ? '+' : ''}{s.tx}% TX
+                    {' · '}{s.iv >= 0 ? '+' : ''}{s.iv}pp IV
+                    {' · '}{s.d}d
+                  </span>
+                </div>
+                <div style={{fontSize:'18px', color: colN(s.total), fontWeight:700, marginTop:'2px'}}>
+                  {fmtS(s.total)}
+                  <span style={{fontSize:'10px', color:'#64748b', marginLeft:'4px'}}>NT$</span>
+                </div>
+                <div style={{fontSize:'9px', color:'#64748b', marginTop:'2px', display:'flex', gap:'8px', flexWrap:'wrap'}}>
+                  <span>Δ {fmtS(s.delta_pl)}</span>
+                  <span>θ {fmtS(s.theta_pl)}</span>
+                  <span>ν {fmtS(s.vega_pl)}</span>
+                </div>
+                <div style={{fontSize:'9px', color:'#475569', marginTop:'2px'}}>
+                  {s.note}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{fontSize:'9px', color:'#64748b', marginTop:'6px', textAlign:'right'}}>
+            線性一階近似（Black-76）；大幅 TX 或 IV 變動實際 P&L 因 gamma/vanna 略有偏差
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function PortfolioGreeks({ data }) {
   const [open, setOpen]    = React.useState(false);
   const [whatIf, setWhatIf] = React.useState(false);
@@ -2979,6 +3075,7 @@ function App() {
                badge={data?.health_check ? `${data.health_check.overall_score}/100 ${data.health_check.grade}` : null}>
         <HealthCheck data={data} />
         <PortfolioGreeks data={data} />
+        <StressTest data={data} />
       </Section>
 
       {/* 💡 市場機會 — 想加倉時看 */}
