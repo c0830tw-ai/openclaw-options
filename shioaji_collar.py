@@ -675,10 +675,60 @@ def _find_spread_leg(chain: list, ref_strike: float, opt_right, is_put: bool, wi
     return min(candidates, key=lambda c: abs(c.strike_price - target))
 
 
+def _broker_pos_to_item(p: dict, beta_0050: float, beta_2330: float) -> Optional[Dict[str, Any]]:
+    """把 broker_sync 的 buy 方向 long 部位轉成 portfolio item 格式。"""
+    if p.get('direction') != 'Buy' or p.get('quantity', 0) == 0:
+        return None
+    cat    = p.get('category')
+    code   = p.get('code', '')
+    family = p.get('family', '')
+    qty    = p['quantity']
+    last   = p.get('last_price') or 0
+    cost   = p.get('price') or 0
+
+    # Lot size by category/family
+    if cat == 'cash_stock':
+        lot_size = 1000   # 1 張 = 1000 股
+    elif cat == 'stock_futures':
+        lot_size = (
+            10000 if family == 'NYF' else
+            2000  if family == 'CDF' else
+            100   # 小型股期預設 100 股/口（QFF/QNF/RGF/GXF/MKF...）
+        )
+    else:
+        return None  # 期權、指數期不納入 long-side 名目
+
+    notional = qty * lot_size * last
+    cb_total = qty * lot_size * cost
+    if notional <= 0:
+        return None
+
+    # Beta 對應
+    if family == 'NYF' or code in ('0050', '0056'):
+        beta = beta_0050
+    elif family in ('CDF', 'QFF') or code == '2330':
+        beta = beta_2330
+    else:
+        beta = 1.0
+
+    return {
+        'name':              f'[Broker] {p.get("name", code)} × {qty}',
+        'role':              'core_long',
+        'qty':               qty,
+        'price':             round(last, 2),
+        'notional':          round(notional, 0),
+        'beta':              round(beta, 3),
+        'beta_adj_notional': round(notional * beta, 0),
+        'cost_basis':        cb_total if cb_total else None,
+        'unrealized':        round(notional - cb_total, 0) if cb_total else None,
+    }
+
+
 def compute_portfolio_breakdown(
     instruments: List[Dict[str, Any]],
     price_0050: float, price_2330: float, taiex: float,
     beta_0050: float, beta_2330: float,
+    broker_positions: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     從 positions.json 的 instruments[] 計算逐商品名目、未實現 P&L、整體 hedge ratio。
@@ -773,6 +823,18 @@ def compute_portfolio_breakdown(
                   notional if cb_total else None)
         else:
             log.debug(f'未知 instrument type: {t}，略過')
+
+    # 自動把 broker 的 long-side 部位也納入（Phase 7 broker auto-merge）
+    if broker_positions:
+        for p in broker_positions:
+            it = _broker_pos_to_item(p, beta_0050, beta_2330)
+            if not it:
+                continue
+            items.append(it)
+            sum_notional += it['notional']
+            sum_beta_adj += it['beta_adj_notional']
+            if it['unrealized'] is not None:
+                sum_unrealized += it['unrealized']
 
     rec_lots = math.ceil(sum_beta_adj / txo_unit) if txo_unit > 0 else 0
 
@@ -1600,13 +1662,14 @@ def main():
         contracts = compute_contract_count(price_2330, taiex, beta=beta_2330_used)
         log.info(f"口數: {contracts['recommended_contracts']} (beta_ratio {contracts['beta_adjusted_ratio']:.2f})")
 
-        # 5b. 多商品 portfolio 拆解（若 positions.json 有 instruments[]）
+        # 5b. 多商品 portfolio 拆解（manual instruments[] + broker auto-merged）
         portfolio_breakdown = None
-        if POSITIONS_INSTRUMENTS:
+        if POSITIONS_INSTRUMENTS or _broker_positions:
             portfolio_breakdown = compute_portfolio_breakdown(
-                POSITIONS_INSTRUMENTS,
+                POSITIONS_INSTRUMENTS or [],
                 price_0050=price_0050, price_2330=price_2330, taiex=taiex,
                 beta_0050=beta_0050_used, beta_2330=beta_2330_used,
+                broker_positions=_broker_positions,
             )
             t = portfolio_breakdown['totals']
             log.info(f"Portfolio core_long: 名目 {t['core_long_notional']:,.0f}  "

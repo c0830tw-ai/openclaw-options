@@ -61,8 +61,13 @@ def parse_code(code: str) -> Dict[str, str]:
             '0056': '元大高股息',
             '00981A': '主動統一台股增長',
             '00679B': '元大美債 20 年',
+            '00687B': '國泰美債 20 年',
+            '00697B': '元大美債 7-10 年',
             '00720B': '元大投資級公司債',
             '00725B': '國泰投資級公司債',
+            '00772B': '中信高評級公司債',
+            '00773B': '中信優先金融債',
+            '00937B': '群益 ESG 投等債',
             '2330': '台積電',
             '1432': '大魯閣',
             '3653': '健鼎',
@@ -71,10 +76,12 @@ def parse_code(code: str) -> Dict[str, str]:
             '3034': '聯詠',
             '3373': '健策',
         }
+        # 債券 ETF（代碼結尾 'B'）不屬於台股 long-side hedge 範疇
+        is_bond = bool(re.match(r'^\d{4,5}B$', c))
         return {
-            'category': 'cash_stock',
+            'category': 'bond_etf' if is_bond else 'cash_stock',
             'name':     name_map.get(c, code),
-            'family':   'stock',
+            'family':   'bond' if is_bond else 'stock',
         }
 
     return {'category': 'unknown', 'name': code, 'family': c[:3] if len(c) >= 3 else c}

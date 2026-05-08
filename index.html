@@ -1478,12 +1478,13 @@ function BrokerPositions({ data }) {
     if (!cats[p.category]) cats[p.category] = [];
     cats[p.category].push(p);
   });
-  const catOrder = ['cash_stock', 'stock_futures', 'index_futures', 'index_option', 'unknown'];
+  const catOrder = ['cash_stock', 'stock_futures', 'index_futures', 'index_option', 'bond_etf', 'unknown'];
   const catLabel = {
     cash_stock:    '現股',
     stock_futures: '個股期貨',
     index_futures: '指數期貨',
     index_option:  '指數選擇權',
+    bond_etf:      '債券 ETF',
     unknown:       '其他',
   };
 
