@@ -3052,9 +3052,23 @@ function RegimeAdvisor({ data }) {
           <div style={{fontSize:'12px', color:'#cbd5e1'}}>
             DTE <b>{r.dte}</b>　Δ <b>{r.delta}</b>　<b style={{color:'#fcd34d'}}>{r.strategy}</b>
           </div>
+          {r.stats && (
+            <div style={{fontSize:'9px', color:'#94a3b8', marginTop:'2px'}}>
+              📊 歷史: 全期奪冠 {r.stats.wins}/{r.quarters_total}（{r.stats.win_rate_pct}%）
+              {' · '}進前 3 ({r.stats.top3_rate_pct}%)
+              {r.stats.regime_total > 0 && (
+                <span style={{color:'#fcd34d'}}> · 同情境 {r.stats.regime_wins}/{r.stats.regime_total}</span>
+              )}
+            </div>
+          )}
           {r.fallback && (
-            <div style={{fontSize:'10px', color:'#94a3b8', marginTop:'1px'}}>
+            <div style={{fontSize:'10px', color:'#94a3b8', marginTop:'2px'}}>
               保守 fallback：<b>{r.fallback}</b>
+              {r.fallback_stats && (
+                <span style={{fontSize:'9px', color:'#64748b', marginLeft:'4px'}}>
+                  (前 3 率 {r.fallback_stats.top3_rate_pct}%)
+                </span>
+              )}
             </div>
           )}
           <div style={{fontSize:'9px', color:'#64748b', marginTop:'2px', lineHeight:1.4}}>
@@ -3063,6 +3077,11 @@ function RegimeAdvisor({ data }) {
           <div style={{fontSize:'9px', color:'#86efac', marginTop:'2px'}}>
             {r.expected}
           </div>
+          {r.period && (
+            <div style={{fontSize:'8px', color:'#475569', marginTop:'2px'}}>
+              ⓘ 統計來源：backtest {r.period}（{r.quarters_total} 段）
+            </div>
+          )}
         </div>
 
         {/* 當前 */}

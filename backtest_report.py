@@ -118,6 +118,45 @@ def build_markdown(prices, lots=5, quarters=4):
     return '\n'.join(md)
 
 
+def compute_stats(prices, lots=5, quarters=4):
+    """跑 quarter sweep + 統計 win/top3，回傳 dict 供 regime_advisor 讀取。"""
+    n = len(prices)
+    chunk = n // quarters
+    win_count, top3_count = {}, {}
+    per_regime_winner = {}   # 'bull' / 'bear' / 'side' → [winner_name1, ...]
+    quarters_data = []
+    for i in range(quarters):
+        s = i * chunk
+        e = (i + 1) * chunk - 1 if i < quarters - 1 else n - 1
+        ret = (prices[e][1] - prices[s][1]) / prices[s][1] * 100
+        regime = 'bull' if ret > 5 else 'bear' if ret < -5 else 'side'
+        slice_p = prices[s:e + 1]
+        stats = BAR.evaluate_window(slice_p, hedge_lots=lots)
+        if not stats: continue
+        per_regime_winner.setdefault(regime, []).append(stats[0]['name'])
+        for j, r in enumerate(stats[:3]):
+            top3_count[r['name']] = top3_count.get(r['name'], 0) + 1
+            if j == 0:
+                win_count[r['name']] = win_count.get(r['name'], 0) + 1
+        quarters_data.append({
+            'q': i + 1, 'regime': regime, 'tx_pct': round(ret, 2),
+            'top3': [r['name'] for r in stats[:3]],
+        })
+
+    total = quarters
+    return {
+        'generated_at': datetime.now().isoformat(timespec='seconds'),
+        'period_days': n,
+        'first_date':  prices[0][0].isoformat() if hasattr(prices[0][0], 'isoformat') else str(prices[0][0]),
+        'last_date':   prices[-1][0].isoformat() if hasattr(prices[-1][0], 'isoformat') else str(prices[-1][0]),
+        'quarters_total': total,
+        'win_count':      win_count,
+        'top3_count':     top3_count,
+        'per_regime_winner': per_regime_winner,
+        'quarters':       quarters_data,
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--csv', help='TX CSV')
@@ -142,6 +181,12 @@ def main():
     fname = OUT_DIR / f'{datetime.now().strftime("%Y-%m")}.md'
     fname.write_text(md, encoding='utf-8')
     print(f'[backtest_report] wrote → {fname}', file=sys.stderr)
+
+    # 寫 machine-readable stats 給 regime_advisor 消費
+    stats_json = _HERE / 'strategy_stats.json'
+    stats = compute_stats(prices, lots=args.lots, quarters=args.quarters)
+    stats_json.write_text(json.dumps(stats, ensure_ascii=False, indent=2), encoding='utf-8')
+    print(f'[backtest_report] stats → {stats_json.name}', file=sys.stderr)
 
     if not args.no_push:
         _load_env()

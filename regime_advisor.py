@@ -142,6 +142,19 @@ def _avg_held_params(data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _load_strategy_stats() -> Dict[str, Any]:
+    """讀 strategy_stats.json (由 backtest_report 月跑寫入)。"""
+    import json
+    from pathlib import Path
+    p = Path(__file__).resolve().parent / 'strategy_stats.json'
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding='utf-8'))
+    except Exception:
+        return {}
+
+
 def evaluate(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not data:
         return None
@@ -151,6 +164,7 @@ def evaluate(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
 
     cur = _avg_held_params(data)
+    stats = _load_strategy_stats()
 
     # 偏差 — 比較用戶當前 vs 推薦
     deviations: List[Dict[str, Any]] = []
@@ -177,6 +191,31 @@ def evaluate(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 'note': f'當前 {cur["strategy"]} 與推薦 {rec["strategy"]} 不同',
             })
 
+    # 從 stats 取主推 / fallback 的歷史命中率
+    rec_strategy = rec['strategy']
+    rec_fallback = rec.get('fallback', '')
+    win_count    = (stats.get('win_count') or {})
+    top3_count   = (stats.get('top3_count') or {})
+    quarters_total = stats.get('quarters_total', 0) or 0
+    per_regime_winner = stats.get('per_regime_winner') or {}
+
+    def _stat_for(name):
+        if not name or quarters_total == 0:
+            return None
+        wins  = win_count.get(name, 0)
+        top3  = top3_count.get(name, 0)
+        regime_wins = sum(1 for w in per_regime_winner.get(det['regime'], []) if w == name)
+        regime_total = len(per_regime_winner.get(det['regime'], []))
+        return {
+            'wins':           wins,
+            'win_rate_pct':   round(wins  / quarters_total * 100, 1),
+            'top3':           top3,
+            'top3_rate_pct':  round(top3  / quarters_total * 100, 1),
+            'regime_wins':    regime_wins,
+            'regime_total':   regime_total,
+            'regime_win_rate_pct': round(regime_wins / regime_total * 100, 1) if regime_total else None,
+        }
+
     return {
         'regime':         det['regime'],
         'regime_label':   rec['label'],
@@ -187,9 +226,13 @@ def evaluate(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             'dte':       rec['dte'],
             'delta':     rec['delta'],
             'strategy':  rec['strategy'],
-            'fallback':  rec.get('fallback', ''),
+            'fallback':  rec_fallback,
             'why':       rec['why'],
             'expected':  rec['expected'],
+            'stats':          _stat_for(rec_strategy),
+            'fallback_stats': _stat_for(rec_fallback),
+            'period':         f"{stats.get('first_date', '')}→{stats.get('last_date', '')}" if stats else None,
+            'quarters_total': quarters_total,
         },
         'current':        cur,
         'deviations':     deviations,
