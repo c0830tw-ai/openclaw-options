@@ -510,6 +510,33 @@ def bs_delta(S: float, K: float, T: float, sigma: float, is_put: bool,
         return 0.0
 
 
+def bs_greeks(S: float, K: float, T: float, sigma: float, is_put: bool,
+              r: Optional[float] = None) -> Dict[str, float]:
+    """Black-76 Greeks（r=0 for futures）。
+    回傳 {delta, theta_per_day, vega_per_pct}：
+      delta            : 標準 dimensionless delta（put 為負）
+      theta_per_day    : 點/天（長部位通常為負 = 每天耗損點數）
+      vega_per_pct     : 1% IV 變動下的點數變動
+    """
+    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+        return {'delta': 0.0, 'theta_per_day': 0.0, 'vega_per_pct': 0.0}
+    if r is None:
+        r = CFG.risk_free_rate
+    try:
+        sqrt_T = math.sqrt(T)
+        d1 = (math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrt_T)
+        phi_d1 = math.exp(-d1 * d1 / 2) / math.sqrt(2 * math.pi)
+        delta = _norm_cdf(d1) - 1 if is_put else _norm_cdf(d1)
+        theta_year = -S * phi_d1 * sigma / (2 * sqrt_T)
+        return {
+            'delta':         delta,
+            'theta_per_day': theta_year / 365,
+            'vega_per_pct':  S * phi_d1 * sqrt_T / 100,
+        }
+    except (ValueError, ZeroDivisionError, OverflowError):
+        return {'delta': 0.0, 'theta_per_day': 0.0, 'vega_per_pct': 0.0}
+
+
 def implied_vol_newton(S: float, K: float, T: float, market_price: float,
                        is_put: bool, r: float = 0.0,
                        initial_guess: float = 0.25) -> Optional[float]:
@@ -721,6 +748,119 @@ def _broker_pos_to_item(p: dict, beta_0050: float, beta_2330: float) -> Optional
         'beta_adj_notional': round(notional * beta, 0),
         'cost_basis':        cb_total if cb_total else None,
         'unrealized':        round(notional - cb_total, 0) if cb_total else None,
+    }
+
+
+def compute_portfolio_greeks(
+    api, broker_positions: Optional[List[Dict[str, Any]]],
+    bs_s: float, default_iv: float = 0.20,
+) -> Optional[Dict[str, Any]]:
+    """掃 broker_positions 的 TXO/週選 部位，計算每筆 + 整體 Greeks。
+    回傳 {legs:[...], totals:{net_delta, delta_ntd_per_1pct_tx, theta_ntd_per_day, vega_ntd_per_pct_iv}}
+    """
+    if not broker_positions or not bs_s or bs_s <= 0:
+        return None
+
+    opt_pos = [p for p in broker_positions
+               if p.get('category') == 'index_option' and (p.get('quantity') or 0) > 0]
+    if not opt_pos:
+        return None
+
+    # Build code → contract index 一次（避免 N 次 list 掃描）
+    code_map: Dict[str, Any] = {}
+    for series in ('TXO', 'TX1', 'TX2', 'TX4', 'TX5',
+                   'TXU', 'TXV', 'TXX', 'TXY', 'TXZ'):
+        try:
+            for c in getattr(api.Contracts.Options, series):
+                code_map[c.code] = c
+        except (AttributeError, TypeError):
+            pass
+
+    pairs = [(p, code_map[p['code']]) for p in opt_pos if p['code'] in code_map]
+    if not pairs:
+        log.debug(f'compute_portfolio_greeks: 0 of {len(opt_pos)} broker option codes matched')
+        return None
+
+    # 一次 snapshot 全部 leg
+    try:
+        snaps = api.snapshots([c for _, c in pairs])
+    except Exception as e:
+        log.warning(f'portfolio greeks snapshots 失敗: {e}')
+        snaps = [None] * len(pairs)
+
+    today = datetime.now().date()
+    legs: List[Dict[str, Any]] = []
+    for (p, c), snap in zip(pairs, snaps):
+        K = float(c.strike_price)
+        is_put = (c.option_right == OptionRight.Put)
+
+        # T from delivery_date（'YYYY/MM/DD' 或 'YYYYMMDD'）
+        del_str = getattr(c, 'delivery_date', '') or ''
+        del_dt = None
+        for fmt in ('%Y/%m/%d', '%Y-%m-%d', '%Y%m%d'):
+            try:
+                del_dt = datetime.strptime(del_str, fmt).date()
+                break
+            except ValueError:
+                continue
+        if not del_dt or del_dt <= today:
+            continue
+        dte = (del_dt - today).days
+        T = dte / 365
+
+        # IV：先試從 snapshot mid 反推；失敗用 default
+        iv = default_iv
+        mid = 0.0
+        if snap is not None:
+            close = float(getattr(snap, 'close', 0) or 0)
+            bid   = float(getattr(snap, 'buy_price', 0) or 0)
+            ask   = float(getattr(snap, 'sell_price', 0) or 0)
+            mid = (bid + ask) / 2 if (bid > 0 and ask > 0) else close
+            if mid > 0:
+                inv = implied_vol_newton(bs_s, K, T, mid, is_put=is_put)
+                if inv is not None:
+                    iv = inv
+
+        sign = 1 if str(p.get('direction', '')).lower().startswith('buy') else -1
+        qty  = int(p.get('quantity') or 0)
+        qty_signed = sign * qty
+        if qty_signed == 0:
+            continue
+
+        g = bs_greeks(bs_s, K, T, iv, is_put=is_put)
+        legs.append({
+            'code':             p['code'],
+            'name':             p.get('name', ''),
+            'right':            'put' if is_put else 'call',
+            'strike':           K,
+            'qty_signed':       qty_signed,
+            'dte':              dte,
+            'iv':               round(iv, 4),
+            'mid':              round(mid, 1),
+            'delta':            round(g['delta'], 4),
+            'theta_per_day':    round(g['theta_per_day'], 3),
+            'vega_per_pct':     round(g['vega_per_pct'], 3),
+            'pos_delta':        round(g['delta'] * qty_signed, 3),
+            'pos_theta_per_day': round(g['theta_per_day'] * qty_signed, 2),
+            'pos_vega_per_pct':  round(g['vega_per_pct'] * qty_signed, 2),
+        })
+
+    if not legs:
+        return None
+
+    net_delta = sum(L['pos_delta']         for L in legs)   # 點/TX 1 點變動
+    net_theta = sum(L['pos_theta_per_day'] for L in legs)   # 點/天
+    net_vega  = sum(L['pos_vega_per_pct']  for L in legs)   # 點/1% IV
+
+    return {
+        'legs':   legs,
+        'totals': {
+            'net_delta':                  round(net_delta, 3),
+            'delta_ntd_per_1pct_tx':      round(net_delta * 50 * bs_s * 0.01),
+            'theta_ntd_per_day':          round(net_theta * 50),
+            'vega_ntd_per_pct_iv':        round(net_vega * 50),
+            'reference_tx':               round(bs_s, 1),
+        },
     }
 
 
@@ -2317,6 +2457,7 @@ def main():
             'broker':    None,                  # filled below if CA active
             'weekly_opportunities': None,       # filled below
             'intraday_bb': None,                # 5-min K BB 軌寬狀態
+            'portfolio_greeks': None,           # broker 選擇權部位 Greeks 聚合
             'market': market,
             'txo_month': month,
             'dte': dte,
@@ -2437,6 +2578,19 @@ def main():
                              f"總 P&L {result['broker']['total_pnl']:+,.0f}")
             except Exception as _e:
                 log.debug(f'broker summary 失敗: {_e}')
+
+        # 14f. Portfolio Greeks（broker 選擇權持倉聚合）
+        try:
+            _default_iv = locals().get('near_iv') or 0.20
+            pg = compute_portfolio_greeks(api, _broker_positions, bs_s, default_iv=_default_iv)
+            if pg:
+                result['portfolio_greeks'] = pg
+                t = pg['totals']
+                log.info(f"Portfolio Greeks: Δ={t['net_delta']:+.2f} ({t['delta_ntd_per_1pct_tx']:+,} NT/1%TX)  "
+                         f"θ={t['theta_ntd_per_day']:+,} NT/day  ν={t['vega_ntd_per_pct_iv']:+,} NT/1%IV  "
+                         f"({len(pg['legs'])} legs)")
+        except Exception as _e:
+            log.debug(f'portfolio greeks 失敗: {_e}')
 
         # 14g. 近月期貨 5 分 K 布林軌道（盤中通知）
         try:
