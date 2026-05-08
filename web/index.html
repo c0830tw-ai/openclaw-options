@@ -1992,6 +1992,96 @@ function OrderHelper({ data }) {
   );
 }
 
+function RegimeAdvisor({ data }) {
+  const ra = data?.regime_advisor;
+  if (!ra) return null;
+  const aligned = ra.aligned;
+  const headerColor = aligned ? '#4ade80' : ra.deviations?.length >= 2 ? '#fb923c' : '#fbbf24';
+
+  const r = ra.recommendation;
+  const cur = ra.current;
+
+  return (
+    <div style={{
+      background:'#0a0e1c', border:`1px solid ${headerColor}33`,
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:'4px'}}>
+        <span style={{fontWeight:700, color: headerColor, fontSize:'12px'}}>
+          🎯 Regime Advisor — {ra.regime_label}
+        </span>
+        <span style={{fontSize:'10px', color:'#94a3b8'}}>
+          月 {ra.monthly_pct >= 0 ? '+' : ''}{ra.monthly_pct}%  ·  週 {ra.weekly_pct >= 0 ? '+' : ''}{ra.weekly_pct}%
+        </span>
+      </div>
+      <div style={{fontSize:'9px', color:'#64748b', marginBottom:'6px'}}>
+        條件：{ra.criteria}
+      </div>
+
+      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px'}}>
+        {/* 推薦 */}
+        <div style={{padding:'6px 8px', background:'#070b15', borderRadius:'4px',
+                      borderLeft:`3px solid ${headerColor}`}}>
+          <div style={{fontSize:'10px', color: headerColor, fontWeight:700, marginBottom:'2px'}}>
+            💡 推薦 SOP
+          </div>
+          <div style={{fontSize:'12px', color:'#cbd5e1'}}>
+            DTE <b>{r.dte}</b>　Δ <b>{r.delta}</b>　<b>{r.strategy}</b>
+          </div>
+          <div style={{fontSize:'9px', color:'#64748b', marginTop:'2px', lineHeight:1.4}}>
+            {r.why}
+          </div>
+          <div style={{fontSize:'9px', color:'#86efac', marginTop:'2px'}}>
+            {r.expected}
+          </div>
+        </div>
+
+        {/* 當前 */}
+        <div style={{padding:'6px 8px', background:'#070b15', borderRadius:'4px',
+                      borderLeft:`3px solid ${cur.has_positions ? '#94a3b8' : '#475569'}`}}>
+          <div style={{fontSize:'10px', color:'#94a3b8', fontWeight:700, marginBottom:'2px'}}>
+            📍 當前實際
+          </div>
+          {cur.has_positions ? (
+            <>
+              <div style={{fontSize:'12px', color:'#cbd5e1'}}>
+                DTE <b>{cur.avg_dte || '—'}</b>
+                Δ <b>{cur.avg_put_delta != null ? cur.avg_put_delta.toFixed(2) : '—'}</b>
+                <b>{cur.strategy}</b>
+              </div>
+              <div style={{fontSize:'9px', color:'#64748b', marginTop:'2px'}}>
+                持有 {cur.put_lots} 口 put / {cur.call_lots} 口 short call
+              </div>
+            </>
+          ) : (
+            <div style={{fontSize:'10px', color:'#64748b'}}>無持倉</div>
+          )}
+        </div>
+      </div>
+
+      {/* 偏差列 */}
+      {ra.deviations?.length > 0 && (
+        <div style={{marginTop:'6px', padding:'4px 8px', background:'#1c1610', borderRadius:'3px'}}>
+          <div style={{fontSize:'9px', color:'#fbbf24', marginBottom:'2px'}}>偏差 {ra.deviations.length} 項</div>
+          {ra.deviations.map((d, i) => (
+            <div key={i} style={{fontSize:'10px', color:'#fde68a'}}>
+              ⚠️ {d.param}：當前 {d.current} → 推薦 {d.recommended}（{d.note}）
+            </div>
+          ))}
+        </div>
+      )}
+
+      {aligned && cur.has_positions && (
+        <div style={{marginTop:'6px', padding:'4px 8px', background:'#0c1a15', borderRadius:'3px',
+                      fontSize:'10px', color:'#86efac'}}>
+          ✓ 當前部位與此 regime 推薦一致
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CollarDashboard({ data }) {
   const cd = data?.collar_dashboard;
   if (!cd) return null;
@@ -3903,6 +3993,7 @@ function App() {
                ].filter(Boolean).join(' · ') || null}>
         <CalendarView data={data} />
         <UpcomingEvents data={data} />
+        <RegimeAdvisor data={data} />
         <CollarDashboard data={data} />
         <OrderHelper data={data} />
         <PretradeSimulator data={data} />

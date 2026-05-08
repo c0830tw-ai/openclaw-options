@@ -2444,6 +2444,7 @@ def main():
             'pnl_attribution':  None,           # 每日 P&L Δ/θ/ν 拆解
             'drawdown':         None,           # 從 peak 追當前 drawdown
             'risk_limits':      None,           # 風險限額使用率
+            'regime_advisor':   None,           # 當前 regime + 推薦 SOP vs 實際差異
             'order_helper':     None,           # 從推薦結構產生下單階梯 + add_trade 命令
             'upcoming_events': [],              # 未來 14 天高影響事件
             'market': market,
@@ -2635,6 +2636,18 @@ def main():
                          f"({dd['days_in_dd']} 天從 peak)")
         except Exception as _e:
             log.debug(f'drawdown 失敗: {_e}')
+
+        # 14g-ra. Regime advisor（當前情境 → 推薦 SOP vs 實際差異）
+        try:
+            import regime_advisor as _RA
+            ra = _RA.evaluate(result)
+            if ra:
+                result['regime_advisor'] = ra
+                log.info(f"Regime: {ra['regime_label']} (月 {ra['monthly_pct']:+.1f}%)  "
+                         f"推薦 DTE={ra['recommendation']['dte']} Δ={ra['recommendation']['delta']} "
+                         f"{ra['recommendation']['strategy']}  偏差 {len(ra['deviations'])} 條")
+        except Exception as _e:
+            log.debug(f'regime_advisor 失敗: {_e}')
 
         # 14g-rl. 風險限額使用率
         try:
