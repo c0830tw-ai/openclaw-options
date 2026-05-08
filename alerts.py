@@ -37,6 +37,9 @@ DEFAULT_RULES = {
     'tx_drawdown_alert_pct':    -10.0,  # 從 anchor 跌 X% 觸發平倉提醒
     'profit_lock_threshold':     0,     # 0050 ETF期 unrealized 浮盈超過此 NT 觸發（0 = 不啟用）
 
+    # Phase 6 broker drift detection
+    'drift_check_enabled':       True,  # positions.json vs broker 真實持倉一致性檢查
+
     'cooldown_minutes':          60,    # 同一規則最少間隔分鐘
     'telegram_enabled':          True,
 }
@@ -184,6 +187,38 @@ def evaluate(data: dict, rules: dict) -> list:
                           f"→ 考慮減 1-2 口或加買 put 鎖獲利"),
                 'tip':   '算「-10% 後剩多少」｜落袋 1-2 口｜roll up put 鎖獲利',
             })
+
+    # 9. Positions drift — positions.json vs broker 真實持倉不一致
+    if rules.get('drift_check_enabled', True):
+        broker = data.get('broker') or {}
+        broker_pos = broker.get('positions') or []
+        if broker_pos:
+            drifts = []
+
+            def _broker_qty(family: str) -> int:
+                """sum buy positions of given family（賣方倉跳過）。"""
+                return sum(p.get('quantity', 0) for p in broker_pos
+                           if p.get('family') == family and p.get('direction') == 'Buy')
+
+            # 大台積電期 (CDF)
+            cfg_large = pos.get('large_futures_lots', 0) or 0
+            br_cdf = _broker_qty('CDF')
+            if (cfg_large > 0 or br_cdf > 0) and cfg_large != br_cdf:
+                drifts.append(f'大台積電期 cfg={cfg_large} vs broker={br_cdf}')
+
+            # 0050 ETF期 (NYF) — 只在 broker 看得到才比（避免 H 帳戶 inaccessible 假警報）
+            cfg_0050 = pos.get('lots_0050', 0) or 0
+            br_nyf = _broker_qty('NYF')
+            if br_nyf > 0 and cfg_0050 != br_nyf:
+                drifts.append(f'0050 ETF期 cfg={cfg_0050} vs broker={br_nyf}')
+
+            if drifts:
+                alerts.append({
+                    'key':   'positions_drift',
+                    'level': '🟡',
+                    'msg':   'positions.json 與 broker 真實持倉不一致：' + '；'.join(drifts),
+                    'tip':   '是否最近下單忘記更新 positions.json？對照後修改 lots_0050 / cost_basis_0050',
+                })
 
     return alerts
 
