@@ -116,6 +116,66 @@ def compute_roll_suggestions(result: Dict[str, Any]) -> List[Dict[str, Any]]:
                 },
             })
 
+    # ── 1b. 近月 put 即將到期 → roll 到遠月（每月例行換倉）─────────
+    far  = result.get('far_month') or {}
+    far_put = _safe(far, 'selected_options', 'put', default={})
+    if (
+        rec_hedge > 0
+        and near_dte_t and 0 < near_dte_t <= 5
+        and near_put.get('strike') and near_put.get('bid') is not None
+        and far_put.get('strike') and far_put.get('ask')
+    ):
+        # 平掉現有近月（賣出）+ 買進遠月
+        close_ladder = _limit_ladder_sell(near_put.get('bid'), near_put.get('mid'), near_put.get('ask'))
+        open_ladder  = _limit_ladder_buy(far_put.get('bid'),  far_put.get('mid'),  far_put.get('ask'))
+
+        close_credit_per_lot = float(near_put.get('bid') or 0) * TXO_MULTIPLIER
+        open_cost_per_lot    = float(far_put.get('ask') or 0)  * TXO_MULTIPLIER
+        net_debit_per_lot    = open_cost_per_lot - close_credit_per_lot
+        net_debit_total      = net_debit_per_lot * rec_hedge
+
+        far_settle = _format_settlement(far.get('settlement_date', ''))
+        far_iv     = far.get('iv_used') or 0.20
+        far_dte_t  = far.get('dte_trading') or 0
+
+        priority = 'high' if near_dte_t <= 2 else 'medium'
+        suggestions.append({
+            'priority':  priority,
+            'trigger':   'roll_near_to_far_put',
+            'reason':    f'近月 put 履約 {near_put["strike"]:.0f} 剩 {near_dte_t} 個交易日，'
+                         f'到期前換到遠月（{far_settle} 結算）維持避險',
+            'action':    'roll_to_far_month',
+            'instructions': [
+                f'步驟 1：平掉現有 {rec_hedge} 口 近月 Put 履約 {near_put["strike"]:.0f}（賣出階梯）',
+                f'  1️⃣ 限價 {close_ladder["try_1"]} 點（賣方稍微讓利）',
+                f'  2️⃣ 限價 {close_ladder["try_2"]} 點（中位價）',
+                f'  3️⃣ 限價 {close_ladder["try_3"]} 點（吃 bid）',
+                f'步驟 2：買 {rec_hedge} 口 遠月 Put 履約 {far_put["strike"]:.0f}（買進階梯，推薦下一個結算日 {far_settle}）',
+                f'  1️⃣ 限價 {open_ladder["try_1"]} 點',
+                f'  2️⃣ 限價 {open_ladder["try_2"]} 點',
+                f'  3️⃣ 限價 {open_ladder["try_3"]} 點（吃 ask）',
+                f'每段等 {open_ladder["wait_minutes"]} 分鐘；建議結算翌日 10:00–11:30 流動性最佳',
+            ],
+            'limit_ladder':       open_ladder,    # 主腳：買新月 put（向後兼容）
+            'close_ladder':       close_ladder,   # 平倉腳
+            'open_ladder':        open_ladder,    # 開倉腳
+            'estimates': {
+                'qty':                rec_hedge,
+                'close_strike':       near_put['strike'],
+                'close_bid':          near_put.get('bid'),
+                'close_credit_per_lot': round(close_credit_per_lot),
+                'open_strike':        far_put['strike'],
+                'open_ask':           far_put.get('ask'),
+                'open_cost_per_lot':  round(open_cost_per_lot),
+                'net_debit_per_lot':  round(net_debit_per_lot),
+                'total_cost':         round(net_debit_total),     # 與舊 schema 對齊
+                'net_debit':          round(net_debit_total),
+                'replacement_dte_trading': far_dte_t,
+                'replacement_iv':          far_iv,
+                'far_settlement':          far.get('settlement_date'),
+            },
+        })
+
     # ── 2. 短 call 距現價過近 → roll up ────────────────────────────
     if bs_s and near_call.get('strike') and near_dte_t and near_dte_t > 0:
         T = near_dte_t / 252

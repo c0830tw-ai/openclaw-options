@@ -1874,6 +1874,7 @@ function RollSuggestions({ data }) {
   const priorityLabel = p => p === 'high' ? '緊急' : p === 'medium' ? '中等' : p;
   const actionLabel = a => ({
     roll_to_monthly:        '換到月選',
+    roll_to_far_month:      '換到下個月選',
     roll_up_call:           '把賣 Call 換到更高履約',
     reinforce_or_roll_down: '加買保護或下調履約',
   })[a] || a;
@@ -1897,12 +1898,22 @@ function RollSuggestions({ data }) {
               {s.instructions.map((ins, j) => <li key={j} style={{fontSize:'10px'}}>{ins}</li>)}
             </ul>
           )}
-          {s.estimates?.total_cost && (
+          {s.estimates?.net_debit !== undefined ? (
+            <div style={{fontSize:'10px', color:'#94a3b8', marginTop:'4px'}}>
+              平倉收 NT$ {fmt(s.estimates.close_credit_per_lot * s.estimates.qty)} ／
+              開倉付 NT$ {fmt(s.estimates.open_cost_per_lot * s.estimates.qty)} ／
+              <b style={{color: s.estimates.net_debit > 0 ? '#fca5a5' : '#86efac'}}>
+                淨{s.estimates.net_debit > 0 ? '付' : '收'} NT$ {fmt(Math.abs(s.estimates.net_debit))}
+              </b>
+              {s.estimates.replacement_iv ? ` · 波動率 ${(s.estimates.replacement_iv*100).toFixed(1)}%` : ''}
+              {s.estimates.replacement_dte_trading ? ` · 新部位剩 ${s.estimates.replacement_dte_trading} 個交易日` : ''}
+            </div>
+          ) : s.estimates?.total_cost ? (
             <div style={{fontSize:'10px', color:'#94a3b8', marginTop:'4px'}}>
               預估成本 ≈ NT$ {fmt(s.estimates.total_cost)}
               {s.estimates.replacement_iv ? ` · 波動率 ${(s.estimates.replacement_iv*100).toFixed(1)}%` : ''}
             </div>
-          )}
+          ) : null}
         </div>
       ))}
     </div>

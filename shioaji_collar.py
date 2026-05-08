@@ -2244,6 +2244,7 @@ def main():
             )
             far_month_data = {
                 'txo_month': far_month,
+                'settlement_date': far_settlement_dt.strftime('%Y%m%d'),
                 'dte':       far_dte,
                 'dte_trading': trading_days_between(datetime.now().date(), far_settlement_dt.date()),
                 'iv_used':   round(far_iv, 4),
