@@ -135,6 +135,14 @@ def _build_highlights(data: dict) -> List[str]:
                 out.append(f'🟡 {reason}')
                 break
 
+    # 6. 策略 regime 偏離（≥2 項偏離才進重點）
+    ra = data.get('regime_advisor') or {}
+    cur = ra.get('current') or {}
+    deviations = ra.get('deviations') or []
+    rec = ra.get('recommendation') or {}
+    if len(out) < 3 and cur.get('has_positions') and len(deviations) >= 2 and rec.get('strategy'):
+        out.append(f'🎯 策略偏離：當前 {cur.get("strategy")} → 推薦 {rec.get("strategy")} ({ra.get("regime_label", "")})')
+
     return out[:3]   # 最多 3 條，避免訊息過長
 
 
@@ -217,6 +225,22 @@ def build_report(data: dict, now: datetime = None) -> str:
         cum = gh.get('cumulative') or {}
         if cum and (cum.get('lifetime') or 0):
             lines.append(f'累積 θ：30d {_fmt_s(cum.get("last_30d"))}  |  lifetime {_fmt_s(cum.get("lifetime"))}')
+
+    # ━━━ 策略推薦（依當前 regime） ━━━
+    ra = data.get('regime_advisor') or {}
+    if ra and ra.get('recommendation'):
+        r = ra['recommendation']
+        cur = ra.get('current') or {}
+        lines.append('')
+        lines.append(f'🎯 {ra.get("regime_label", "?")}（月 {ra.get("monthly_pct", 0):+.1f}%）')
+        lines.append(f'💡 主推 {r.get("strategy")}')
+        if r.get('fallback'):
+            lines.append(f'🛡️ Fallback {r.get("fallback")}')
+        if r.get('expected'):
+            lines.append(f'   {r.get("expected")[:60]}')
+        if cur.get('has_positions') and ra.get('deviations'):
+            n = len(ra['deviations'])
+            lines.append(f'⚠️ 當前 {cur.get("strategy")} 與推薦不一致 ({n} 項偏離)')
 
     # ━━━ 近 5 天事件（重點以外） ━━━
     evs = data.get('upcoming_events') or []
