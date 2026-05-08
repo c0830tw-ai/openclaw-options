@@ -2440,6 +2440,7 @@ def main():
             'collar_dashboard': None,           # collar 整合 dashboard（per-leg + 結構推薦）
             'event_history':    None,           # 歷史事件 P&L 解析（events analysis CLI 寫入）
             'trade_journal':    None,           # 交易日記聚合（thesis 命中率、月度）
+            'iv_percentile':    None,           # ATM IV 百分位（過去 252 天）
             'upcoming_events': [],              # 未來 14 天高影響事件
             'market': market,
             'txo_month': month,
@@ -2595,6 +2596,20 @@ def main():
                 log.info(f"Collar 推薦結構: {rs.get('label', '?')}  ({rs.get('reason', '')})")
         except Exception as _e:
             log.debug(f'collar_dashboard 失敗: {_e}')
+
+        # 14g-bis-pre. ATM IV 歷史百分位（每日累積 + 計算當前 rank）
+        try:
+            import iv_percentile as _IVP
+            if near_iv and near_iv > 0 and _quotes_source == 'live':
+                _IVP.append_today(near_iv, source='live')
+            ivp = _IVP.summary(near_iv) if near_iv else None
+            if ivp:
+                result['iv_percentile'] = ivp
+                if ivp.get('enough_data'):
+                    log.info(f"IV {ivp['current_iv_pct']:.1f}% @ {ivp['percentile']:.0f} pctile "
+                             f"({ivp['label']} — {ivp['view']})")
+        except Exception as _e:
+            log.debug(f'iv_percentile 失敗: {_e}')
 
         # 14g-bis. 交易日記聚合（thesis 命中率 / monthly stats）
         try:

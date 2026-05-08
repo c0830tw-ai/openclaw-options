@@ -1788,6 +1788,63 @@ function CollarDashboard({ data }) {
   );
 }
 
+function IVPercentile({ data }) {
+  const ivp = data?.iv_percentile;
+  if (!ivp || !ivp.enough_data) return null;
+  const pct = ivp.percentile;
+  const color = pct >= 85 ? '#fb923c' :
+                pct >= 70 ? '#fbbf24' :
+                pct >= 30 ? '#94a3b8' :
+                pct >= 15 ? '#60a5fa' : '#a78bfa';
+  // bar visualization
+  const bars = [];
+  for (let i = 0; i < 10; i++) {
+    const lo = i * 10, hi = (i + 1) * 10;
+    const filled = pct >= hi || (pct > lo && pct < hi);
+    bars.push(
+      <div key={i} style={{
+        flex: 1, height: '8px', borderRadius: '1px',
+        background: pct > lo && pct < hi ? color : (pct >= hi ? `${color}66` : '#1e2535'),
+      }} />
+    );
+  }
+  return (
+    <div style={{
+      background:'#0a0e1c', border:`1px solid ${color}33`,
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:'4px'}}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>📊 IV 百分位（過去 {ivp.lookback_days}d）</span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>n={ivp.history_n}</span>
+      </div>
+      <div style={{display:'flex', alignItems:'baseline', gap:'12px', marginBottom:'4px'}}>
+        <span style={{fontSize:'18px', fontWeight:700, color}}>
+          {ivp.current_iv_pct.toFixed(1)}%
+        </span>
+        <span style={{fontSize:'13px', fontWeight:700, color}}>
+          @ {pct.toFixed(0)} pctile
+        </span>
+        <span style={{fontSize:'11px', color, padding:'1px 6px',
+                      background:`${color}20`, border:`1px solid ${color}`, borderRadius:'3px'}}>
+          {ivp.label}
+        </span>
+        <span style={{flex:1, fontSize:'10px', color:'#94a3b8', textAlign:'right'}}>
+          {ivp.view}
+        </span>
+      </div>
+      {/* 10 段水平 bar */}
+      <div style={{display:'flex', gap:'2px'}}>{bars}</div>
+      {/* min/median/max 標尺 */}
+      <div style={{display:'flex', justifyContent:'space-between', fontSize:'9px', color:'#64748b', marginTop:'2px'}}>
+        <span>最低 {ivp.min_pct.toFixed(1)}%</span>
+        <span>中位 {ivp.median_pct.toFixed(1)}%</span>
+        <span>最高 {ivp.max_pct.toFixed(1)}%</span>
+      </div>
+    </div>
+  );
+}
+
 function HealthCheck({ data }) {
   const [open, setOpen] = React.useState(false);
   const hc = data?.health_check;
@@ -3178,7 +3235,11 @@ function App() {
 
       {/* 🛡️ 部位健康 — 一眼看出現在的曝險 */}
       <Section title="🛡️ 部位健康" defaultOpen={true}
-               badge={data?.health_check ? `${data.health_check.overall_score}/100 ${data.health_check.grade}` : null}>
+               badge={[
+                 data?.iv_percentile?.enough_data ? `IV ${data.iv_percentile.percentile.toFixed(0)} pctile` : null,
+                 data?.health_check ? `${data.health_check.overall_score}/100 ${data.health_check.grade}` : null,
+               ].filter(Boolean).join(' · ') || null}>
+        <IVPercentile data={data} />
         <HealthCheck data={data} />
         <PortfolioGreeks data={data} />
         <StressTest data={data} />

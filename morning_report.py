@@ -102,10 +102,16 @@ def _build_highlights(data: dict) -> List[str]:
             reason = (r.get('reason') or '')[:60]
             out.append(f'🔴 {reason}')
 
-    # 3. IV 極端
+    # 3. IV 極端（優先用百分位判斷）
     iv = data.get('iv_used') or 0
     iv_pct = iv * 100 if iv and iv < 1 else (iv or 0)
-    if iv_pct >= 35 or (iv_pct > 0 and iv_pct < 18):
+    ivp = data.get('iv_percentile') or {}
+    if ivp.get('enough_data'):
+        if ivp['percentile'] >= 80:
+            out.append(f'📈 IV {iv_pct:.1f}% @ {ivp["percentile"]:.0f} pctile — {ivp["view"]}')
+        elif ivp['percentile'] <= 15:
+            out.append(f'📉 IV {iv_pct:.1f}% @ {ivp["percentile"]:.0f} pctile — {ivp["view"]}')
+    elif iv_pct >= 35 or (iv_pct > 0 and iv_pct < 18):
         label, view = _iv_label(iv)
         out.append(f'📉 近月 IV {iv_pct:.1f}%（{label}）— {view}')
 
@@ -160,12 +166,20 @@ def build_report(data: dict, now: datetime = None) -> str:
     m = data.get('market') or {}
     iv = data.get('iv_used') or 0
     iv_pct = iv * 100 if iv and iv < 1 else (iv or 0)
-    iv_state, _ = _iv_label(iv)
+    ivp = data.get('iv_percentile') or {}
     lines.append('')
     lines.append('📊 行情')
     if m.get('tx_futures'):
         lines.append(f'TX: {_fmt_n(m["tx_futures"])}  |  TAIEX: {_fmt_n(m.get("taiex"))}')
-    lines.append(f'近月 IV: {iv_pct:.1f}% [{iv_state}]  |  DTE: {data.get("dte_trading", "—")}d')
+    if ivp.get('enough_data'):
+        # 用百分位來描述比絕對 IV 更有意義
+        lines.append(f'近月 IV: {iv_pct:.1f}% @ {ivp["percentile"]:.0f} pctile '
+                     f'[{ivp["label"]}]')
+        lines.append(f'  → {ivp["view"]}（過去 1 年中位 {ivp.get("median_pct", 0):.1f}%）')
+    else:
+        iv_state, _ = _iv_label(iv)
+        lines.append(f'近月 IV: {iv_pct:.1f}% [{iv_state}]')
+    lines.append(f'近月 DTE: {data.get("dte_trading", "—")}d')
 
     # ━━━ Greeks 解讀 ━━━
     pg = data.get('portfolio_greeks') or {}
