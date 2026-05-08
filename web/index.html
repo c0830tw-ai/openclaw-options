@@ -26,6 +26,58 @@
       body { padding: 12px 10px; font-size: 13px; }
     }
 
+    /* Mobile utility classes for new dashboard components */
+    .ba-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+    @media (max-width: 600px) {
+      .ba-grid { grid-template-columns: 1fr; gap: 4px; }
+    }
+    .leg-form-row {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    @media (max-width: 600px) {
+      .leg-form-row input, .leg-form-row select {
+        font-size: 14px !important;
+        padding: 5px 6px !important;
+        min-height: 30px;
+      }
+      .leg-form-row button { min-height: 30px; padding: 4px 10px !important; }
+      .leg-form-row > span { font-size: 11px !important; }
+    }
+    .metric-grid-6 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 4px;
+    }
+    @media (max-width: 600px) {
+      .metric-grid-6 { grid-template-columns: repeat(2, 1fr); }
+    }
+    .scenario-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    @media (max-width: 600px) {
+      .scenario-grid > div { flex: 1 1 100% !important; }
+    }
+    .calendar-cell { min-height: 52px; padding: 3px 4px; }
+    @media (max-width: 600px) {
+      .calendar-cell { min-height: 44px; padding: 2px 3px; }
+      .calendar-cell .mark-text { font-size: 7px !important; }
+    }
+    .preset-btn-row button {
+      min-height: 28px;
+    }
+    @media (max-width: 600px) {
+      .preset-btn-row button { min-height: 32px; padding: 4px 10px !important; font-size: 11px !important; }
+    }
+
     .app { max-width: 900px; margin: 0 auto; }
 
     /* Header */
@@ -1919,8 +1971,8 @@ function PretradeSimulator({ data }) {
           {/* 多腳列表 */}
           <div style={{marginTop:'6px'}}>
             {legs.map((L, idx) => (
-              <div key={L.id} style={{display:'flex', gap:'4px', flexWrap:'wrap', alignItems:'center',
-                                        padding:'4px 6px', background:'#070b15', borderRadius:'3px',
+              <div key={L.id} className="leg-form-row" style={{padding:'4px 6px',
+                                        background:'#070b15', borderRadius:'3px',
                                         marginBottom:'3px'}}>
                 <span style={{fontSize:'10px', color:'#64748b', minWidth:'18px'}}>#{idx+1}</span>
                 <select value={L.side} onChange={e => updateLeg(L.id, 'side', e.target.value)}
@@ -1958,7 +2010,7 @@ function PretradeSimulator({ data }) {
           </div>
 
           {/* Before / After */}
-          <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', marginTop:'8px'}}>
+          <div className="ba-grid" style={{marginTop:'8px'}}>
             {[
               { label: '當前 (Before)', d: beforeDelta, t: beforeTheta, v: beforeVega, gap: beforeGap, dim: true },
               { label: '加倉後 (After)', d: afterDelta,  t: afterTheta,  v: afterVega,  gap: afterGap,  dim: false },
@@ -2129,7 +2181,7 @@ function RegimeAdvisor({ data }) {
         條件：{ra.criteria}
       </div>
 
-      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px'}}>
+      <div className="ba-grid">
         {/* 推薦 */}
         <div style={{padding:'6px 8px', background:'#070b15', borderRadius:'4px',
                       borderLeft:`3px solid ${headerColor}`}}>
@@ -2391,11 +2443,10 @@ function CalendarView({ data }) {
           const bg = c.isToday ? '#0f1828' : c.isWeekend ? '#070b15' : 'transparent';
           const dimColor = c.isWeekend ? '#475569' : '#cbd5e1';
           return (
-            <div key={c.key} style={{
+            <div key={c.key} className="calendar-cell" style={{
               background: bg,
               border: c.isToday ? '1px solid #60a5fa' : '1px solid #1e2535',
-              borderRadius: '3px', padding: '3px 4px',
-              minHeight: '52px',
+              borderRadius: '3px',
             }}>
               <div style={{fontSize:'10px', color: dimColor, fontWeight: c.isToday ? 700 : 400}}>
                 {c.d}
@@ -2404,7 +2455,7 @@ function CalendarView({ data }) {
               {c.marks.length > 0 && (
                 <div style={{marginTop:'2px', display:'flex', flexDirection:'column', gap:'1px'}}>
                   {c.marks.slice(0, 3).map((mk, i) => (
-                    <div key={i} title={mk.label} style={{
+                    <div key={i} className="mark-text" title={mk.label} style={{
                       fontSize:'8px', color: mk.color,
                       borderLeft: `2px solid ${mk.color}`, paddingLeft:'3px',
                       whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis',
@@ -3266,7 +3317,7 @@ function RiskLimits({ data }) {
       </div>
 
       {/* 6 metric mini bars */}
-      <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))', gap:'4px', marginTop:'4px'}}>
+      <div className="metric-grid-6" style={{marginTop:'4px'}}>
         {rl.metrics.map((m, i) => {
           const c = colorOf(m.status);
           if (m.status === 'disabled') {
@@ -3415,7 +3466,7 @@ function PnLAttribution({ data }) {
       </div>
 
       {/* Cumulative breakdown 4 cards */}
-      <div style={{display:'flex', gap:'4px', marginTop:'4px', flexWrap:'wrap'}}>
+      <div className="scenario-grid" style={{marginTop:'4px'}}>
         <div style={{flex:'1 1 90px', padding:'4px 8px', background:'#070b15', borderRadius:'3px',
                       borderLeft:`3px solid ${colN(cum.delta)}`}}>
           <div style={{fontSize:'9px', color:'#94a3b8'}}>Δ TX 變動</div>
