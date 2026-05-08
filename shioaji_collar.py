@@ -2459,6 +2459,7 @@ def main():
             'weekly_opportunities': None,       # filled below
             'intraday_bb': None,                # 5-min K BB 軌寬狀態
             'portfolio_greeks': None,           # broker 選擇權部位 Greeks 聚合
+            'upcoming_events': [],              # 未來 14 天高影響事件
             'market': market,
             'txo_month': month,
             'dte': dte,
@@ -2592,6 +2593,16 @@ def main():
                          f"({len(pg['legs'])} legs)")
         except Exception as _e:
             log.debug(f'portfolio greeks 失敗: {_e}')
+
+        # 14h. 高影響事件（events.json）— 未來 14 天清單
+        try:
+            import events as _EV
+            result['upcoming_events'] = _EV.upcoming(window_days=14)
+            if result['upcoming_events']:
+                log.info(f"upcoming events: {len(result['upcoming_events'])} 筆 "
+                         f"(最近：{result['upcoming_events'][0]['name']} +{result['upcoming_events'][0]['days_until']}d)")
+        except Exception as _e:
+            log.debug(f'events 失敗: {_e}')
 
         # 14g. 近月期貨 5 分 K 布林軌道（盤中通知）
         try:

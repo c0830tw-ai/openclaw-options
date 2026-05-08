@@ -1609,6 +1609,65 @@ function BrokerPositions({ data }) {
   );
 }
 
+function UpcomingEvents({ data }) {
+  const evs = data?.upcoming_events;
+  if (!evs || evs.length === 0) return null;
+  const TYPE_ICON = {
+    earnings: '📊', fomc: '🏦', cpi_us: '🇺🇸', cpi_tw: '🇹🇼',
+    nfp: '👷', gdp: '📈', election: '🗳️', other: '📅',
+  };
+  const impactColor = ip =>
+    ip === 'high'   ? '#fb923c' :
+    ip === 'medium' ? '#fbbf24' : '#94a3b8';
+  const dayLabel = d => d === 0 ? '今日' : d === 1 ? '明日' : `${d} 天後`;
+  const ivLabel = r =>
+    r === 'high'   ? 'IV 風險高' :
+    r === 'medium' ? 'IV 風險中' : 'IV 風險低';
+
+  return (
+    <div style={{
+      background: '#0a0e1c', border: '1px solid #1e2535',
+      borderRadius: '6px', padding: '6px 12px', margin: '8px 0',
+      fontSize: '11px', color: '#cbd5e1',
+    }}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'4px'}}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>📅 高影響事件（未來 14 天）</span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>{evs.length} 筆</span>
+      </div>
+      <div style={{display:'flex', flexDirection:'column', gap:'4px'}}>
+        {evs.map((ev, i) => (
+          <div key={i} style={{
+            display:'flex', alignItems:'center', gap:'8px',
+            padding:'4px 8px', borderLeft:`3px solid ${impactColor(ev.impact)}`,
+            background: ev.days_until <= 2 ? '#1c1610' : 'transparent',
+          }}>
+            <span style={{fontSize:'14px'}}>{TYPE_ICON[ev.type] || '📅'}</span>
+            <span style={{minWidth:'52px', fontSize:'10px',
+                          color: ev.days_until <= 2 ? '#fb923c' : '#94a3b8',
+                          fontWeight: ev.days_until <= 2 ? 700 : 400}}>
+              {dayLabel(ev.days_until)}
+            </span>
+            <span style={{minWidth:'72px', fontSize:'9px', color:'#64748b'}}>{ev.date}</span>
+            <span style={{flex:1, fontSize:'11px', color:'#e2e8f0'}}>{ev.name}</span>
+            <span style={{fontSize:'9px', color: impactColor(ev.iv_risk),
+                          padding:'1px 6px', borderRadius:'3px',
+                          border: `1px solid ${impactColor(ev.iv_risk)}`}}>
+              {ivLabel(ev.iv_risk)}
+            </span>
+          </div>
+        ))}
+      </div>
+      {evs.some(e => e.note) && (
+        <div style={{marginTop:'4px', fontSize:'9px', color:'#64748b', borderTop:'1px solid #1e2535', paddingTop:'4px'}}>
+          {evs.filter(e => e.note && e.days_until <= 5).map((e, i) => (
+            <div key={i}>· {e.name}：{e.note}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PortfolioGreeks({ data }) {
   const [open, setOpen] = React.useState(false);
   const pg = data?.portfolio_greeks;
@@ -2445,6 +2504,7 @@ function App() {
       </div>
 
       <EngineStatus data={data} />
+      <UpcomingEvents data={data} />
       <RollSuggestions data={data} />
       <PortfolioGreeks data={data} />
       <IntradayBB data={data} />

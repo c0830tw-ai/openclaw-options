@@ -292,8 +292,31 @@ def evaluate(data: dict, rules: dict) -> list:
                     'key':   f'intraday_bb_{fam_key}',
                     'level': '🟠',
                     'msg':   f"{label} 5 分 K 開布林（軌寬 {width:.2f}%，是 20 根均的 {ratio:.2f} 倍）",
-                    'tip':   '盤中波動率釋放，可能進入趨勢段。順勢方向加碼或等回測，逆勢方向避免接刀',
+                    'tip':   '盤中波動率釋放，可能進入趨勢段。順勢方向加碼或等回測,逆勢方向避免接刀',
                 })
+
+    # 14. 高影響事件（events.json）— 事件前 5 天 IV spike 風險
+    upcoming = data.get('upcoming_events') or []
+    for ev in upcoming:
+        if ev.get('impact') != 'high':
+            continue
+        d = ev.get('days_until')
+        if d is None or d > 5:
+            continue
+        # ≤ 2 天 = 高優先；3-5 天 = 中優先
+        level = '🔴' if d <= 2 else '🟠'
+        when = '今日' if d == 0 else '明日' if d == 1 else f'{d} 天後'
+        iv_risk = ev.get('iv_risk', 'medium')
+        risk_tip = (
+            '事件前 IV 通常 spike，賣方建倉延後到事件後（避免被軋）；長 vega 部位有利' if iv_risk == 'high'
+            else '事件後 IV 可能 crush，已賣方部位可受惠；長 vega 部位有風險'
+        )
+        alerts.append({
+            'key':   f'event_{ev.get("type", "?")}_{ev.get("date")}',
+            'level': level,
+            'msg':   f"{when}（{ev.get('date')}）{ev.get('name')}",
+            'tip':   f'{ev.get("note") or risk_tip}。賣方/長 vega 部位請評估是否調整',
+        })
 
     return alerts
 
