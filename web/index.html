@@ -4015,6 +4015,153 @@ function PastEventImpact({ data }) {
   );
 }
 
+function TxoChainGrid({ data }) {
+  const [open, setOpen] = React.useState(false);
+  const tx  = data?.market?.tx_futures;
+  const dte = data?.dte_trading || 30;
+  const iv  = data?.iv_used || 0.20;
+  if (!tx) return null;
+
+  const T = dte / 365;
+  const sqrtT = Math.sqrt(T);
+  const atm = Math.round(tx / 100) * 100;
+
+  // 用近月 / 週選 skew 內插 IV（fallback 到 ATM IV）
+  const skew = (data?.weekly_wed?.skew || data?.weekly_fri?.skew || []).slice().sort((a,b) => a.strike - b.strike);
+  const interpIV = (K) => {
+    if (skew.length === 0) return iv;
+    if (K <= skew[0].strike) return skew[0].iv;
+    if (K >= skew[skew.length - 1].strike) return skew[skew.length - 1].iv;
+    for (let i = 0; i < skew.length - 1; i++) {
+      const a = skew[i], b = skew[i + 1];
+      if (K >= a.strike && K <= b.strike && b.strike > a.strike) {
+        const t = (K - a.strike) / (b.strike - a.strike);
+        return a.iv + t * (b.iv - a.iv);
+      }
+    }
+    return iv;
+  };
+
+  // 持倉 mapping
+  const legs = (data?.portfolio_greeks?.legs) || [];
+  const holdings = {};
+  for (const L of legs) {
+    if ((L.right === 'put' || L.right === 'call') && L.strike) {
+      holdings[`${L.right}_${L.strike}`] = (holdings[`${L.right}_${L.strike}`] || 0) + (L.qty_signed || 0);
+    }
+  }
+
+  const N = 10;
+  const putStrikes  = []; for (let i = N; i >= 1; i--) putStrikes.push(atm - i * 100);
+  const callStrikes = []; for (let i = 1; i <= N; i++) callStrikes.push(atm + i * 100);
+
+  const computeRow = (K, isPut) => {
+    const ivK = interpIV(K);
+    const d1 = (Math.log(tx / K) + 0.5 * ivK * ivK * T) / (ivK * sqrtT);
+    const d2 = d1 - ivK * sqrtT;
+    const delta = isPut ? (_normCdf(d1) - 1) : _normCdf(d1);
+    const price = isPut
+      ? K * _normCdf(-d2) - tx * _normCdf(-d1)
+      : tx * _normCdf(d1) - K * _normCdf(d2);
+    const held = holdings[`${isPut ? 'put' : 'call'}_${K}`] || 0;
+    return { K, delta, price, ivK, held };
+  };
+
+  const Row = ({ row, isPut }) => {
+    const c = isPut ? '#fca5a5' : '#86efac';
+    const heldStr = row.held ? `${row.held > 0 ? '+' : ''}${row.held}口` : '';
+    const heldColor = row.held > 0 ? '#86efac' : row.held < 0 ? '#fca5a5' : '';
+    return (
+      <tr style={{
+        background: row.held ? '#0f1828' : 'transparent',
+        borderBottom: '1px solid #1e2535',
+      }}>
+        <td style={{padding:'2px 6px', color:'#cbd5e1', fontWeight: row.held ? 700 : 400}}>
+          {row.K} {row.held ? '★' : ''}
+        </td>
+        <td style={{padding:'2px 6px', textAlign:'right', color: c}}>
+          {row.delta.toFixed(2)}
+        </td>
+        <td style={{padding:'2px 6px', textAlign:'right', color:'#cbd5e1'}}>
+          {Math.round(row.price)}
+        </td>
+        <td style={{padding:'2px 6px', textAlign:'right', color:'#64748b', fontSize:'9px'}}>
+          {(row.ivK * 100).toFixed(1)}%
+        </td>
+        <td style={{padding:'2px 6px', textAlign:'right', color: heldColor, fontSize:'10px', minWidth:'40px'}}>
+          {heldStr}
+        </td>
+      </tr>
+    );
+  };
+
+  return (
+    <div style={{
+      background:'#0a0e1c', border:'1px solid #1e2535',
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div onClick={() => setOpen(!open)} style={{
+        display:'flex', justifyContent:'space-between', alignItems:'center',
+        cursor:'pointer', userSelect:'none',
+      }}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>
+          🔗 TXO 履約鏈（ATM ±{N} 檔）
+        </span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>
+          ATM {atm} · DTE {dte}d · {open ? '▲' : '▼'}
+        </span>
+      </div>
+
+      {open && (
+        <>
+          <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginTop:'6px'}}>
+            <div>
+              <div style={{fontSize:'10px', color:'#fca5a5', fontWeight:700, marginBottom:'2px'}}>
+                📉 OTM Put（履約 &lt; TX）
+              </div>
+              <table style={{width:'100%', borderCollapse:'collapse', fontSize:'10px'}}>
+                <thead>
+                  <tr style={{color:'#64748b', textAlign:'right', fontSize:'9px'}}>
+                    <th style={{textAlign:'left', padding:'2px 6px'}}>履約</th>
+                    <th>Δ</th><th>價</th><th>IV</th><th>持倉</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {putStrikes.map(K => <Row key={K} row={computeRow(K, true)} isPut={true} />)}
+                </tbody>
+              </table>
+            </div>
+            <div>
+              <div style={{fontSize:'10px', color:'#86efac', fontWeight:700, marginBottom:'2px'}}>
+                📈 OTM Call（履約 &gt; TX）
+              </div>
+              <table style={{width:'100%', borderCollapse:'collapse', fontSize:'10px'}}>
+                <thead>
+                  <tr style={{color:'#64748b', textAlign:'right', fontSize:'9px'}}>
+                    <th style={{textAlign:'left', padding:'2px 6px'}}>履約</th>
+                    <th>Δ</th><th>價</th><th>IV</th><th>持倉</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {callStrikes.map(K => <Row key={K} row={computeRow(K, false)} isPut={false} />)}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div style={{textAlign:'center', fontSize:'10px', color:'#fbbf24', marginTop:'6px',
+                        padding:'4px', background:'#0f1828', borderRadius:'3px'}}>
+            ─── ATM TX {tx?.toFixed(0)} ───
+          </div>
+          <div style={{fontSize:'9px', color:'#64748b', marginTop:'4px'}}>
+            BS 估價（用 skew 內插的 IV，非真實 quote）；★ 標記持倉
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function IndicatorGrid({ data }) {
   if (!data) return null;
   const tx     = data.market?.tx_futures;
@@ -4486,6 +4633,7 @@ function App() {
       <Section title="💡 市場機會" defaultOpen={false} accent="blue"
                badge={data?.weekly_opportunities?.length ? `${data.weekly_opportunities.length} 週` : null}>
         <IndicatorGrid data={data} />
+        <TxoChainGrid data={data} />
         <WeeklyOpportunities data={data} />
       </Section>
 
