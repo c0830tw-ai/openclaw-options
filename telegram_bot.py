@@ -523,12 +523,28 @@ def main():
             updates = r.get('result', [])
             for upd in updates:
                 offset = upd['update_id'] + 1
+                # 1. 一般訊息
                 msg = upd.get('message') or {}
                 text = msg.get('text', '')
                 chat_id = _safe(msg, 'chat', 'id')
                 if chat_id and text:
                     print(f'[telegram_bot] {chat_id}: {text}', file=sys.stderr)
                     handle_message(token, chat_id, text)
+                    continue
+                # 2. inline keyboard 按鈕回呼
+                cbq = upd.get('callback_query') or {}
+                cb_data = cbq.get('data')
+                cb_chat = _safe(cbq, 'message', 'chat', 'id')
+                cb_id   = cbq.get('id')
+                if cb_id and cb_data and cb_chat:
+                    print(f'[telegram_bot] callback {cb_chat}: {cb_data}', file=sys.stderr)
+                    # 必須回 answerCallbackQuery（即使空，讓 Telegram 停 spinner）
+                    try:
+                        _api_post(token, 'answerCallbackQuery', {'callback_query_id': cb_id})
+                    except Exception:
+                        pass
+                    # 把 callback_data 當 /command 處理
+                    handle_message(token, cb_chat, cb_data)
             if updates:
                 STATE_FILE.write_text(json.dumps({'offset': offset, 'last_update': datetime.now().isoformat()}))
         except Exception as e:

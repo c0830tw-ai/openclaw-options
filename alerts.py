@@ -341,19 +341,26 @@ def evaluate(data: dict, rules: dict) -> list:
     return alerts
 
 
-def send_telegram(msg: str) -> bool:
-    """送 Telegram；token/chat_id 沒設或失敗時回 False。"""
+def send_telegram(msg: str, buttons=None) -> bool:
+    """送 Telegram；token/chat_id 沒設或失敗時回 False。
+    buttons 可選：[[{'text':..., 'data':...}, ...], ...] 二維 inline keyboard。"""
     token = os.environ.get('TELEGRAM_BOT_TOKEN')
     chat  = os.environ.get('TELEGRAM_CHAT_ID')
     if not token or not chat:
         return False
     try:
+        import json as _json
         import urllib.request, urllib.parse
-        # 不用 Markdown parse_mode：訊息含中文括號、數字逗號等，
-        # 容易被 legacy Markdown 誤判為連結語法觸發 400 Bad Request
-        data = urllib.parse.urlencode({
-            'chat_id': chat, 'text': msg,
-        }).encode()
+        payload = {'chat_id': chat, 'text': msg}
+        if buttons:
+            keyboard = {
+                'inline_keyboard': [
+                    [{'text': b['text'], 'callback_data': b['data']} for b in row]
+                    for row in buttons
+                ],
+            }
+            payload['reply_markup'] = _json.dumps(keyboard, ensure_ascii=False)
+        data = urllib.parse.urlencode(payload).encode()
         req = urllib.request.Request(
             f'https://api.telegram.org/bot{token}/sendMessage',
             data=data, method='POST',

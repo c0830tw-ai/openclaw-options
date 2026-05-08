@@ -280,7 +280,15 @@ def main(force: bool = False, print_only: bool = False) -> int:
 
     sys.path.insert(0, str(_HERE))
     import alerts as _A
-    if _A.send_telegram(msg):
+    buttons = [
+        [{'text': '🏥 健診', 'data': '/health'},
+         {'text': '🧮 Greeks', 'data': '/greeks'}],
+        [{'text': '📊 IV', 'data': '/iv'},
+         {'text': '🎯 Regime', 'data': '/regime'}],
+        [{'text': '📂 Positions', 'data': '/positions'},
+         {'text': '📅 Events', 'data': '/events'}],
+    ]
+    if _A.send_telegram(msg, buttons=buttons):
         print('\n[morning_report] Telegram 推送成功')
     else:
         print('\n[morning_report] Telegram 未設定或失敗（僅 console 輸出）')
