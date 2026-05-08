@@ -234,8 +234,17 @@ def build_report(data: dict, now: datetime = None) -> str:
         lines.append('')
         lines.append(f'🎯 {ra.get("regime_label", "?")}（月 {ra.get("monthly_pct", 0):+.1f}%）')
         lines.append(f'💡 主推 {r.get("strategy")}')
+        if r.get('stats'):
+            s = r['stats']; total = r.get('quarters_total', 0)
+            line = f'📊 歷史: 奪冠 {s["wins"]}/{total} ({s["win_rate_pct"]}%) · 前 3 ({s["top3_rate_pct"]}%)'
+            if s.get('regime_total'):
+                line += f' · 同情境 {s["regime_wins"]}/{s["regime_total"]}'
+            lines.append(line)
         if r.get('fallback'):
-            lines.append(f'🛡️ Fallback {r.get("fallback")}')
+            fb_line = f'🛡️ Fallback {r.get("fallback")}'
+            if r.get('fallback_stats'):
+                fb_line += f'（前 3 率 {r["fallback_stats"]["top3_rate_pct"]}%）'
+            lines.append(fb_line)
         if r.get('expected'):
             lines.append(f'   {r.get("expected")[:60]}')
         if cur.get('has_positions') and ra.get('deviations'):
