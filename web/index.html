@@ -160,6 +160,42 @@
       .health-4bar > div > div:first-child { font-size: 8px !important; }
     }
 
+    /* === 字級階層 polish === */
+    /* Hero metric — 最大、最重要的單一數字（IV%、DD%、score、scenario P&L）*/
+    .hero-num {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      line-height: 1.1;
+    }
+    @media (max-width: 600px) { .hero-num { font-size: 20px; } }
+
+    /* Primary metric — 次重要數字（Δ/θ/ν 數值、cumulative breakdown）*/
+    .primary-num {
+      font-size: 17px;
+      font-weight: 700;
+      line-height: 1.15;
+    }
+    @media (max-width: 600px) { .primary-num { font-size: 15px; } }
+
+    /* Section header bigger */
+    .section-title {
+      font-size: 13px !important;
+      letter-spacing: 1px;
+    }
+
+    /* Card title slightly bigger */
+    .card-title {
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    /* Footnote slightly bigger for readability */
+    .footnote {
+      font-size: 10px;
+      color: #64748b;
+    }
+
     .app { max-width: 900px; margin: 0 auto; }
 
     /* Header */
@@ -2609,10 +2645,10 @@ function IVPercentile({ data }) {
         <span style={{fontSize:'9px', color:'#64748b'}}>n={ivp.history_n}</span>
       </div>
       <div style={{display:'flex', alignItems:'baseline', gap:'12px', marginBottom:'4px'}}>
-        <span style={{fontSize:'18px', fontWeight:700, color}}>
+        <span className="hero-num" style={{color}}>
           {ivp.current_iv_pct.toFixed(1)}%
         </span>
-        <span style={{fontSize:'13px', fontWeight:700, color}}>
+        <span className="primary-num" style={{color}}>
           @ {pct.toFixed(0)} pctile
         </span>
         <span style={{fontSize:'11px', color, padding:'1px 6px',
@@ -2655,9 +2691,9 @@ function HealthCheck({ data }) {
       }}>
         <span style={{fontWeight:700, color: gradeColor}}>
           🏥 持倉健診
-          <span style={{fontSize:'18px'}}>{score}</span>
+          <span className="hero-num" style={{marginLeft:'4px'}}>{score}</span>
           <span style={{fontSize:'11px', color:'#94a3b8'}}>/100</span>
-          <span style={{fontSize:'12px', color: gradeColor, marginLeft:'6px'}}>[{hc.grade}]</span>
+          <span style={{fontSize:'13px', color: gradeColor, marginLeft:'6px'}}>[{hc.grade}]</span>
         </span>
         <span style={{fontSize:'9px', color:'#64748b'}}>
           {hc.violations?.length || 0} 違規　{open ? '▲ 收起' : '▼ 展開細節'}
@@ -2782,7 +2818,7 @@ function StressTest({ data }) {
                     {' · '}{s.d}d
                   </span>
                 </div>
-                <div style={{fontSize:'18px', color: colN(s.total), fontWeight:700, marginTop:'2px'}}>
+                <div className="hero-num" style={{color: colN(s.total), marginTop:'2px'}}>
                   {fmtS(s.total)}
                   <span style={{fontSize:'10px', color:'#64748b', marginLeft:'4px'}}>NT$</span>
                 </div>
@@ -2918,7 +2954,7 @@ function PortfolioGreeks({ data }) {
       <div className="greeks-3-grid" style={{marginTop:'6px'}}>
         <div style={{padding:'6px 10px', borderLeft:`3px solid ${colN(t.delta_ntd_per_1pct_tx)}`}}>
           <div style={{fontSize:'10px', color:'#94a3b8'}}>淨 Delta（方向）</div>
-          <div style={{fontSize:'14px', marginTop:'2px'}}>
+          <div className="primary-num" style={{marginTop:'2px'}}>
             <b style={{color: colN(t.delta_ntd_per_1pct_tx)}}>{fmtS(t.delta_ntd_per_1pct_tx)}</b>
             <span style={{fontSize:'10px', color:'#64748b'}}> NT$ / 1% TX</span>
           </div>
@@ -2934,7 +2970,7 @@ function PortfolioGreeks({ data }) {
                          color={colN(t.theta_ntd_per_day)} />
             )}
           </div>
-          <div style={{fontSize:'14px', marginTop:'2px'}}>
+          <div className="primary-num" style={{marginTop:'2px'}}>
             <b style={{color: colN(t.theta_ntd_per_day)}}>{fmtS(t.theta_ntd_per_day)}</b>
             <span style={{fontSize:'10px', color:'#64748b'}}> NT$ / 天</span>
           </div>
@@ -2952,7 +2988,7 @@ function PortfolioGreeks({ data }) {
         </div>
         <div style={{flex:'1 1 160px', padding:'6px 10px', borderLeft:`3px solid ${colN(t.vega_ntd_per_pct_iv)}`}}>
           <div style={{fontSize:'10px', color:'#94a3b8'}}>淨 Vega（波動率）</div>
-          <div style={{fontSize:'14px', marginTop:'2px'}}>
+          <div className="primary-num" style={{marginTop:'2px'}}>
             <b style={{color: colN(t.vega_ntd_per_pct_iv)}}>{fmtS(t.vega_ntd_per_pct_iv)}</b>
             <span style={{fontSize:'10px', color:'#64748b'}}> NT$ / 1% IV</span>
           </div>
@@ -3503,7 +3539,7 @@ function DrawdownPanel({ data }) {
       </div>
 
       <div style={{display:'flex', alignItems:'baseline', gap:'12px', marginBottom:'4px', flexWrap:'wrap'}}>
-        <span style={{fontSize:'18px', fontWeight:700, color}}>
+        <span className="hero-num" style={{color}}>
           {cur >= 0 ? '+' : ''}{cur.toFixed(2)}%
         </span>
         <span style={{fontSize:'10px', color:'#94a3b8'}}>
