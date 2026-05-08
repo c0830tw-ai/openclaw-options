@@ -1518,6 +1518,7 @@ function SimTable({ structures, selectedOptions, taiex }) {
 }
 
 function BrokerPositions({ data }) {
+  const [open, setOpen] = React.useState(false);
   const b = data?.broker;
   if (!b || !b.positions?.length) return null;
   const fmt = n => n == null ? '—' : n.toLocaleString(undefined, {maximumFractionDigits: 0});
@@ -1540,21 +1541,33 @@ function BrokerPositions({ data }) {
     unknown:       '其他',
   };
 
+  // 各分類筆數小摘要（收合時顯示）
+  const catSummary = catOrder.filter(c => cats[c]).map(c => `${catLabel[c]} ${cats[c].length}`).join(' · ');
+
   return (
     <div style={{
       background: '#0a0e1c', border: '1px solid #1e2535',
       borderRadius: '6px', padding: '8px 12px', margin: '8px 0',
       fontSize: '11px', color: '#cbd5e1',
     }}>
-      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px'}}>
-        <span style={{fontWeight:700, color:'#94a3b8'}}>🏦 券商即時持倉（永豐 API 同步）</span>
+      <div onClick={() => setOpen(!open)}
+           style={{display:'flex', justifyContent:'space-between', alignItems:'center',
+                   marginBottom: open ? '6px' : '0', cursor:'pointer', userSelect:'none'}}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>
+          {open ? '▼' : '▶'} 🏦 券商即時持倉（永豐 API 同步）
+        </span>
         <span style={{fontSize:'10px', color:'#64748b'}}>
           {b.total_positions} 筆 · 總損益
           <b style={{color: pnlColor(b.total_pnl), marginLeft: '4px'}}>{sign(b.total_pnl)}</b>
         </span>
       </div>
+      {!open && (
+        <div style={{fontSize:'9px', color:'#475569', marginTop:'2px'}}>
+          {catSummary}　<span style={{color:'#64748b'}}>（點上面展開）</span>
+        </div>
+      )}
 
-      {catOrder.filter(c => cats[c]).map(c => (
+      {open && catOrder.filter(c => cats[c]).map(c => (
         <div key={c} style={{marginTop:'6px'}}>
           <div style={{fontSize:'10px', color:'#64748b', marginBottom:'2px'}}>
             {catLabel[c] || c} · {cats[c].length} 筆
