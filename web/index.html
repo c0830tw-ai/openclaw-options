@@ -110,6 +110,56 @@
       background: #0d1325 !important;
     }
 
+    /* === Mobile polish round 2 === */
+
+    @media (max-width: 600px) {
+      .header { flex-wrap: wrap; }
+      .header-right { gap: 6px; flex-wrap: wrap; row-gap: 4px; }
+      .header-right span { font-size: 10px !important; }
+    }
+
+    .leg-pair-grid {
+      display: flex; gap: 6px; flex-wrap: wrap;
+    }
+    .leg-pair-grid > div { flex: 1 1 200px; }
+    @media (max-width: 600px) {
+      .leg-pair-grid > div { flex: 1 1 100% !important; min-width: 100% !important; }
+    }
+
+    .ladder-row {
+      display: flex; gap: 4px; flex-wrap: wrap;
+    }
+    .ladder-row > div { flex: 1 1 100px; }
+    @media (max-width: 600px) {
+      .ladder-row > div {
+        flex: 1 1 calc(33% - 4px) !important;
+        min-width: 88px !important; padding: 6px 4px !important;
+      }
+      .ladder-row button { font-size: 10px !important; padding: 3px 4px !important; }
+    }
+
+    .greeks-3-grid {
+      display: flex; gap: 8px; flex-wrap: wrap;
+    }
+    .greeks-3-grid > div { flex: 1 1 160px; }
+    @media (max-width: 600px) {
+      .greeks-3-grid > div { flex: 1 1 100% !important; }
+    }
+
+    .table-scroll-wrap {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    @media (max-width: 600px) {
+      .table-scroll-wrap table { min-width: 480px; font-size: 10px; }
+    }
+
+    @media (max-width: 600px) {
+      .health-4bar { gap: 3px !important; }
+      .health-4bar > div { min-width: 0 !important; padding: 4px 3px !important; }
+      .health-4bar > div > div:first-child { font-size: 8px !important; }
+    }
+
     .app { max-width: 900px; margin: 0 auto; }
 
     /* Header */
@@ -2166,7 +2216,7 @@ function OrderHelper({ data }) {
                   <span style={{fontSize:'9px', color:'#64748b'}}>{leg.ladder.wait}</span>
                 </div>
                 {/* 3-tier ladder buttons */}
-                <div style={{display:'flex', gap:'4px', marginTop:'4px', flexWrap:'wrap'}}>
+                <div className="ladder-row" style={{marginTop:'4px'}}>
                   {[
                     { label: '1️⃣ 試探', price: leg.ladder.try_1, cmd: leg.commands[0] },
                     { label: '2️⃣ 中位', price: leg.ladder.try_2, cmd: leg.commands[1] },
@@ -2352,7 +2402,7 @@ function CollarDashboard({ data }) {
       </div>
 
       {/* Two-column: put leg | call leg */}
-      <div style={{display:'flex', gap:'6px', flexWrap:'wrap'}}>
+      <div className="leg-pair-grid">
         <Leg title="📉 Put leg（保護）" side="put"  leg={put_leg} />
         <Leg title="📈 Call leg（賣方）" side="call" leg={call_leg} />
       </div>
@@ -2615,9 +2665,9 @@ function HealthCheck({ data }) {
       </div>
 
       {/* Quick bar：總是顯示 4 個規則的 mini-score */}
-      <div style={{display:'flex', gap:'4px', marginTop:'4px'}}>
+      <div className="health-4bar" style={{display:'flex', gap:'4px', marginTop:'4px'}}>
         {hc.breakdown?.map((b, i) => {
-          const c = b.score >= 80 ? '#4ade80' : b.score >= 60 ? '#fbbf24' : '#f87171';
+          const c = b.score >= 80 ? '#86efac' : b.score >= 60 ? '#fbbf24' : '#fca5a5';
           return (
             <div key={i} style={{flex:1, padding:'4px 6px', textAlign:'center',
                                   background:'#070b15', borderRadius:'3px',
@@ -2865,8 +2915,8 @@ function PortfolioGreeks({ data }) {
         })()}
       </div>
 
-      <div style={{display:'flex', gap:'8px', flexWrap:'wrap', marginTop:'6px'}}>
-        <div style={{flex:'1 1 160px', padding:'6px 10px', borderLeft:`3px solid ${colN(t.delta_ntd_per_1pct_tx)}`}}>
+      <div className="greeks-3-grid" style={{marginTop:'6px'}}>
+        <div style={{padding:'6px 10px', borderLeft:`3px solid ${colN(t.delta_ntd_per_1pct_tx)}`}}>
           <div style={{fontSize:'10px', color:'#94a3b8'}}>淨 Delta（方向）</div>
           <div style={{fontSize:'14px', marginTop:'2px'}}>
             <b style={{color: colN(t.delta_ntd_per_1pct_tx)}}>{fmtS(t.delta_ntd_per_1pct_tx)}</b>
@@ -3538,6 +3588,7 @@ function PnLAttribution({ data }) {
       {open && (
         <div style={{marginTop:'6px', borderTop:'1px solid #1e2535', paddingTop:'4px'}}>
           <div style={{fontSize:'9px', color:'#64748b', marginBottom:'2px'}}>近 7 天明細</div>
+          <div className="table-scroll-wrap">
           <table style={{width:'100%', fontSize:'10px', borderCollapse:'collapse'}}>
             <thead>
               <tr style={{color:'#64748b', textAlign:'right'}}>
@@ -3561,6 +3612,7 @@ function PnLAttribution({ data }) {
               ))}
             </tbody>
           </table>
+          </div>
           <div style={{fontSize:'9px', color:'#64748b', marginTop:'4px'}}>
             Δ = 昨日 net delta × 今日 TX 變動  ·  θ = 昨日每日 theta  ·  殘差含開倉/平倉/gamma 二階
           </div>
