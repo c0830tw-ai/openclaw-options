@@ -2441,6 +2441,7 @@ def main():
             'event_history':    None,           # 歷史事件 P&L 解析（events analysis CLI 寫入）
             'trade_journal':    None,           # 交易日記聚合（thesis 命中率、月度）
             'iv_percentile':    None,           # ATM IV 百分位（過去 252 天）
+            'pnl_attribution':  None,           # 每日 P&L Δ/θ/ν 拆解
             'upcoming_events': [],              # 未來 14 天高影響事件
             'market': market,
             'txo_month': month,
@@ -2610,6 +2611,19 @@ def main():
                              f"({ivp['label']} — {ivp['view']})")
         except Exception as _e:
             log.debug(f'iv_percentile 失敗: {_e}')
+
+        # 14g-attr. 每日 P&L 拆解（Δ/θ/ν attribution）
+        try:
+            import performance_attribution as _PA
+            pa = _PA.summary()
+            if pa:
+                result['pnl_attribution'] = pa
+                cum = pa['cumulative']
+                log.info(f"P&L attribution {pa['days']}d: Δ {cum['delta']:+,} "
+                         f"θ {cum['theta']:+,} ν {cum['vega']:+,} "
+                         f"actual {cum['actual']:+,}")
+        except Exception as _e:
+            log.debug(f'pnl_attribution 失敗: {_e}')
 
         # 14g-bis. 交易日記聚合（thesis 命中率 / monthly stats）
         try:

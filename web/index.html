@@ -2722,6 +2722,90 @@ function PortfolioBreakdown({ data }) {
   );
 }
 
+function PnLAttribution({ data }) {
+  const [open, setOpen] = React.useState(false);
+  const pa = data?.pnl_attribution;
+  if (!pa || !pa.recent?.length) return null;
+  const cum = pa.cumulative;
+  const fmtS = n => n == null ? '—' : (n > 0 ? '+' : '') + Math.round(n).toLocaleString();
+  const colN = n => n > 0 ? '#4ade80' : n < 0 ? '#f87171' : '#94a3b8';
+
+  return (
+    <div style={{
+      background:'#0a0e1c', border:'1px solid #1e2535',
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div onClick={() => setOpen(!open)} style={{
+        display:'flex', justifyContent:'space-between', alignItems:'center',
+        cursor:'pointer', userSelect:'none',
+      }}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>📊 P&L 拆解（過去 {pa.days} 天）</span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>
+          actual {fmtS(cum.actual)}　{open ? '▲' : '▼'}
+        </span>
+      </div>
+
+      {/* Cumulative breakdown 4 cards */}
+      <div style={{display:'flex', gap:'4px', marginTop:'4px', flexWrap:'wrap'}}>
+        <div style={{flex:'1 1 90px', padding:'4px 8px', background:'#070b15', borderRadius:'3px',
+                      borderLeft:`3px solid ${colN(cum.delta)}`}}>
+          <div style={{fontSize:'9px', color:'#94a3b8'}}>Δ TX 變動</div>
+          <div style={{fontSize:'13px', color: colN(cum.delta), fontWeight:700}}>{fmtS(cum.delta)}</div>
+        </div>
+        <div style={{flex:'1 1 90px', padding:'4px 8px', background:'#070b15', borderRadius:'3px',
+                      borderLeft:`3px solid ${colN(cum.theta)}`}}>
+          <div style={{fontSize:'9px', color:'#94a3b8'}}>θ 時間</div>
+          <div style={{fontSize:'13px', color: colN(cum.theta), fontWeight:700}}>{fmtS(cum.theta)}</div>
+        </div>
+        <div style={{flex:'1 1 90px', padding:'4px 8px', background:'#070b15', borderRadius:'3px',
+                      borderLeft:`3px solid ${colN(cum.vega)}`}}>
+          <div style={{fontSize:'9px', color:'#94a3b8'}}>ν IV 變動</div>
+          <div style={{fontSize:'13px', color: colN(cum.vega), fontWeight:700}}>{fmtS(cum.vega)}</div>
+        </div>
+        <div style={{flex:'1 1 90px', padding:'4px 8px', background:'#070b15', borderRadius:'3px',
+                      borderLeft:`3px solid ${colN(cum.residual)}`}}>
+          <div style={{fontSize:'9px', color:'#94a3b8'}}>殘差</div>
+          <div style={{fontSize:'13px', color: colN(cum.residual), fontWeight:700}}>{fmtS(cum.residual)}</div>
+          <div style={{fontSize:'8px', color:'#475569'}}>開倉/gamma 等</div>
+        </div>
+      </div>
+
+      {open && (
+        <div style={{marginTop:'6px', borderTop:'1px solid #1e2535', paddingTop:'4px'}}>
+          <div style={{fontSize:'9px', color:'#64748b', marginBottom:'2px'}}>近 7 天明細</div>
+          <table style={{width:'100%', fontSize:'10px', borderCollapse:'collapse'}}>
+            <thead>
+              <tr style={{color:'#64748b', textAlign:'right'}}>
+                <th style={{textAlign:'left', padding:'2px 4px'}}>日期</th>
+                <th>TX%</th><th>IV pp</th>
+                <th>Δ</th><th>θ</th><th>ν</th><th>殘差</th><th>實際</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pa.recent.slice(-7).reverse().map((r, i) => (
+                <tr key={i} style={{textAlign:'right', color:'#cbd5e1'}}>
+                  <td style={{textAlign:'left', padding:'2px 4px', color:'#94a3b8'}}>{r.date_today}</td>
+                  <td style={{color: colN(r.tx_change_pct)}}>{r.tx_change_pct >= 0 ? '+' : ''}{r.tx_change_pct.toFixed(2)}%</td>
+                  <td style={{color: colN(r.iv_change_pp)}}>{r.iv_change_pp >= 0 ? '+' : ''}{r.iv_change_pp.toFixed(1)}</td>
+                  <td style={{color: colN(r.delta_pl_ntd)}}>{fmtS(r.delta_pl_ntd)}</td>
+                  <td style={{color: colN(r.theta_pl_ntd)}}>{fmtS(r.theta_pl_ntd)}</td>
+                  <td style={{color: colN(r.vega_pl_ntd)}}>{fmtS(r.vega_pl_ntd)}</td>
+                  <td style={{color: colN(r.residual_ntd)}}>{fmtS(r.residual_ntd)}</td>
+                  <td style={{color: colN(r.actual_pl_ntd), fontWeight:700}}>{fmtS(r.actual_pl_ntd)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{fontSize:'9px', color:'#64748b', marginTop:'4px'}}>
+            Δ = 昨日 net delta × 今日 TX 變動  ·  θ = 昨日每日 theta  ·  殘差含開倉/平倉/gamma 二階
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TradeJournalPanel({ data }) {
   const [open, setOpen] = React.useState(false);
   const tj = data?.trade_journal;
@@ -3401,6 +3485,7 @@ function App() {
                  data?.trade_journal?.total_trades ? `${data.trade_journal.total_trades} 日記` : null,
                  data?.event_history ? `${data.event_history.event_count} 歷史事件` : null,
                ].filter(Boolean).join(' · ') || null}>
+        <PnLAttribution data={data} />
         <TradeJournalPanel data={data} />
         <PastEventImpact data={data} />
         <TrendStrip data={data} />
