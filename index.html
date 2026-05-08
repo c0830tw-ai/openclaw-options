@@ -3766,6 +3766,123 @@ function DrawdownPanel({ data }) {
   );
 }
 
+function PerformanceMetrics({ data }) {
+  const pm = data?.performance;
+  if (!pm) return null;
+  const fmt = n => n == null ? '—' : (n >= 0 ? '+' : '') + n.toFixed(2);
+  const fmtPlain = n => n == null ? '—' : n.toFixed(2);
+  const colN = n => n == null ? '#94a3b8' : n > 0 ? '#86efac' : n < 0 ? '#fca5a5' : '#94a3b8';
+  // Rating helpers
+  const sharpeRating = s => s >= 2 ? '優秀' : s >= 1 ? '良好' : s >= 0.5 ? '尚可' : s >= 0 ? '微弱' : '虧損';
+  const wrRating = w => w >= 60 ? '佳' : w >= 50 ? '中' : '低';
+
+  return (
+    <div style={{
+      background:'#0a0e1c', border:'1px solid #1e2535',
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div style={{display:'flex', justifyContent:'space-between', marginBottom:'6px'}}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>📊 績效指標</span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>
+          {pm.first_date} → {pm.last_date} · {pm.period_days} 天 ({pm.period_years} 年)
+        </span>
+      </div>
+
+      {/* 主要 4 卡：報酬 / Sharpe / Sortino / Calmar */}
+      <div className="metric-grid-6" style={{marginBottom:'6px'}}>
+        <div style={{padding:'6px 10px', background:'#070b15', borderRadius:'4px',
+                      borderLeft:`3px solid ${colN(pm.total_return_pct)}`}}>
+          <div style={{fontSize:'9px', color:'#94a3b8'}}>總報酬</div>
+          <div className="primary-num" style={{color: colN(pm.total_return_pct)}}>
+            {fmt(pm.total_return_pct)}%
+          </div>
+          <div style={{fontSize:'9px', color:'#64748b'}}>年化 {fmt(pm.annual_return_pct)}%</div>
+        </div>
+        <div style={{padding:'6px 10px', background:'#070b15', borderRadius:'4px',
+                      borderLeft:`3px solid ${colN(pm.sharpe)}`}}>
+          <div style={{fontSize:'9px', color:'#94a3b8'}}>Sharpe</div>
+          <div className="primary-num" style={{color: colN(pm.sharpe)}}>
+            {fmtPlain(pm.sharpe)}
+          </div>
+          <div style={{fontSize:'9px', color:'#64748b'}}>{sharpeRating(pm.sharpe)}</div>
+        </div>
+        <div style={{padding:'6px 10px', background:'#070b15', borderRadius:'4px',
+                      borderLeft:`3px solid ${colN(pm.sortino)}`}}>
+          <div style={{fontSize:'9px', color:'#94a3b8'}}>Sortino</div>
+          <div className="primary-num" style={{color: colN(pm.sortino)}}>
+            {fmtPlain(pm.sortino)}
+          </div>
+          <div style={{fontSize:'9px', color:'#64748b'}}>下檔 vol 調整</div>
+        </div>
+        <div style={{padding:'6px 10px', background:'#070b15', borderRadius:'4px',
+                      borderLeft:`3px solid ${colN(pm.calmar)}`}}>
+          <div style={{fontSize:'9px', color:'#94a3b8'}}>Calmar</div>
+          <div className="primary-num" style={{color: colN(pm.calmar)}}>
+            {fmtPlain(pm.calmar)}
+          </div>
+          <div style={{fontSize:'9px', color:'#64748b'}}>年化 / |MaxDD|</div>
+        </div>
+        <div style={{padding:'6px 10px', background:'#070b15', borderRadius:'4px',
+                      borderLeft:'3px solid #94a3b8'}}>
+          <div style={{fontSize:'9px', color:'#94a3b8'}}>波動率</div>
+          <div className="primary-num" style={{color:'#cbd5e1'}}>
+            {fmtPlain(pm.annual_vol_pct)}%
+          </div>
+          <div style={{fontSize:'9px', color:'#64748b'}}>年化</div>
+        </div>
+        <div style={{padding:'6px 10px', background:'#070b15', borderRadius:'4px',
+                      borderLeft:`3px solid ${colN(pm.max_drawdown_pct)}`}}>
+          <div style={{fontSize:'9px', color:'#94a3b8'}}>Max DD</div>
+          <div className="primary-num" style={{color: colN(pm.max_drawdown_pct)}}>
+            {fmtPlain(pm.max_drawdown_pct)}%
+          </div>
+          <div style={{fontSize:'9px', color:'#64748b'}}>歷史最大回檔</div>
+        </div>
+      </div>
+
+      {/* 勝率 + benchmark */}
+      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px',
+                    padding:'4px 6px', borderTop:'1px solid #1e2535'}}>
+        <div>
+          <div style={{fontSize:'10px', color:'#94a3b8', marginBottom:'2px'}}>勝率</div>
+          <div style={{fontSize:'11px'}}>
+            日: <b style={{color: pm.win_rate_pct >= 50 ? '#86efac' : '#fca5a5'}}>{pm.win_rate_pct}%</b>
+            <span style={{color:'#64748b', margin:'0 4px'}}>({wrRating(pm.win_rate_pct)})</span>
+          </div>
+          <div style={{fontSize:'11px'}}>
+            月: <b style={{color: pm.monthly_win_rate_pct >= 50 ? '#86efac' : '#fca5a5'}}>
+              {pm.monthly_win_rate_pct}%
+            </b>
+            <span style={{color:'#64748b', margin:'0 4px'}}>({pm.monthly_count} 月)</span>
+          </div>
+          <div style={{fontSize:'10px', color:'#64748b', marginTop:'2px'}}>
+            avg win {fmt(pm.avg_win_pct)}% · avg loss {fmt(pm.avg_loss_pct)}%
+            {pm.profit_factor != null && <> · PF {pm.profit_factor}</>}
+          </div>
+        </div>
+        {pm.bench_total_pct != null && (
+          <div>
+            <div style={{fontSize:'10px', color:'#94a3b8', marginBottom:'2px'}}>vs TX Buy-Hold</div>
+            <div style={{fontSize:'11px'}}>
+              我: <b style={{color: colN(pm.total_return_pct)}}>{fmt(pm.total_return_pct)}%</b>
+            </div>
+            <div style={{fontSize:'11px'}}>
+              TX: <b style={{color: colN(pm.bench_total_pct)}}>{fmt(pm.bench_total_pct)}%</b>
+            </div>
+            <div style={{fontSize:'11px', marginTop:'2px'}}>
+              α: <b style={{color: colN(pm.alpha_pct)}}>{fmt(pm.alpha_pct)}%</b>
+              <span style={{fontSize:'9px', color:'#64748b', marginLeft:'4px'}}>
+                {pm.alpha_pct > 0 ? '勝過裸長' : pm.alpha_pct < 0 ? '落後裸長' : '持平'}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function PnLAttribution({ data }) {
   const [open, setOpen] = React.useState(false);
   const pa = data?.pnl_attribution;
@@ -5040,6 +5157,7 @@ function App() {
                  data?.trade_journal?.total_trades ? `${data.trade_journal.total_trades} 日記` : null,
                  data?.event_history ? `${data.event_history.event_count} 歷史事件` : null,
                ].filter(Boolean).join(' · ') || null}>
+        <PerformanceMetrics data={data} />
         <EquityChart data={data} />
         <GreeksHistoryChart data={data} />
         <PnLAttribution data={data} />

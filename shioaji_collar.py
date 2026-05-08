@@ -2445,6 +2445,7 @@ def main():
             'drawdown':         None,           # 從 peak 追當前 drawdown
             'risk_limits':      None,           # 風險限額使用率
             'regime_advisor':   None,           # 當前 regime + 推薦 SOP vs 實際差異
+            'performance':      None,           # Sharpe/Sortino/Calmar/勝率 等績效指標
             'order_helper':     None,           # 從推薦結構產生下單階梯 + add_trade 命令
             'upcoming_events': [],              # 未來 14 天高影響事件
             'market': market,
@@ -2660,6 +2661,17 @@ def main():
                     log.info(f"Risk limits: {rl['n_over']} 超限 / {rl['n_hot']} hot ({rl['overall']})")
         except Exception as _e:
             log.debug(f'risk_limits 失敗: {_e}')
+
+        # 14g-perf. 績效指標 (Sharpe / Sortino / Calmar / 勝率)
+        try:
+            import performance_metrics as _PM
+            pm = _PM.compute()
+            if pm:
+                result['performance'] = pm
+                log.info(f"Performance: Sharpe {pm['sharpe']} / Sortino {pm['sortino']} "
+                         f"/ Win {pm['win_rate_pct']}% / α {pm.get('alpha_pct')}")
+        except Exception as _e:
+            log.debug(f'performance_metrics 失敗: {_e}')
 
         # 14g-attr. 每日 P&L 拆解（Δ/θ/ν attribution）
         try:
