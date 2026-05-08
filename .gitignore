@@ -12,6 +12,7 @@ daily_snapshots.json
 *.log
 latest_collar.json
 events_auto.json
+event_history.json
 __pycache__/
 node_modules/
 logs/

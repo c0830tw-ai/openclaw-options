@@ -2434,6 +2434,97 @@ function PortfolioBreakdown({ data }) {
   );
 }
 
+function PastEventImpact({ data }) {
+  const eh = data?.event_history;
+  if (!eh || !eh.aggregates) return null;
+  const types = Object.entries(eh.aggregates);
+  if (types.length === 0) return null;
+
+  const TYPE_LABEL = {
+    fomc:     'FOMC',
+    cpi_us:   '美國 CPI',
+    cpi_tw:   '台灣 CPI',
+    earnings: '法說',
+    nfp:      '非農',
+    other:    '其他',
+  };
+
+  const colSign = v =>
+    v == null ? '#94a3b8' : v > 0 ? '#86efac' : '#fca5a5';
+  const fmtPct = v => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+
+  return (
+    <div style={{
+      background:'#0a0e1c', border:'1px solid #1e2535',
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:'6px'}}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>📜 歷史事件 TX 影響</span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>
+          {eh.first_date} → {eh.last_date} · {eh.event_count} 筆
+        </span>
+      </div>
+
+      {/* 類型彙整表 */}
+      <div style={{display:'flex', flexWrap:'wrap', gap:'6px'}}>
+        {types.map(([t, agg]) => (
+          <div key={t} style={{
+            flex:'1 1 200px', padding:'6px 10px',
+            background:'#070b15', borderRadius:'4px',
+            borderLeft: `3px solid ${colSign(agg.avg_T_pct)}`,
+          }}>
+            <div style={{display:'flex', justifyContent:'space-between', marginBottom:'2px'}}>
+              <span style={{fontSize:'11px', fontWeight:700, color:'#cbd5e1'}}>{TYPE_LABEL[t] || t}</span>
+              <span style={{fontSize:'9px', color:'#64748b'}}>n={agg.n}</span>
+            </div>
+            <div style={{fontSize:'13px', color: colSign(agg.avg_T_pct), fontWeight:700}}>
+              T 日 {fmtPct(agg.avg_T_pct)}
+              <span style={{fontSize:'9px', color:'#64748b', marginLeft:'4px'}}>中位 {fmtPct(agg.median_T_pct)}</span>
+            </div>
+            <div style={{fontSize:'9px', color:'#94a3b8', marginTop:'2px'}}>
+              <span style={{color: agg.bull_day_rate_pct >= 60 ? '#86efac' : agg.bull_day_rate_pct <= 40 ? '#fca5a5' : '#94a3b8'}}>
+                漲日率 {agg.bull_day_rate_pct}%
+              </span>
+              <span style={{margin:'0 4px', color:'#1e2535'}}>·</span>
+              <span style={{color: agg.big_jump_rate_pct > 30 ? '#fbbf24' : '#94a3b8'}}>
+                跳空率 {agg.big_jump_rate_pct}%
+              </span>
+              <span style={{margin:'0 4px', color:'#1e2535'}}>·</span>
+              <span style={{color:'#64748b'}}>
+                極值 {fmtPct(agg.min_T_pct)} ~ {fmtPct(agg.max_T_pct)}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* 近 5 個事件 */}
+      {eh.events?.length > 0 && (
+        <div style={{marginTop:'6px', borderTop:'1px solid #1e2535', paddingTop:'4px'}}>
+          <div style={{fontSize:'9px', color:'#64748b', marginBottom:'2px'}}>近 5 個事件</div>
+          {eh.events.slice(0, 5).map((e, i) => (
+            <div key={i} style={{display:'flex', alignItems:'baseline', gap:'8px', fontSize:'10px', padding:'1px 0'}}>
+              <span style={{minWidth:'74px', color:'#94a3b8'}}>{e.date}</span>
+              <span style={{flex:1, color:'#cbd5e1'}}>{e.name}</span>
+              <span style={{minWidth:'52px', textAlign:'right', color: colSign(e.tx_change_T_pct), fontWeight:700}}>
+                T {fmtPct(e.tx_change_T_pct)}
+              </span>
+              <span style={{minWidth:'52px', textAlign:'right', color: colSign(e.tx_change_T1_pct)}}>
+                T+1 {fmtPct(e.tx_change_T1_pct)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{fontSize:'9px', color:'#64748b', marginTop:'4px', textAlign:'right'}}>
+        更新自 event_analysis.py · {eh.generated_at?.slice(0, 16)}
+      </div>
+    </div>
+  );
+}
+
 function IndicatorGrid({ data }) {
   if (!data) return null;
   const tx     = data.market?.tx_futures;
@@ -2905,7 +2996,9 @@ function App() {
       </Section>
 
       {/* 📈 績效追蹤 — 月底看 */}
-      <Section title="📈 績效追蹤" defaultOpen={false}>
+      <Section title="📈 績效追蹤" defaultOpen={false}
+               badge={data?.event_history ? `${data.event_history.event_count} 歷史事件` : null}>
+        <PastEventImpact data={data} />
         <TrendStrip data={data} />
         <TradingLedger data={data} />
       </Section>

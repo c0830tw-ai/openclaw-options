@@ -2438,6 +2438,7 @@ def main():
             'greeks_history':   None,           # 過去 30 天 Greeks 趨勢 + 累積 theta
             'health_check':     None,           # 持倉健診評分（對齊 SOP）
             'collar_dashboard': None,           # collar 整合 dashboard（per-leg + 結構推薦）
+            'event_history':    None,           # 歷史事件 P&L 解析（events analysis CLI 寫入）
             'upcoming_events': [],              # 未來 14 天高影響事件
             'market': market,
             'txo_month': month,
@@ -2593,6 +2594,18 @@ def main():
                 log.info(f"Collar 推薦結構: {rs.get('label', '?')}  ({rs.get('reason', '')})")
         except Exception as _e:
             log.debug(f'collar_dashboard 失敗: {_e}')
+
+        # 14h-pre. 歷史事件 P&L 解析（從 event_history.json 載入；event_analysis.py CLI 產生）
+        try:
+            from pathlib import Path as _PP
+            _eh_path = _PP(__file__).parent / 'event_history.json'
+            if _eh_path.exists():
+                result['event_history'] = json.loads(_eh_path.read_text(encoding='utf-8'))
+                _eh = result['event_history']
+                log.info(f"歷史事件解析載入：{_eh.get('event_count', 0)} 筆事件 "
+                         f"({len(_eh.get('aggregates', {}))} 類)")
+        except Exception as _e:
+            log.debug(f'event_history 載入失敗: {_e}')
 
         # 14h. 高影響事件（events.json）— 未來 14 天清單
         try:

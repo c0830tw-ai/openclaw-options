@@ -228,7 +228,8 @@ def sync(out_path: Path = OUT_PATH, years: Tuple[int, ...] = None) -> int:
     """執行所有來源，寫入 events_auto.json。回傳事件總筆數。"""
     if years is None:
         cur = datetime.now().year
-        years = (cur, cur + 1)
+        # 包含過去 1 年（給 event_analysis 用）+ 當年 + 明年
+        years = (cur - 1, cur, cur + 1)
     events: List[Dict[str, Any]] = []
 
     # 保留先前抓到的 TSMC 法說（API 只回當日，需要持久化）
