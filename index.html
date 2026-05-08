@@ -1673,6 +1673,81 @@ function UpcomingEvents({ data }) {
   );
 }
 
+function HealthCheck({ data }) {
+  const [open, setOpen] = React.useState(false);
+  const hc = data?.health_check;
+  if (!hc) return null;
+  const score = hc.overall_score || 0;
+  const gradeColor = score >= 80 ? '#4ade80' : score >= 60 ? '#fbbf24' : '#f87171';
+  const ringColor  = score >= 80 ? '#86efac' : score >= 60 ? '#fde68a' : '#fca5a5';
+
+  return (
+    <div style={{
+      background: '#0a0e1c', border: `1px solid ${ringColor}`,
+      borderRadius: '6px', padding: '6px 12px', margin: '8px 0',
+      fontSize: '11px', color: '#cbd5e1',
+    }}>
+      <div onClick={() => setOpen(!open)} style={{
+        display:'flex', justifyContent:'space-between', alignItems:'center',
+        cursor:'pointer', userSelect:'none',
+      }}>
+        <span style={{fontWeight:700, color: gradeColor}}>
+          🏥 持倉健診
+          <span style={{fontSize:'18px'}}>{score}</span>
+          <span style={{fontSize:'11px', color:'#94a3b8'}}>/100</span>
+          <span style={{fontSize:'12px', color: gradeColor, marginLeft:'6px'}}>[{hc.grade}]</span>
+        </span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>
+          {hc.violations?.length || 0} 違規　{open ? '▲ 收起' : '▼ 展開細節'}
+        </span>
+      </div>
+
+      {/* Quick bar：總是顯示 4 個規則的 mini-score */}
+      <div style={{display:'flex', gap:'4px', marginTop:'4px'}}>
+        {hc.breakdown?.map((b, i) => {
+          const c = b.score >= 80 ? '#4ade80' : b.score >= 60 ? '#fbbf24' : '#f87171';
+          return (
+            <div key={i} style={{flex:1, padding:'4px 6px', textAlign:'center',
+                                  background:'#070b15', borderRadius:'3px',
+                                  borderTop: `2px solid ${c}`}}>
+              <div style={{fontSize:'9px', color:'#94a3b8'}}>{b.rule}</div>
+              <div style={{fontSize:'13px', color: c, fontWeight: 700}}>{b.score}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {open && (
+        <div style={{marginTop:'6px', borderTop:'1px solid #1e2535', paddingTop:'6px'}}>
+          {hc.breakdown?.map((b, i) => (
+            <div key={i} style={{display:'flex', alignItems:'baseline', gap:'8px', padding:'2px 0'}}>
+              <span style={{minWidth:'24px', fontSize:'11px', color: b.score >= 80 ? '#4ade80' : b.score >= 60 ? '#fbbf24' : '#f87171', fontWeight:700}}>
+                {b.score}
+              </span>
+              <span style={{minWidth:'90px', fontSize:'10px', color:'#94a3b8'}}>{b.rule}</span>
+              <span style={{flex:1, fontSize:'10px', color:'#cbd5e1'}}>{b.detail}</span>
+            </div>
+          ))}
+          {hc.violations?.length > 0 && (
+            <div style={{marginTop:'4px', padding:'4px 6px', background:'#1c1610', borderRadius:'3px'}}>
+              {hc.violations.map((v, i) => (
+                <div key={i} style={{fontSize:'10px', color:'#fca5a5'}}>⚠️ {v}</div>
+              ))}
+            </div>
+          )}
+          {hc.suggestions?.length > 0 && (
+            <div style={{marginTop:'4px', padding:'4px 6px', background:'#0c1a15', borderRadius:'3px'}}>
+              {hc.suggestions.map((s, i) => (
+                <div key={i} style={{fontSize:'10px', color:'#86efac'}}>💡 {s}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PortfolioGreeks({ data }) {
   const [open, setOpen]    = React.useState(false);
   const [whatIf, setWhatIf] = React.useState(false);
@@ -2608,6 +2683,7 @@ function App() {
 
       <EngineStatus data={data} />
       <UpcomingEvents data={data} />
+      <HealthCheck data={data} />
       <RollSuggestions data={data} />
       <PortfolioGreeks data={data} />
       <IntradayBB data={data} />

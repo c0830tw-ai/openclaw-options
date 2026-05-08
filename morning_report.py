@@ -74,8 +74,17 @@ def _iv_label(iv_frac: float) -> Tuple[str, str]:
 
 def _build_highlights(data: dict) -> List[str]:
     """挑出今日最該注意的 1-3 件事，按優先順序：
-       事件迫近 > 換倉迫切 > IV 極端 > hedge 嚴重失衡 > 其他 alert"""
+       事件迫近 > 換倉迫切 > 健診低分 > IV 極端 > hedge 失衡 > 其他 alert"""
     out: List[str] = []
+
+    # 0. 健診評分過低
+    hc = data.get('health_check') or {}
+    score = hc.get('overall_score')
+    if score is not None and score < 70:
+        # 列前 2 條 violations
+        viols = (hc.get('violations') or [])[:2]
+        for v in viols:
+            out.append(f'🏥 [健診 {score}/100] {v}')
 
     # 1. 高優事件 ≤ 2 天
     for ev in (data.get('upcoming_events') or []):

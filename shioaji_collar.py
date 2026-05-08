@@ -2528,6 +2528,7 @@ def main():
             'intraday_bb': None,                # 5-min K BB 軌寬狀態
             'portfolio_greeks': None,           # broker 選擇權部位 Greeks 聚合
             'greeks_history':   None,           # 過去 30 天 Greeks 趨勢 + 累積 theta
+            'health_check':     None,           # 持倉健診評分（對齊 SOP）
             'upcoming_events': [],              # 未來 14 天高影響事件
             'market': market,
             'txo_month': month,
@@ -2661,6 +2662,17 @@ def main():
                          f"({len(pg['legs'])} legs)")
         except Exception as _e:
             log.debug(f'portfolio greeks 失敗: {_e}')
+
+        # 14f-bis. 持倉健診評分（依賴 portfolio_greeks 已算完）
+        try:
+            import health_check as _HC
+            hc = _HC.evaluate(result)
+            if hc:
+                result['health_check'] = hc
+                log.info(f"健診評分: {hc['overall_score']}/100 ({hc['grade']})  "
+                         f"violations={len(hc['violations'])}  suggestions={len(hc['suggestions'])}")
+        except Exception as _e:
+            log.debug(f'health_check 失敗: {_e}')
 
         # 14h. 高影響事件（events.json）— 未來 14 天清單
         try:
