@@ -1067,15 +1067,42 @@ function OptionCard({ type, data, taiex, taiexHigh, taiexLow, price2330, price00
   );
 }
 
-function StructCard({ s, isRecommended, taiex, compact = false }) {
+function StructCard({ s, isRecommended, taiex, compact = false, txoMonth }) {
   const pct      = Math.min(100, s.protection_pct);
   const putDist  = s.puts > 0 && taiex > 0
     ? (s.put_strike - taiex) / taiex * 100 : null;
   const callDist = s.calls > 0 && taiex > 0
     ? (s.call_strike - taiex) / taiex * 100 : null;
+
+  const monthCode = txoMonth || '202605';
+  const cmds = [];
+  if (s.calls > 0 && s.call_strike) {
+    cmds.push(`python3 add_trade.py add sell_to_open "TXO ${monthCode} ${s.call_strike.toFixed(0)}C" ${s.calls} ${s.call_premium} --book trading`);
+  }
+  if (s.puts > 0 && s.put_strike) {
+    cmds.push(`python3 add_trade.py add buy_to_open "TXO ${monthCode} ${s.put_strike.toFixed(0)}P" ${s.puts} ${s.put_premium} --book hedge`);
+  }
+  const copyText = cmds.join('\n');
+  const handleCopy = (e) => {
+    e.stopPropagation();
+    if (!copyText) return;
+    navigator.clipboard?.writeText(copyText).then(
+      () => alert('已複製到剪貼簿：\n\n' + copyText),
+      () => alert('複製失敗'),
+    );
+  };
+
   return (
-    <div className={`struct-card ${isRecommended ? 'recommended' : ''} ${compact ? 'compact' : ''}`}>
+    <div className={`struct-card ${isRecommended ? 'recommended' : ''} ${compact ? 'compact' : ''}`} style={{position:'relative'}}>
       {isRecommended && <div className="recommended-badge">推薦</div>}
+      {copyText && (
+        <button onClick={handleCopy} style={{
+          position: 'absolute', top: '6px', right: isRecommended ? '60px' : '6px',
+          background: 'transparent', border: '1px solid #334155',
+          borderRadius: '4px', padding: '2px 6px', fontSize: '9px',
+          color: '#94a3b8', cursor: 'pointer',
+        }} title="複製 add_trade.py 命令">📋</button>
+      )}
       <div className="struct-name">{s.name}</div>
       <div className="struct-desc">{s.desc}</div>
       <div className="struct-legs">{s.calls}C / {s.puts}P</div>
@@ -1124,7 +1151,7 @@ const SPREAD_TAGS = {
   bull_call_spread: '看多方向性，限制成本',
 };
 
-function SpreadCard({ s, taiex }) {
+function SpreadCard({ s, taiex, txoMonth }) {
   const isCredit   = s.is_net_credit;
   const netAbs     = Math.abs(s.net_per_point);
   const maxProfit  = (s.max_profit_ntd / 10000).toFixed(1);
@@ -1134,8 +1161,28 @@ function SpreadCard({ s, taiex }) {
   const optLabel   = s.option_type === 'put' ? 'P' : 'C';
   const tag        = SPREAD_TAGS[s.name] || '';
 
+  const monthCode = txoMonth || '202605';
+  const cmds = [
+    `# ${SPREAD_NAMES[s.name] || s.name}（組合單下，這是 2 條獨立紀錄）`,
+    `python3 add_trade.py add sell_to_open "TXO ${monthCode} ${s.sell_strike?.toFixed(0)}${optLabel}" ${s.n_contracts} ${s.sell_premium} --book trading`,
+    `python3 add_trade.py add buy_to_open  "TXO ${monthCode} ${s.buy_strike?.toFixed(0)}${optLabel}"  ${s.n_contracts} ${s.buy_premium} --book trading`,
+  ].join('\n');
+  const handleCopy = (e) => {
+    e.stopPropagation();
+    navigator.clipboard?.writeText(cmds).then(
+      () => alert('已複製到剪貼簿：\n\n' + cmds),
+      () => alert('複製失敗'),
+    );
+  };
+
   return (
-    <div className={`spread-strat-card ${isCredit ? 'credit-card' : 'debit-card'}`}>
+    <div className={`spread-strat-card ${isCredit ? 'credit-card' : 'debit-card'}`} style={{position:'relative'}}>
+      <button onClick={handleCopy} style={{
+        position: 'absolute', top: '6px', right: '6px',
+        background: 'transparent', border: '1px solid #334155',
+        borderRadius: '4px', padding: '2px 6px', fontSize: '9px',
+        color: '#94a3b8', cursor: 'pointer',
+      }} title="複製 add_trade.py 命令">📋</button>
       <div className="ssc-name">{SPREAD_NAMES[s.name] || s.name}</div>
       <div className="ssc-desc">{tag}</div>
       <div className="ssc-legs">
@@ -1151,6 +1198,11 @@ function SpreadCard({ s, taiex }) {
         <span className="ssc-pnl-item loss">最大損失 <b>{maxLoss} 萬</b></span>
       </div>
       <div className="ssc-be">損平 <b>{fmt(s.breakeven)}</b>{bePctStr ? ` (${bePctStr})` : ''}</div>
+      {isCredit && s.max_profit_ntd > 0 && (
+        <div style={{fontSize:'9px', color:'#94a3b8', marginTop:'2px'}}>
+          50% 平倉退場：賺 NT$ {fmt(s.max_profit_ntd / 2)}（常見規則）
+        </div>
+      )}
       <div className={isCredit ? 'credit-tag' : 'debit-tag'}>
         {isCredit ? '✓ Credit（收）' : '✗ Debit（付）'}
       </div>
@@ -1158,13 +1210,13 @@ function SpreadCard({ s, taiex }) {
   );
 }
 
-function SpreadsSection({ spreads, taiex }) {
+function SpreadsSection({ spreads, taiex, txoMonth }) {
   if (!spreads?.length) return null;
   return (
     <>
       <div className="spread-section-title">垂直價差策略</div>
       <div className="spread-cards">
-        {spreads.map(s => <SpreadCard key={s.name} s={s} taiex={taiex} />)}
+        {spreads.map(s => <SpreadCard key={s.name} s={s} taiex={taiex} txoMonth={txoMonth} />)}
       </div>
     </>
   );
@@ -1544,6 +1596,102 @@ function BrokerPositions({ data }) {
   );
 }
 
+function WeeklyOpportunities({ data }) {
+  const wo = data?.weekly_opportunities;
+  if (!wo) return null;
+  const fmt = n => n == null ? '—' : n.toLocaleString(undefined, {maximumFractionDigits: 0});
+  const fmt8 = d => d ? `${d.slice(4,6)}/${d.slice(6,8)}` : d;
+  const settle = fmt8(wo.settlement_date);
+  const ivStr = `${(wo.iv * 100).toFixed(1)}%`;
+
+  // Add command for clipboard
+  const copyCmd = (cmd) => {
+    navigator.clipboard?.writeText(cmd).then(
+      () => alert('已複製到剪貼簿：\n' + cmd),
+      () => alert('複製失敗（瀏覽器不支援 clipboard）'),
+    );
+  };
+
+  const Card = ({ title, color, children, copyText, viable }) => (
+    <div style={{
+      flex: '1 1 280px',
+      background: viable === false ? '#1a1a1a' : '#0a0e1c',
+      border: `1px solid ${viable === false ? '#475569' : color}`,
+      opacity: viable === false ? 0.5 : 1,
+      borderRadius: '6px', padding: '8px 12px',
+      fontSize: '11px', color: '#cbd5e1',
+      position: 'relative',
+    }}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'4px'}}>
+        <span style={{fontWeight:700, color}}>{title}</span>
+        {viable === false ? (
+          <span style={{fontSize:'9px', color:'#94a3b8'}}>市場不利</span>
+        ) : copyText ? (
+          <button onClick={() => copyCmd(copyText)} style={{
+            background:'transparent', border:'1px solid #334155', borderRadius:'4px',
+            color:'#94a3b8', fontSize:'9px', padding:'2px 6px', cursor:'pointer',
+          }} title="複製 add_trade.py 命令">📋 複製</button>
+        ) : null}
+      </div>
+      {children}
+    </div>
+  );
+
+  // Sell call card
+  const sc = wo.sell_call;
+  const scCmd = `python3 add_trade.py add sell_to_open "TXO 202605 ${sc.strike?.toFixed(0)}C" 1 ${sc.premium} --book trading`;
+
+  // Bull put spread card
+  const bp = wo.bull_put_spread;
+  const bpCmd = `# Bull Put Spread (組合單下，這是 2 條獨立紀錄)
+python3 add_trade.py add sell_to_open "TXO 202605 ${bp.sell_strike?.toFixed(0)}P" 1 ${bp.sell_premium} --book trading
+python3 add_trade.py add buy_to_open  "TXO 202605 ${bp.buy_strike?.toFixed(0)}P"  1 ${bp.buy_premium} --book trading`;
+
+  // Bear call spread card
+  const bc = wo.bear_call_spread;
+  const bcCmd = `# Bear Call Spread
+python3 add_trade.py add sell_to_open "TXO 202605 ${bc.sell_strike?.toFixed(0)}C" 1 ${bc.sell_premium} --book trading
+python3 add_trade.py add buy_to_open  "TXO 202605 ${bc.buy_strike?.toFixed(0)}C"  1 ${bc.buy_premium} --book trading`;
+
+  return (
+    <div style={{
+      background: '#0d1424', border: '1px solid #334155',
+      borderRadius: '8px', padding: '10px 14px', margin: '8px 0',
+    }}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:'8px'}}>
+        <span style={{fontWeight:700, color:'#fbbf24', fontSize:'13px'}}>🗓 本週機會</span>
+        <span style={{fontSize:'10px', color:'#94a3b8'}}>
+          {wo.series} · 結算 {settle} · 剩 {wo.dte_trading} 個交易日 · 波動率 {ivStr}
+        </span>
+      </div>
+
+      <div style={{display:'flex', gap:'8px', flexWrap:'wrap'}}>
+        <Card title="📞 賣 Call（收 premium）" color="#86efac" copyText={scCmd} viable={sc.viable}>
+          <div>履約 <b style={{color:'#86efac'}}>{fmt(sc.strike)}</b> @ {sc.premium} 點</div>
+          <div style={{marginTop:'2px'}}>每口收 <b>NT$ {fmt(sc.income_ntd)}</b>　距現價 +{sc.distance_pct}%</div>
+          <div style={{fontSize:'9px', color:'#64748b', marginTop:'2px'}}>適用：你看不漲、想吃 theta</div>
+        </Card>
+
+        <Card title="📈 Bull Put Spread（看不跌）" color="#60a5fa" copyText={bpCmd} viable={bp.viable}>
+          <div>賣 <b style={{color:'#fca5a5'}}>{fmt(bp.sell_strike)}</b> 收 {bp.sell_premium} ／ 買 <b style={{color:'#86efac'}}>{fmt(bp.buy_strike)}</b> 付 {bp.buy_premium}</div>
+          <div style={{marginTop:'2px'}}>淨收 <b>{bp.net_credit}</b> 點，最大賺 <b style={{color:'#4ade80'}}>NT$ {fmt(bp.max_profit)}</b> / 最大賠 <b style={{color:'#f87171'}}>NT$ {fmt(bp.max_loss)}</b></div>
+          <div style={{marginTop:'2px'}}>損益平衡 <b>{fmt(bp.breakeven)}</b>　距現價 -{bp.distance_pct}%</div>
+        </Card>
+
+        <Card title="📉 Bear Call Spread（看不漲）" color="#fb923c" copyText={bcCmd} viable={bc.viable}>
+          <div>賣 <b style={{color:'#fca5a5'}}>{fmt(bc.sell_strike)}</b> 收 {bc.sell_premium} ／ 買 <b style={{color:'#86efac'}}>{fmt(bc.buy_strike)}</b> 付 {bc.buy_premium}</div>
+          <div style={{marginTop:'2px'}}>淨收 <b>{bc.net_credit}</b> 點，最大賺 <b style={{color:'#4ade80'}}>NT$ {fmt(bc.max_profit)}</b> / 最大賠 <b style={{color:'#f87171'}}>NT$ {fmt(bc.max_loss)}</b></div>
+          <div style={{marginTop:'2px'}}>損益平衡 <b>{fmt(bc.breakeven)}</b>　距現價 +{bc.distance_pct}%</div>
+        </Card>
+      </div>
+
+      <div style={{fontSize:'9px', color:'#475569', marginTop:'6px'}}>
+        ※ 價差外腳價格用 Black-Scholes 估算，實際下單請以券商即時報價為準。「市場不利」表示信用價差太薄不值得做。
+      </div>
+    </div>
+  );
+}
+
 function RollSuggestions({ data }) {
   const sugs = data?.roll_suggestions;
   if (!sugs || !sugs.length) return null;
@@ -1856,10 +2004,10 @@ function SectionNear({ data, taiex, taiexHigh, taiexLow, price2330, price0050, h
       <WheelPanel selectedOptions={data.selected_options} taiex={taiex} price2330={price2330} price0050={price0050} hvVal={hvVal} />
       <div className="structures">
         {data.structures?.map((s, i) => (
-          <StructCard key={s.name} s={s} isRecommended={i === 0} taiex={taiex} />
+          <StructCard key={s.name} s={s} isRecommended={i === 0} taiex={taiex} txoMonth={data.txo_month} />
         ))}
       </div>
-      <SpreadsSection spreads={data.spreads} taiex={taiex} />
+      <SpreadsSection spreads={data.spreads} taiex={taiex} txoMonth={data.txo_month} />
     </>
   );
 }
@@ -2097,6 +2245,7 @@ function App() {
 
       <EngineStatus data={data} />
       <RollSuggestions data={data} />
+      <WeeklyOpportunities data={data} />
       <BrokerPositions data={data} />
       <PortfolioBreakdown data={data} />
       <TrendStrip data={data} />

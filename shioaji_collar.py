@@ -724,6 +724,94 @@ def _broker_pos_to_item(p: dict, beta_0050: float, beta_2330: float) -> Optional
     }
 
 
+def compute_weekly_opportunities(
+    weekly_data: Optional[Dict[str, Any]],
+    bs_s: float, spread_width: float = 500.0,
+) -> Optional[Dict[str, Any]]:
+    """從 weekly section 推算本週可做的 3 種機會：
+      - 賣 Call（covered call 收 premium）
+      - Bull Put Spread（看不跌的信用價差）
+      - Bear Call Spread（看不漲的信用價差）
+
+    Spread 外腳用 BS 估算（不額外打 API），週選 ATM IV 已經在 weekly_data['iv_used']。
+    """
+    if not weekly_data or not bs_s:
+        return None
+
+    iv    = weekly_data.get('iv_used') or 0.20
+    dte_t = weekly_data.get('dte_trading') or 0
+    if dte_t <= 0:
+        return None
+    T = dte_t / 252
+
+    so   = weekly_data.get('selected_options') or {}
+    put  = so.get('put')  or {}
+    call = so.get('call') or {}
+    if not put.get('strike') or not call.get('strike'):
+        return None
+
+    put_strike   = put['strike']
+    call_strike  = call['strike']
+    put_bid      = put.get('bid')  or 0
+    call_bid     = call.get('bid') or 0
+
+    # Bull put spread: 賣高履約 put（收）+ 買低履約 put（付）
+    put_buy_strike  = put_strike - spread_width
+    put_buy_prem    = bs_price(bs_s, put_buy_strike,  T, iv, is_put=True,  r=0.0)
+    bull_put_credit = round(put_bid - put_buy_prem, 1)
+    bull_put_max_p  = round(bull_put_credit * 50)
+    bull_put_max_l  = round(max(0, (spread_width - bull_put_credit)) * 50)
+    bull_put_be     = round(put_strike - bull_put_credit)
+
+    # Bear call spread: 賣低履約 call（收）+ 買高履約 call（付）
+    call_buy_strike = call_strike + spread_width
+    call_buy_prem   = bs_price(bs_s, call_buy_strike, T, iv, is_put=False, r=0.0)
+    bear_call_credit = round(call_bid - call_buy_prem, 1)
+    bear_call_max_p  = round(bear_call_credit * 50)
+    bear_call_max_l  = round(max(0, (spread_width - bear_call_credit)) * 50)
+    bear_call_be     = round(call_strike + bear_call_credit)
+
+    return {
+        'series':          weekly_data.get('series'),
+        'settlement_date': weekly_data.get('settlement_date'),
+        'dte_trading':     dte_t,
+        'iv':              round(iv, 4),
+        'spread_width':    spread_width,
+
+        'sell_call': {
+            'strike':       call_strike,
+            'premium':      call_bid,
+            'income_ntd':   round(call_bid * 50),
+            'distance_pct': round((call_strike - bs_s) / bs_s * 100, 2),
+            'viable':       call_bid > 5,   # 至少要收 5 點才值得做
+        },
+        'bull_put_spread': {
+            'sell_strike':   put_strike,
+            'sell_premium':  put_bid,
+            'buy_strike':    put_buy_strike,
+            'buy_premium':   round(put_buy_prem, 1),
+            'net_credit':    bull_put_credit,
+            'max_profit':    bull_put_max_p,
+            'max_loss':      bull_put_max_l,
+            'breakeven':     bull_put_be,
+            'distance_pct':  round((bs_s - put_strike) / bs_s * 100, 2),
+            'viable':        bull_put_credit > 5,
+        },
+        'bear_call_spread': {
+            'sell_strike':   call_strike,
+            'sell_premium':  call_bid,
+            'buy_strike':    call_buy_strike,
+            'buy_premium':   round(call_buy_prem, 1),
+            'net_credit':    bear_call_credit,
+            'max_profit':    bear_call_max_p,
+            'max_loss':      bear_call_max_l,
+            'breakeven':     bear_call_be,
+            'distance_pct':  round((call_strike - bs_s) / bs_s * 100, 2),
+            'viable':        bear_call_credit > 5,
+        },
+    }
+
+
 def compute_portfolio_breakdown(
     instruments: List[Dict[str, Any]],
     price_0050: float, price_2330: float, taiex: float,
@@ -2046,6 +2134,7 @@ def main():
             'trend':     None,                  # filled below
             'roll_suggestions': [],             # filled below
             'broker':    None,                  # filled below if CA active
+            'weekly_opportunities': None,       # filled below
             'market': market,
             'txo_month': month,
             'dte': dte,
@@ -2135,6 +2224,21 @@ def main():
                 log.info(f"Roll [{_sug['priority']}] {_sug['reason']}")
         except Exception as _e:
             log.debug(f'roll_advisor 失敗（可忽略）: {_e}')
+
+        # 14e-bis. 本週機會（從 weekly_fri 算，沒就用 weekly_wed）
+        try:
+            target_weekly = weekly_fri_data or weekly_wed_data
+            if target_weekly:
+                result['weekly_opportunities'] = compute_weekly_opportunities(
+                    target_weekly, bs_s, spread_width=CFG.spread_width
+                )
+                if result['weekly_opportunities']:
+                    wo = result['weekly_opportunities']
+                    log.info(f"本週機會: {wo['series']} 賣call@{wo['sell_call']['strike']:.0f} "
+                             f"收{wo['sell_call']['income_ntd']:,} | bull put {wo['bull_put_spread']['sell_strike']:.0f}/{wo['bull_put_spread']['buy_strike']:.0f} "
+                             f"收{wo['bull_put_spread']['max_profit']:,}")
+        except Exception as _e:
+            log.debug(f'weekly_opportunities 失敗: {_e}')
 
         # 14e. Broker 真實持倉同步（在 login 階段已抓，這裡寫進 result）
         if _broker_positions is not None:
