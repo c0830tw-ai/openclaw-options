@@ -27,10 +27,10 @@ STATE_FILE  = ROOT / 'alerts_state.json'
 DEFAULT_RULES = {
     'tx_drop_pct':              -1.5,   # 當日跌幅閾值
     'tx_rise_pct':               2.0,
-    'short_call_distance_sigma': 1.0,   # 短 call 距現價 σ 數
-    'weekly_put_roll_dte':       1,     # weekly put 剩 DTE
-    'iv_spike':                  0.35,  # ATM IV 上限
-    'iv_crush':                  0.20,  # ATM IV 下限
+    'short_call_distance_sigma': 1.0,   # 賣出的 call 距現價幾個標準差以下觸發
+    'weekly_put_roll_dte':       1,     # 週選 put 剩幾個交易日觸發
+    'iv_spike':                  0.35,  # 市場波動率上限
+    'iv_crush':                  0.20,  # 市場波動率下限
 
     # 6 口 portfolio 量身規則
     'tx_anchor_price':           0,     # TX 基準價（0 = 不啟用此規則）

@@ -94,15 +94,15 @@ def compute_roll_suggestions(result: Dict[str, Any]) -> List[Dict[str, Any]]:
             suggestions.append({
                 'priority':  'high' if (w_dte or 0) == 0 else 'medium',
                 'trigger':   f'{label}_expiring',
-                'reason':    f'{label} {settle} 剩交易日 {w_dte} 天，需處理 hedge',
+                'reason':    f'{label} {settle} 剩 {w_dte} 個交易日，保護快過期需要換倉',
                 'action':    'roll_to_monthly',
                 'instructions': [
-                    f'若有 {label} put：殘值 ~{w_put.get("mid", 0)} 點，可放任歸零或市價平倉',
-                    f'買 {rec_hedge} 口 近月月選 Put K={near_put["strike"]:.0f}',
-                    f'階梯限價（買進，每段等 {ladder["wait_minutes"]} 分）：',
-                    f'  1️⃣ 限價 {ladder["try_1"]} 點（bid+2，等對手送上門）',
-                    f'  2️⃣ 限價 {ladder["try_2"]} 點（mid，公平價）',
-                    f'  3️⃣ 限價 {ladder["try_3"]} 點（吃 ask，立即成交）',
+                    f'你的 {label} put 殘值 ~{w_put.get("mid", 0)} 點，可放任歸零或市價平掉',
+                    f'買 {rec_hedge} 口 近月月選 Put 履約 {near_put["strike"]:.0f}',
+                    f'限價試三段（每段等 {ladder["wait_minutes"]} 分）：',
+                    f'  1️⃣ 限價 {ladder["try_1"]} 點（買方稍微讓利，等賣方送上門）',
+                    f'  2️⃣ 限價 {ladder["try_2"]} 點（公平價）',
+                    f'  3️⃣ 限價 {ladder["try_3"]} 點（直接吃對方掛價，立即成交）',
                 ],
                 'limit_ladder': ladder,
                 'estimates': {
@@ -130,17 +130,17 @@ def compute_roll_suggestions(result: Dict[str, Any]) -> List[Dict[str, Any]]:
                 suggestions.append({
                     'priority':  'high' if distance < 0.5 else 'medium',
                     'trigger':   'short_call_too_close',
-                    'reason':    f'近月 short call K={near_call["strike"]:.0f} '
-                                 f'距現價剩 {distance:.2f}σ（< 1σ）',
+                    'reason':    f'你賣出的 Call 履約 {near_call["strike"]:.0f}，'
+                                 f'距現價剩 {distance:.2f} 個標準差（風險升高）',
                     'action':    'roll_up_call',
                     'instructions': [
-                        f'步驟 1：買回現有 short call K={near_call["strike"]:.0f}',
-                        f'  階梯限價（買進，每段等 {buyback_ladder["wait_minutes"]} 分）：',
+                        f'步驟 1：買回現有的 Call（履約 {near_call["strike"]:.0f}）',
+                        f'  限價試三段（每段等 {buyback_ladder["wait_minutes"]} 分）：',
                         f'    1️⃣ 限價 {buyback_ladder["try_1"]} 點',
                         f'    2️⃣ 限價 {buyback_ladder["try_2"]} 點',
-                        f'    3️⃣ 限價 {buyback_ladder["try_3"]} 點（吃 ask）',
-                        '步驟 2：賣新 call delta ≈ 0.05（更遠 OTM）',
-                        '  下次 refresh 系統會自動選新履約，到時候再用賣方階梯',
+                        f'    3️⃣ 限價 {buyback_ladder["try_3"]} 點（直接吃對方掛價）',
+                        '步驟 2：賣新一張 Call，履約價更高（更遠價外，敏感度約 0.05）',
+                        '  下次 refresh 系統會自動推薦新履約價',
                     ],
                     'limit_ladder': buyback_ladder,
                     'estimates': {
@@ -161,12 +161,12 @@ def compute_roll_suggestions(result: Dict[str, Any]) -> List[Dict[str, Any]]:
                 suggestions.append({
                     'priority':  'high' if distance < 0.5 else 'medium',
                     'trigger':   'long_put_close_to_money',
-                    'reason':    f'近月 long put K={near_put["strike"]:.0f} '
-                                 f'距現價剩 {distance:.2f}σ（市場下跌中）',
+                    'reason':    f'你的 put 履約 {near_put["strike"]:.0f}，'
+                                 f'距現價剩 {distance:.2f} 個標準差（市場下跌中）',
                     'action':    'reinforce_or_roll_down',
                     'instructions': [
-                        '選項 A：加買更高履約的 put（緊跟現價）',
-                        '選項 B：roll down（賣現有 put + 買更低履約）— 鎖部分獲利',
+                        '選項 A：再加買履約價更高、貼近現價的新 put',
+                        '選項 B：把現有 put 平掉換成履約價更低的新 put——把已賺到的利潤先入袋',
                     ],
                     'estimates': {
                         'distance_sigma': round(distance, 2),
