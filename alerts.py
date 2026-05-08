@@ -99,8 +99,8 @@ def evaluate(data: dict, rules: dict) -> list:
         alerts.append({
             'key':   'tx_drop',
             'level': '🔴',
-            'msg':   f"TX 急跌 {chgpct:.2f}%（閾值 {rules['tx_drop_pct']}%）→ 檢查保護是否足夠",
-            'tip':   '看新聞｜put 距 TX <5% 抱、>8% 加 closer put｜可減 1-2 口停損',
+            'msg':   f"TX 急跌 {chgpct:.2f}%",
+            'tip':   '若 put 距 TX > 8% 已失效，加 closer put 或減 1-2 口停損',
         })
 
     # 2. TX 急漲
@@ -108,8 +108,8 @@ def evaluate(data: dict, rules: dict) -> list:
         alerts.append({
             'key':   'tx_rise',
             'level': '🟡',
-            'msg':   f"TX 急漲 +{chgpct:.2f}%（閾值 +{rules['tx_rise_pct']}%）→ 考慮減碼鎖獲利",
-            'tip':   '看 short call 距現價｜可減 1 口落袋｜不要追長',
+            'msg':   f"TX 急漲 +{chgpct:.2f}%",
+            'tip':   '可減 1 口 0050 期落袋鎖獲利，別追長',
         })
 
     # 3. 短 call 距現價過近
@@ -124,8 +124,8 @@ def evaluate(data: dict, rules: dict) -> list:
             alerts.append({
                 'key':   'call_close',
                 'level': '🟠',
-                'msg':   f"近月 Call {call_strike:.0f} 距現價剩 {distance_sigma:.2f}σ（閾值 < {rules['short_call_distance_sigma']}σ）→ 風險升高",
-                'tip':   '看下方建議單 roll up｜算 buyback 划算｜不要等 ITM',
+                'msg':   f"近月 Call {call_strike:.0f} 距現價剩 {distance_sigma:.2f}σ",
+                'tip':   'Roll up 早做比晚做便宜，距 < 1σ 已是行動點',
             })
 
     # 4. Weekly put 即將失效
@@ -135,8 +135,8 @@ def evaluate(data: dict, rules: dict) -> list:
             alerts.append({
                 'key':   f'roll_{w_key}',
                 'level': '🟡',
-                'msg':   f"{w_label}（{wk.get('settlement_date','')}）剩交易日 {wk['dte_trading']} 天 → 該 roll 保護",
-                'tip':   '看下方建議單｜組合單避免分腿｜記得 add_trade.py 紀錄',
+                'msg':   f"{w_label} {wk.get('settlement_date','')} 剩 {wk['dte_trading']} 交易日",
+                'tip':   '組合單一次 roll，避免分腿；記得 add_trade.py 紀錄',
             })
 
     # 5. IV 飆
@@ -144,8 +144,8 @@ def evaluate(data: dict, rules: dict) -> list:
         alerts.append({
             'key':   'iv_spike',
             'level': '🔴',
-            'msg':   f"ATM IV {iv*100:.1f}%（≥ {rules['iv_spike']*100:.0f}%）→ 賣方受傷、保險變貴",
-            'tip':   '暫緩 roll & 加買 put｜等 IV 回落再動｜別恐慌平倉',
+            'msg':   f"ATM IV {iv*100:.1f}% (≥ {rules['iv_spike']*100:.0f}%)",
+            'tip':   '保險貴，暫緩加買 put，等 IV 回落',
         })
 
     # 6. IV 崩
@@ -153,8 +153,8 @@ def evaluate(data: dict, rules: dict) -> list:
         alerts.append({
             'key':   'iv_crush',
             'level': '🟢',
-            'msg':   f"ATM IV {iv*100:.1f}%（≤ {rules['iv_crush']*100:.0f}%）→ 賣方甜蜜點、保險便宜",
-            'tip':   '加買 put 趁便宜｜可賣 call 收 premium｜不要 overload 賣方',
+            'msg':   f"ATM IV {iv*100:.1f}% (≤ {rules['iv_crush']*100:.0f}%)",
+            'tip':   '保險便宜，可加買 put 或賣 call 收 premium',
         })
 
     # 7. TX drawdown from anchor — 從基準價跌 X% 提醒平倉
@@ -165,9 +165,8 @@ def evaluate(data: dict, rules: dict) -> list:
             alerts.append({
                 'key':   'tx_drawdown',
                 'level': '🔴',
-                'msg':   (f"TX {tx:.0f} 從基準 {anchor:.0f} 跌 {drawdown_pct:.1f}%"
-                          f"（閾值 {rules['tx_drawdown_alert_pct']}%）→ 考慮平倉 1-2 口 0050 期鎖部分損失"),
-                'tip':   '算實際浮虧｜減 1-2 口 0050 期｜深 ITM put 可 roll down 落袋',
+                'msg':   f"TX 從基準 {anchor:.0f} 跌 {drawdown_pct:.1f}% (現 {tx:.0f})",
+                'tip':   '減 1-2 口 0050 期鎖損失，深 ITM put 可 roll down 落袋',
             })
 
     # 8. Unrealized profit lock — 0050 ETF期浮盈超過閾值
@@ -183,9 +182,8 @@ def evaluate(data: dict, rules: dict) -> list:
             alerts.append({
                 'key':   'profit_lock',
                 'level': '🟡',
-                'msg':   (f"0050 ETF期浮盈 {unrealized:,.0f} NT（≥ {threshold:,.0f}）"
-                          f"→ 考慮減 1-2 口或加買 put 鎖獲利"),
-                'tip':   '算「-10% 後剩多少」｜落袋 1-2 口｜roll up put 鎖獲利',
+                'msg':   f"0050 ETF期浮盈 {unrealized:,.0f}",
+                'tip':   '落袋 1-2 口 + roll up put，sequence risk 最大時',
             })
 
     # 9. Positions drift — positions.json vs broker 真實持倉不一致
@@ -216,8 +214,8 @@ def evaluate(data: dict, rules: dict) -> list:
                 alerts.append({
                     'key':   'positions_drift',
                     'level': '🟡',
-                    'msg':   'positions.json 與 broker 真實持倉不一致：' + '；'.join(drifts),
-                    'tip':   '是否最近下單忘記更新 positions.json？對照後修改 lots_0050 / cost_basis_0050',
+                    'msg':   'positions drift: ' + '；'.join(drifts),
+                    'tip':   '下單後忘了更新 positions.json，對一下即可',
                 })
 
     return alerts
@@ -247,51 +245,73 @@ def send_telegram(msg: str) -> bool:
         return False
 
 
+from typing import Optional
+
+
+def _find_matching_roll(alert_key: str, rolls: list) -> Optional[dict]:
+    """根據 alert key 找對應的 roll suggestion（call_close、roll_weekly_*）。"""
+    if alert_key == 'call_close':
+        for rs in rolls:
+            if rs.get('trigger') == 'short_call_too_close':
+                return rs
+    elif alert_key == 'roll_weekly_fri':
+        for rs in rolls:
+            if '週五週選' in rs.get('trigger', ''):
+                return rs
+    elif alert_key == 'roll_weekly_wed':
+        for rs in rolls:
+            if '週三週選' in rs.get('trigger', ''):
+                return rs
+    return None
+
+
+def _format_price_line(rs: dict) -> Optional[str]:
+    """把 roll suggestion 壓成一行：價: 動作 + 限價 a→b→c (~Xk)"""
+    if not rs:
+        return None
+    ladder = rs.get('limit_ladder') or {}
+    est    = rs.get('estimates')    or {}
+    t1, t2, t3 = ladder.get('try_1'), ladder.get('try_2'), ladder.get('try_3')
+    if not (t1 and t2 and t3):
+        return None
+
+    if rs['action'] == 'roll_to_monthly' and est.get('replace_strike'):
+        strike = int(est['replace_strike'])
+        qty    = est.get('replace_qty', 0)
+        cost   = est.get('total_cost', 0)
+        cost_s = f' (~{cost/1000:.0f}k)' if cost else ''
+        return f"📍 買 {qty}口月選 {strike}P  限 {t1}→{t2}→{t3}{cost_s}"
+
+    if rs['action'] == 'roll_up_call' and est.get('current_strike'):
+        strike = int(est['current_strike'])
+        return f"📍 買回 {strike}C  限 {t1}→{t2}→{t3}（再賣更遠 OTM）"
+
+    return None
+
+
 def format_message(alerts: list, data: dict) -> str:
+    """簡潔三行格式：色標·觸發 / 📍點位 / 💡看法"""
     market = data.get('market', {}) or {}
     tx     = market.get('tx_futures', '?')
     sess   = data.get('market_session', '?')
     iv     = data.get('iv_used')
     iv_str = f"{iv*100:.1f}%" if iv else '?'
-    header = f"📊 Collar Alert · TX {tx} · IV {iv_str} · {sess}"
+    header = f"📊 TX {tx} · IV {iv_str} · {sess}"
 
-    def _fmt_alert(a: dict) -> str:
-        line = f"{a['level']} {a['msg']}"
-        tip  = a.get('tip')
-        if tip:
-            line += f"\n   📌 {tip}"
-        return line
-
-    body = '\n\n'.join(_fmt_alert(a) for a in alerts)
-
-    # Append roll suggestions if any 與 alerts 相關（roll/call_close）
-    fired_keys = {a['key'] for a in alerts}
-    relevant_triggers = {
-        'roll_weekly_fri': ('週五週選_expiring',),
-        'roll_weekly_wed': ('週三週選_expiring',),
-        'call_close':      ('short_call_too_close',),
-    }
     rolls = data.get('roll_suggestions') or []
-    extra_lines = []
-    for rs in rolls:
-        for fkey, triggers in relevant_triggers.items():
-            if fkey in fired_keys and any(t in rs.get('trigger', '') for t in triggers):
-                extra_lines.append(f"\n🔧 建議: {rs['reason']}")
-                for ins in rs.get('instructions', []):
-                    # 已縮排的子項目（開頭是空格）保留 indent 不加 bullet
-                    if ins.startswith('  '):
-                        extra_lines.append(f"  {ins}")
-                    else:
-                        extra_lines.append(f"   • {ins}")
-                est = rs.get('estimates') or {}
-                if est.get('total_cost'):
-                    extra_lines.append(f"   ≈ NT$ {est['total_cost']:,.0f}")
-                break
 
-    if extra_lines:
-        body += '\n' + '\n'.join(extra_lines)
+    blocks = []
+    for a in alerts:
+        block = [f"{a['level']} {a['msg']}"]
+        rs = _find_matching_roll(a['key'], rolls)
+        price_line = _format_price_line(rs) if rs else None
+        if price_line:
+            block.append(price_line)
+        if a.get('tip'):
+            block.append(f"💡 {a['tip']}")
+        blocks.append('\n'.join(block))
 
-    return f"{header}\n\n{body}"
+    return f"{header}\n\n" + '\n\n'.join(blocks)
 
 
 def main(dry_run: bool = False):
