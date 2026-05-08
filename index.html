@@ -1726,79 +1726,164 @@ function _bsGreeks(S, K, T, sigma, isPut) {
 
 function PretradeSimulator({ data }) {
   const [open, setOpen] = React.useState(false);
-  const [side, setSide] = React.useState('buy');     // buy / sell
-  const [right, setRight] = React.useState('put');    // put / call
-  const [presetIdx, setPresetIdx] = React.useState(0);
-  const [qty, setQty] = React.useState(1);
-  const [strike, setStrike] = React.useState(0);
-  const [dte, setDte] = React.useState(30);
-  const [iv, setIv] = React.useState(0.20);
-
   const t = data?.portfolio_greeks?.totals;
+
+  // 多腳：每個 leg = {id, side, right, strike, dte, iv, qty}
+  const newId = () => Math.random().toString(36).slice(2, 8);
+  const [legs, setLegs] = React.useState([
+    { id: newId(), side: 'buy', right: 'put', strike: 0, dte: 30, iv: 0.20, qty: 1 },
+  ]);
+
   if (!t) return null;
 
-  // 從 selected_options 提供 quick presets
-  const presets = [];
-  const so = data?.selected_options || {};
-  if (so.put?.strike)  presets.push({ label: `近月 ${so.put.strike}P (Δ${so.put.delta?.toFixed(2)})`,
-                                       right: 'put', strike: so.put.strike,
-                                       iv: data.iv_used || 0.20, dte: data.dte_trading || 30 });
-  if (so.call?.strike) presets.push({ label: `近月 ${so.call.strike}C (Δ${so.call.delta?.toFixed(2)})`,
-                                       right: 'call', strike: so.call.strike,
-                                       iv: data.iv_used || 0.20, dte: data.dte_trading || 30 });
-  const fm = data?.far_month || {};
-  if (fm.selected_options?.put?.strike)
-    presets.push({ label: `遠月 ${fm.selected_options.put.strike}P`,
-                   right: 'put', strike: fm.selected_options.put.strike,
-                   iv: fm.iv_used || 0.20, dte: fm.dte_trading || 60 });
-
-  // Apply preset 切換
-  const applyPreset = (idx) => {
-    const p = presets[idx];
-    if (!p) return;
-    setPresetIdx(idx);
-    setRight(p.right);
-    setStrike(p.strike);
-    setIv(p.iv);
-    setDte(p.dte);
-  };
-  React.useEffect(() => { if (presets.length > 0 && !strike) applyPreset(0); }, [presets.length]);
-
-  const fmt = n => n == null ? '—' : Math.round(n).toLocaleString();
+  const fmt  = n => n == null ? '—' : Math.round(n).toLocaleString();
   const fmtS = n => n == null ? '—' : (n > 0 ? '+' : '') + Math.round(n).toLocaleString();
   const colN = n => n > 0 ? '#4ade80' : n < 0 ? '#f87171' : '#94a3b8';
 
-  // Compute single-leg greeks
   const S = data?.market?.tx_futures || 0;
-  const K = parseFloat(strike) || 0;
-  const T = (parseInt(dte) || 0) / 365;
-  const ivf = parseFloat(iv) || 0;
-  const isPut = right === 'put';
-  const g = _bsGreeks(S, K, T, ivf, isPut);
-  const sign = (side === 'buy' ? 1 : -1) * (parseInt(qty) || 0);
-
-  // Per-contract → portfolio contribution
   const TXO_MULT = 50;
-  const newDeltaTx = (g.delta * sign) * TXO_MULT * S * 0.01;     // NT$ / 1% TX
-  const newTheta   = g.theta_per_day * sign * TXO_MULT;          // NT$ / day
-  const newVega    = g.vega_per_pct  * sign * TXO_MULT;          // NT$ / 1% IV
+  const so = data?.selected_options || {};
+  const fm = data?.far_month || {};
+  const wedSo = data?.weekly_wed?.selected_options || {};
+  const friSo = data?.weekly_fri?.selected_options || {};
+
+  // 結構模板
+  const templates = [
+    {
+      label: 'Bull Put Spread',
+      desc:  '看不跌，賣高履約 put + 買低履約 put',
+      build: () => {
+        if (!so.put?.strike) return null;
+        const sellK = so.put.strike;
+        const buyK  = sellK - 200;
+        return [
+          { id: newId(), side: 'sell', right: 'put', strike: sellK, dte: data.dte_trading || 30, iv: data.iv_used || 0.20, qty: 1 },
+          { id: newId(), side: 'buy',  right: 'put', strike: buyK,  dte: data.dte_trading || 30, iv: data.iv_used || 0.20, qty: 1 },
+        ];
+      },
+    },
+    {
+      label: 'Bear Call Spread',
+      desc:  '看不漲，賣低履約 call + 買高履約 call',
+      build: () => {
+        if (!so.call?.strike) return null;
+        const sellK = so.call.strike;
+        const buyK  = sellK + 200;
+        return [
+          { id: newId(), side: 'sell', right: 'call', strike: sellK, dte: data.dte_trading || 30, iv: data.iv_used || 0.20, qty: 1 },
+          { id: newId(), side: 'buy',  right: 'call', strike: buyK,  dte: data.dte_trading || 30, iv: data.iv_used || 0.20, qty: 1 },
+        ];
+      },
+    },
+    {
+      label: 'Full Collar',
+      desc:  '買 put + 賣 call 對沖',
+      build: () => {
+        if (!so.put?.strike || !so.call?.strike) return null;
+        return [
+          { id: newId(), side: 'buy',  right: 'put',  strike: so.put.strike,  dte: data.dte_trading || 30, iv: data.iv_used || 0.20, qty: 1 },
+          { id: newId(), side: 'sell', right: 'call', strike: so.call.strike, dte: data.dte_trading || 30, iv: data.iv_used || 0.20, qty: 1 },
+        ];
+      },
+    },
+    {
+      label: 'Iron Condor',
+      desc:  '賣方雙向：賣 put spread + 賣 call spread',
+      build: () => {
+        if (!so.put?.strike || !so.call?.strike) return null;
+        const psell = so.put.strike,  pbuy = psell - 200;
+        const csell = so.call.strike, cbuy = csell + 200;
+        const dte = data.dte_trading || 30;
+        const iv  = data.iv_used || 0.20;
+        return [
+          { id: newId(), side: 'sell', right: 'put',  strike: psell, dte, iv, qty: 1 },
+          { id: newId(), side: 'buy',  right: 'put',  strike: pbuy,  dte, iv, qty: 1 },
+          { id: newId(), side: 'sell', right: 'call', strike: csell, dte, iv, qty: 1 },
+          { id: newId(), side: 'buy',  right: 'call', strike: cbuy,  dte, iv, qty: 1 },
+        ];
+      },
+    },
+    {
+      label: '加買近月 put',
+      desc:  '單純加大 hedge',
+      build: () => so.put?.strike ? [
+        { id: newId(), side: 'buy', right: 'put', strike: so.put.strike, dte: data.dte_trading || 30, iv: data.iv_used || 0.20, qty: 2 },
+      ] : null,
+    },
+    {
+      label: 'Roll 到遠月 Put',
+      desc:  '近月平 + 遠月買',
+      build: () => (so.put?.strike && fm.selected_options?.put?.strike) ? [
+        { id: newId(), side: 'sell', right: 'put', strike: so.put.strike, dte: data.dte_trading || 30, iv: data.iv_used || 0.20, qty: 1 },
+        { id: newId(), side: 'buy',  right: 'put', strike: fm.selected_options.put.strike, dte: fm.dte_trading || 60, iv: fm.iv_used || 0.20, qty: 1 },
+      ] : null,
+    },
+  ];
+
+  const applyTemplate = (tpl) => {
+    const newLegs = tpl.build();
+    if (newLegs) setLegs(newLegs);
+  };
+
+  const updateLeg = (id, field, value) => {
+    setLegs(legs.map(L => L.id === id ? { ...L, [field]: value } : L));
+  };
+  const addLeg = () => {
+    setLegs([...legs, { id: newId(), side: 'buy', right: 'put', strike: 0, dte: 30, iv: 0.20, qty: 1 }]);
+  };
+  const removeLeg = (id) => {
+    setLegs(legs.filter(L => L.id !== id));
+  };
+
+  // Compute combined Greeks across all legs
+  let totalDelta = 0, totalTheta = 0, totalVega = 0, totalPutLotsDelta = 0;
+  for (const L of legs) {
+    const K = parseFloat(L.strike) || 0;
+    const T = (parseInt(L.dte) || 0) / 365;
+    const ivf = parseFloat(L.iv) || 0;
+    const isPut = L.right === 'put';
+    if (K <= 0 || T <= 0) continue;
+    const g = _bsGreeks(S, K, T, ivf, isPut);
+    const sign = (L.side === 'buy' ? 1 : -1) * (parseInt(L.qty) || 0);
+    totalDelta += g.delta * sign * TXO_MULT * S * 0.01;
+    totalTheta += g.theta_per_day * sign * TXO_MULT;
+    totalVega  += g.vega_per_pct  * sign * TXO_MULT;
+    if (isPut && sign > 0) totalPutLotsDelta += sign;       // 加 long put
+    if (isPut && sign < 0) totalPutLotsDelta += sign;       // 賣 put 不算對沖
+  }
 
   const beforeDelta = t.delta_ntd_per_1pct_tx || 0;
   const beforeTheta = t.theta_ntd_per_day || 0;
   const beforeVega  = t.vega_ntd_per_pct_iv || 0;
 
-  const afterDelta = beforeDelta + newDeltaTx;
-  const afterTheta = beforeTheta + newTheta;
-  const afterVega  = beforeVega  + newVega;
+  const afterDelta = beforeDelta + totalDelta;
+  const afterTheta = beforeTheta + totalTheta;
+  const afterVega  = beforeVega  + totalVega;
 
-  // 200萬 hedge 對齊變化（put 相關）
   const recLots = data?.portfolio?.totals?.recommended_put_lots || 0;
   const heldPuts = (data?.portfolio_greeks?.legs || [])
     .filter(L => L.right === 'put' && (L.qty_signed || 0) > 0)
     .reduce((sum, L) => sum + (L.qty_signed || 0), 0);
-  const newHeldPuts = isPut ? heldPuts + sign : heldPuts;
   const beforeGap = heldPuts - recLots;
-  const afterGap  = newHeldPuts - recLots;
+  const afterGap  = (heldPuts + totalPutLotsDelta) - recLots;
+
+  // 估 net debit/credit
+  const netCashEst = legs.reduce((sum, L) => {
+    const K = parseFloat(L.strike) || 0;
+    const T = (parseInt(L.dte) || 0) / 365;
+    const ivf = parseFloat(L.iv) || 0;
+    if (K <= 0 || T <= 0) return sum;
+    // BS price approximation
+    const sqrtT = Math.sqrt(T);
+    const d1 = (Math.log(S/K) + 0.5 * ivf * ivf * T) / (ivf * sqrtT);
+    const d2 = d1 - ivf * sqrtT;
+    const isPut = L.right === 'put';
+    const price = isPut
+      ? (K * _normCdf(-d2) - S * _normCdf(-d1))
+      : (S * _normCdf(d1) - K * _normCdf(d2));
+    const sign = (L.side === 'buy' ? -1 : 1) * (parseInt(L.qty) || 0);
+    return sum + price * sign * TXO_MULT;
+  }, 0);
 
   return (
     <div style={{
@@ -1810,54 +1895,70 @@ function PretradeSimulator({ data }) {
         display:'flex', justifyContent:'space-between', alignItems:'center',
         cursor:'pointer', userSelect:'none',
       }}>
-        <span style={{fontWeight:700, color:'#94a3b8'}}>🧪 Pre-trade 模擬器</span>
-        <span style={{fontSize:'9px', color:'#64748b'}}>下單前看曝險變化　{open ? '▲' : '▼'}</span>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>🧪 Pre-trade 模擬器（多腳）</span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>
+          {legs.length} 腳　{open ? '▲' : '▼ 點開試算'}
+        </span>
       </div>
 
       {open && (
         <>
-          {/* 預設選單 */}
-          {presets.length > 0 && (
-            <div style={{display:'flex', gap:'4px', flexWrap:'wrap', marginTop:'6px'}}>
-              {presets.map((p, i) => (
-                <button key={i} onClick={() => applyPreset(i)} style={{
-                  background: i === presetIdx ? '#0f1828' : 'transparent',
-                  border: i === presetIdx ? '1px solid #60a5fa' : '1px solid #334155',
-                  color: i === presetIdx ? '#60a5fa' : '#94a3b8',
+          {/* 模板按鈕 */}
+          <div style={{marginTop:'6px'}}>
+            <div style={{fontSize:'9px', color:'#64748b', marginBottom:'2px'}}>📐 結構模板</div>
+            <div style={{display:'flex', flexWrap:'wrap', gap:'4px'}}>
+              {templates.map((tpl, i) => (
+                <button key={i} onClick={() => applyTemplate(tpl)} title={tpl.desc} style={{
+                  background:'transparent', border:'1px solid #334155', color:'#94a3b8',
                   padding:'2px 8px', borderRadius:'3px', cursor:'pointer', fontSize:'10px',
-                }}>{p.label}</button>
+                }}>{tpl.label}</button>
               ))}
             </div>
-          )}
-
-          {/* 表單 */}
-          <div style={{display:'flex', gap:'6px', flexWrap:'wrap', marginTop:'6px',
-                        padding:'6px', background:'#070b15', borderRadius:'3px'}}>
-            <select value={side} onChange={e => setSide(e.target.value)}
-                    style={{background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}}>
-              <option value="buy">買進</option>
-              <option value="sell">賣出</option>
-            </select>
-            <input type="number" value={qty} onChange={e => setQty(e.target.value)} min="1"
-                   style={{width:'50px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}} />
-            <span style={{padding:'2px 4px', color:'#64748b'}}>口</span>
-            <select value={right} onChange={e => setRight(e.target.value)}
-                    style={{background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}}>
-              <option value="put">Put</option>
-              <option value="call">Call</option>
-            </select>
-            <input type="number" value={strike} onChange={e => setStrike(e.target.value)} placeholder="履約"
-                   style={{width:'80px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}} />
-            <span style={{padding:'2px 4px', color:'#64748b'}}>DTE</span>
-            <input type="number" value={dte} onChange={e => setDte(e.target.value)} min="1"
-                   style={{width:'50px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}} />
-            <span style={{padding:'2px 4px', color:'#64748b'}}>IV</span>
-            <input type="number" value={iv} onChange={e => setIv(e.target.value)} step="0.01" min="0.05"
-                   style={{width:'70px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}} />
           </div>
 
-          {/* Before / After 比較 */}
-          <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', marginTop:'6px'}}>
+          {/* 多腳列表 */}
+          <div style={{marginTop:'6px'}}>
+            {legs.map((L, idx) => (
+              <div key={L.id} style={{display:'flex', gap:'4px', flexWrap:'wrap', alignItems:'center',
+                                        padding:'4px 6px', background:'#070b15', borderRadius:'3px',
+                                        marginBottom:'3px'}}>
+                <span style={{fontSize:'10px', color:'#64748b', minWidth:'18px'}}>#{idx+1}</span>
+                <select value={L.side} onChange={e => updateLeg(L.id, 'side', e.target.value)}
+                        style={{background:'#0a0e1c', color: L.side === 'buy' ? '#86efac' : '#fca5a5',
+                                border:'1px solid #334155', padding:'1px 4px', fontSize:'10px'}}>
+                  <option value="buy">買</option>
+                  <option value="sell">賣</option>
+                </select>
+                <input type="number" value={L.qty} onChange={e => updateLeg(L.id, 'qty', e.target.value)} min="1"
+                       style={{width:'40px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'1px 4px', fontSize:'10px'}} />
+                <select value={L.right} onChange={e => updateLeg(L.id, 'right', e.target.value)}
+                        style={{background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'1px 4px', fontSize:'10px'}}>
+                  <option value="put">P</option>
+                  <option value="call">C</option>
+                </select>
+                <input type="number" value={L.strike} onChange={e => updateLeg(L.id, 'strike', e.target.value)} placeholder="履約"
+                       style={{width:'70px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'1px 4px', fontSize:'10px'}} />
+                <span style={{fontSize:'9px', color:'#64748b'}}>DTE</span>
+                <input type="number" value={L.dte} onChange={e => updateLeg(L.id, 'dte', e.target.value)} min="1"
+                       style={{width:'40px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'1px 4px', fontSize:'10px'}} />
+                <span style={{fontSize:'9px', color:'#64748b'}}>IV</span>
+                <input type="number" value={L.iv} onChange={e => updateLeg(L.id, 'iv', e.target.value)} step="0.01" min="0.05"
+                       style={{width:'55px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'1px 4px', fontSize:'10px'}} />
+                <button onClick={() => removeLeg(L.id)} style={{
+                  background:'transparent', border:'1px solid #475569', color:'#94a3b8',
+                  padding:'1px 6px', borderRadius:'2px', cursor:'pointer', fontSize:'10px',
+                }}>✕</button>
+              </div>
+            ))}
+            <button onClick={addLeg} style={{
+              background:'transparent', border:'1px dashed #475569', color:'#94a3b8',
+              padding:'2px 10px', borderRadius:'3px', cursor:'pointer', fontSize:'10px',
+              marginTop:'2px',
+            }}>+ 添加一腳</button>
+          </div>
+
+          {/* Before / After */}
+          <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', marginTop:'8px'}}>
             {[
               { label: '當前 (Before)', d: beforeDelta, t: beforeTheta, v: beforeVega, gap: beforeGap, dim: true },
               { label: '加倉後 (After)', d: afterDelta,  t: afterTheta,  v: afterVega,  gap: afterGap,  dim: false },
@@ -1888,20 +1989,29 @@ function PretradeSimulator({ data }) {
             ))}
           </div>
 
-          {/* 變動摘要 */}
+          {/* 變動摘要 + 估算現金流 */}
           <div style={{marginTop:'6px', padding:'4px 8px', background:'#0f1828', borderRadius:'3px',
                         fontSize:'10px', color:'#cbd5e1'}}>
-            <span style={{color:'#94a3b8'}}>變化：</span>
-            ΔΔ <b style={{color: colN(newDeltaTx)}}>{fmtS(newDeltaTx)}</b>
-            {' · '}
-            Δθ <b style={{color: colN(newTheta)}}>{fmtS(newTheta)}</b>
-            {' (月 ≈ '}<b style={{color: colN(newTheta * 30)}}>{fmtS(newTheta * 30)}</b>{')'}
-            {' · '}
-            Δν <b style={{color: colN(newVega)}}>{fmtS(newVega)}</b>
+            <div>
+              <span style={{color:'#94a3b8'}}>合計變化：</span>
+              ΔΔ <b style={{color: colN(totalDelta)}}>{fmtS(totalDelta)}</b>
+              {' · '}
+              Δθ <b style={{color: colN(totalTheta)}}>{fmtS(totalTheta)}</b>
+              {' (月 ≈ '}<b style={{color: colN(totalTheta * 30)}}>{fmtS(totalTheta * 30)}</b>{')'}
+              {' · '}
+              Δν <b style={{color: colN(totalVega)}}>{fmtS(totalVega)}</b>
+            </div>
+            <div style={{marginTop:'2px'}}>
+              <span style={{color:'#94a3b8'}}>估算現金流：</span>
+              <b style={{color: netCashEst > 0 ? '#86efac' : '#fca5a5'}}>
+                {netCashEst > 0 ? '收 ' : '付 '}{Math.abs(Math.round(netCashEst)).toLocaleString()} NT
+              </b>
+              <span style={{color:'#64748b'}}> (BS 估算)</span>
+            </div>
           </div>
 
           <div style={{fontSize:'9px', color:'#64748b', marginTop:'4px'}}>
-            線性 BS 近似（單腳）；多腳結構請逐筆模擬累加
+            線性 BS 一階；spread/iron condor 等多腳結構同時加入；模板自動帶入近月選擇權
           </div>
         </>
       )}
