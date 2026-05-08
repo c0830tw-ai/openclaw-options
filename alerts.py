@@ -45,7 +45,7 @@ DEFAULT_RULES = {
     'short_put_distance_sigma':   1.0,   # 你賣的 put 距現價幾個標準差以下警告
     'trading_loss_mtd_cap':      -50000, # 短線交易（trading book）本月累計虧損上限
 
-    # 近月股期 5 分 K 布林軌道（盤中進場訊號）
+    # 近月期貨 5 分 K 布林軌道（盤中進場訊號）
     'intraday_bb_alert_enabled':  True,  # 啟用 5 分 K 開布林通知
 
     'cooldown_minutes':          60,    # 同一規則最少間隔分鐘
@@ -280,7 +280,7 @@ def evaluate(data: dict, rules: dict) -> list:
             'tip':   '這個月已經輸太多。停止新建週選 / spread 部位，等下個月重來',
         })
 
-    # 13. 近月股期 5 分 K 布林開口（盤中進場訊號）
+    # 13. 近月期貨（台指期/股期）5 分 K 布林開口（盤中進場訊號）
     if rules.get('intraday_bb_alert_enabled', True):
         intraday = data.get('intraday_bb') or {}
         for fam_key, info in intraday.items():

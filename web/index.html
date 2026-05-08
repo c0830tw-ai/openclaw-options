@@ -1626,7 +1626,7 @@ function IntradayBB({ data }) {
       fontSize: '11px', color: '#cbd5e1',
     }}>
       <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'4px'}}>
-        <span style={{fontWeight:700, color:'#94a3b8'}}>📐 近月股期 5 分 K 布林軌道</span>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>📐 近月期貨 5 分 K 布林軌道</span>
         <span style={{fontSize:'9px', color:'#64748b'}}>軌寬 vs 20 根平均</span>
       </div>
       <div style={{display:'flex', gap:'12px', flexWrap:'wrap'}}>
@@ -1721,26 +1721,34 @@ python3 add_trade.py add buy_to_open  "TXO ${monthCode} ${bc.buy_strike?.toFixed
           </Card>
 
           <Card title="📈 Bull Put Spread（看不跌）" color="#60a5fa" copyText={bpCmd} viable={bp.viable}>
-            <div>賣 <b style={{color:'#fca5a5'}}>{fmt(bp.sell_strike)}</b> 收 {bp.sell_premium} ／ 買 <b style={{color:'#86efac'}}>{fmt(bp.buy_strike)}</b> 付 {bp.buy_premium}
+            <div>賣 <b style={{color:'#fca5a5'}}>{fmt(bp.sell_strike)}</b> bid {bp.sell_premium}/mid {bp.sell_mid} ／ 買 <b style={{color:'#86efac'}}>{fmt(bp.buy_strike)}</b> ask {bp.buy_premium}/mid {bp.buy_mid}
               <span style={{fontSize:'9px', color: bp.buy_premium_source?.startsWith('real') ? '#4ade80' : '#fbbf24', marginLeft:'4px'}}>
                 {bp.buy_premium_source === 'real_ask' ? '[真實 ask]' :
                  bp.buy_premium_source === 'real_mid' ? '[真實 mid]' :
                  '[BS 估算]'}
               </span>
             </div>
-            <div style={{marginTop:'2px'}}>淨收 <b>{bp.net_credit}</b> 點，最大賺 <b style={{color:'#4ade80'}}>NT$ {fmt(bp.max_profit)}</b> / 最大賠 <b style={{color:'#f87171'}}>NT$ {fmt(bp.max_loss)}</b></div>
+            <div style={{marginTop:'2px'}}>
+              淨收 <b style={{color:'#4ade80'}}>{bp.net_credit}</b> 點（組合單預期）
+              <span style={{fontSize:'9px', color:'#94a3b8', marginLeft:'6px'}}>保守底 {bp.worst_credit}</span>
+            </div>
+            <div style={{marginTop:'2px'}}>最大賺 <b style={{color:'#4ade80'}}>NT$ {fmt(bp.max_profit)}</b> / 最大賠 <b style={{color:'#f87171'}}>NT$ {fmt(bp.max_loss)}</b></div>
             <div style={{marginTop:'2px'}}>損益平衡 <b>{fmt(bp.breakeven)}</b>　距現價 -{bp.distance_pct}%</div>
           </Card>
 
           <Card title="📉 Bear Call Spread（看不漲）" color="#fb923c" copyText={bcCmd} viable={bc.viable}>
-            <div>賣 <b style={{color:'#fca5a5'}}>{fmt(bc.sell_strike)}</b> 收 {bc.sell_premium} ／ 買 <b style={{color:'#86efac'}}>{fmt(bc.buy_strike)}</b> 付 {bc.buy_premium}
+            <div>賣 <b style={{color:'#fca5a5'}}>{fmt(bc.sell_strike)}</b> bid {bc.sell_premium}/mid {bc.sell_mid} ／ 買 <b style={{color:'#86efac'}}>{fmt(bc.buy_strike)}</b> ask {bc.buy_premium}/mid {bc.buy_mid}
               <span style={{fontSize:'9px', color: bc.buy_premium_source?.startsWith('real') ? '#4ade80' : '#fbbf24', marginLeft:'4px'}}>
                 {bc.buy_premium_source === 'real_ask' ? '[真實 ask]' :
                  bc.buy_premium_source === 'real_mid' ? '[真實 mid]' :
                  '[BS 估算]'}
               </span>
             </div>
-            <div style={{marginTop:'2px'}}>淨收 <b>{bc.net_credit}</b> 點，最大賺 <b style={{color:'#4ade80'}}>NT$ {fmt(bc.max_profit)}</b> / 最大賠 <b style={{color:'#f87171'}}>NT$ {fmt(bc.max_loss)}</b></div>
+            <div style={{marginTop:'2px'}}>
+              淨收 <b style={{color:'#4ade80'}}>{bc.net_credit}</b> 點（組合單預期）
+              <span style={{fontSize:'9px', color:'#94a3b8', marginLeft:'6px'}}>保守底 {bc.worst_credit}</span>
+            </div>
+            <div style={{marginTop:'2px'}}>最大賺 <b style={{color:'#4ade80'}}>NT$ {fmt(bc.max_profit)}</b> / 最大賠 <b style={{color:'#f87171'}}>NT$ {fmt(bc.max_loss)}</b></div>
             <div style={{marginTop:'2px'}}>損益平衡 <b>{fmt(bc.breakeven)}</b>　距現價 +{bc.distance_pct}%</div>
           </Card>
         </div>

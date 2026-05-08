@@ -753,37 +753,52 @@ def compute_weekly_opportunities(
     put_strike   = put['strike']
     call_strike  = call['strike']
     put_bid      = put.get('bid')  or 0
+    put_mid      = put.get('mid')  or put_bid
     call_bid     = call.get('bid') or 0
+    call_mid     = call.get('mid') or call_bid
 
     # 取得真實 spread legs 報價（_calc_weekly 已 snapshot）；缺則 fallback 到 BS 估算
     spread_legs = weekly_data.get('spread_legs') or {}
     put_leg     = spread_legs.get('put_buy')  or {}
     call_leg    = spread_legs.get('call_buy') or {}
 
-    def _leg_buy_price(leg, fallback_strike, is_put):
-        """買進付價：優先用真實 ask，沒有 ask 用 mid，再退到 BS 估算。"""
-        if leg and (leg.get('ask') or 0) > 0:
-            return leg['ask'], leg['strike'], 'real_ask'
-        if leg and (leg.get('mid') or 0) > 0:
-            return leg['mid'], leg['strike'], 'real_mid'
+    def _leg_prices(leg, fallback_strike, is_put):
+        """回傳 (worst_buy, mid_buy, strike, source)：
+        worst_buy = 真實 ask（吃對方掛價）
+        mid_buy   = 真實 (bid+ask)/2 或 mid（組合單預期 fill）
+        缺則退回 BS 估算。"""
+        bid = (leg.get('bid') or 0) if leg else 0
+        ask = (leg.get('ask') or 0) if leg else 0
+        mid = (leg.get('mid') or 0) if leg else 0
+        if ask > 0 and bid > 0:
+            return ask, (bid + ask) / 2, leg['strike'], 'real_mid'
+        if ask > 0:
+            return ask, mid if mid > 0 else ask, leg['strike'], 'real_ask'
+        if mid > 0:
+            return mid, mid, leg['strike'], 'real_mid'
         bs_v = bs_price(bs_s, fallback_strike, T, iv, is_put=is_put, r=0.0)
-        return bs_v, fallback_strike, 'bs_estimate'
+        return bs_v, bs_v, fallback_strike, 'bs_estimate'
 
-    # Bull put spread: 賣高履約 put（收 bid）+ 買低履約 put（付真實 ask）
-    put_buy_prem, put_buy_strike, put_src = _leg_buy_price(put_leg, put_strike - spread_width, True)
+    # Bull put spread: 賣高履約 put（收 bid 或 mid）+ 買低履約 put（付 ask 或 mid）
+    put_worst_buy, put_mid_buy, put_buy_strike, put_src = _leg_prices(put_leg, put_strike - spread_width, True)
     actual_put_width = put_strike - put_buy_strike
-    bull_put_credit = round(put_bid - put_buy_prem, 1)
-    bull_put_max_p  = round(bull_put_credit * 50)
-    bull_put_max_l  = round(max(0, (actual_put_width - bull_put_credit)) * 50)
-    bull_put_be     = round(put_strike - bull_put_credit)
 
-    # Bear call spread: 賣低履約 call（收 bid）+ 買高履約 call（付真實 ask）
-    call_buy_prem, call_buy_strike, call_src = _leg_buy_price(call_leg, call_strike + spread_width, False)
+    # 組合單預期 (mid - mid) vs 保守底 (bid - ask)
+    bull_put_mid_credit   = round(put_mid - put_mid_buy, 1)
+    bull_put_worst_credit = round(put_bid - put_worst_buy, 1)
+    bull_put_max_p  = round(bull_put_mid_credit * 50)
+    bull_put_max_l  = round(max(0, (actual_put_width - bull_put_mid_credit)) * 50)
+    bull_put_be     = round(put_strike - bull_put_mid_credit)
+
+    # Bear call spread: 賣低履約 call（收 bid 或 mid）+ 買高履約 call（付 ask 或 mid）
+    call_worst_buy, call_mid_buy, call_buy_strike, call_src = _leg_prices(call_leg, call_strike + spread_width, False)
     actual_call_width = call_buy_strike - call_strike
-    bear_call_credit = round(call_bid - call_buy_prem, 1)
-    bear_call_max_p  = round(bear_call_credit * 50)
-    bear_call_max_l  = round(max(0, (actual_call_width - bear_call_credit)) * 50)
-    bear_call_be     = round(call_strike + bear_call_credit)
+
+    bear_call_mid_credit   = round(call_mid - call_mid_buy, 1)
+    bear_call_worst_credit = round(call_bid - call_worst_buy, 1)
+    bear_call_max_p  = round(bear_call_mid_credit * 50)
+    bear_call_max_l  = round(max(0, (actual_call_width - bear_call_mid_credit)) * 50)
+    bear_call_be     = round(call_strike + bear_call_mid_credit)
 
     series = weekly_data.get('series') or ''
     weekday_label = (
@@ -809,29 +824,35 @@ def compute_weekly_opportunities(
         },
         'bull_put_spread': {
             'sell_strike':   put_strike,
-            'sell_premium':  put_bid,
+            'sell_premium':  put_bid,                           # bid (you receive if take bid)
+            'sell_mid':      put_mid,
             'buy_strike':    put_buy_strike,
-            'buy_premium':   round(put_buy_prem, 1),
+            'buy_premium':   round(put_worst_buy, 1),           # ask (worst case)
+            'buy_mid':       round(put_mid_buy, 1),
             'buy_premium_source': put_src,
-            'net_credit':    bull_put_credit,
+            'net_credit':    bull_put_mid_credit,                # primary: combo-order expectation
+            'worst_credit':  bull_put_worst_credit,              # bid-ask 保守底
             'max_profit':    bull_put_max_p,
             'max_loss':      bull_put_max_l,
             'breakeven':     bull_put_be,
             'distance_pct':  round((bs_s - put_strike) / bs_s * 100, 2),
-            'viable':        bull_put_credit > 5,
+            'viable':        bull_put_mid_credit > 5,
         },
         'bear_call_spread': {
             'sell_strike':   call_strike,
             'sell_premium':  call_bid,
+            'sell_mid':      call_mid,
             'buy_strike':    call_buy_strike,
-            'buy_premium':   round(call_buy_prem, 1),
+            'buy_premium':   round(call_worst_buy, 1),
+            'buy_mid':       round(call_mid_buy, 1),
             'buy_premium_source': call_src,
-            'net_credit':    bear_call_credit,
+            'net_credit':    bear_call_mid_credit,
+            'worst_credit':  bear_call_worst_credit,
             'max_profit':    bear_call_max_p,
             'max_loss':      bear_call_max_l,
             'breakeven':     bear_call_be,
             'distance_pct':  round((call_strike - bs_s) / bs_s * 100, 2),
-            'viable':        bear_call_credit > 5,
+            'viable':        bear_call_mid_credit > 5,
         },
     }
 
@@ -1175,7 +1196,7 @@ def fetch_intraday_bb_state(
     period: int = 20, lookback_days: int = 3,
     expand_ratio: float = 1.3, squeeze_ratio: float = 0.7,
 ) -> Optional[Dict[str, Any]]:
-    """從近月股期 1-min kbar 重採成 5-min，算 Bollinger 軌寬狀態。
+    """從近月期貨 1-min kbar 重採成 5-min，算 Bollinger 軌寬狀態。
     開布林：當下軌寬 > 20-bar 平均 × expand_ratio
     收口：< 20-bar 平均 × squeeze_ratio"""
     try:
@@ -2152,30 +2173,48 @@ def main():
             w_q = fetch_option_quotes(api, w_put_c, w_call_c, bs_s=bs_s, T=w_T, sigma=w_iv, r=bs_r or 0.0)
 
             # 找價差另一腳並抓真實 bid/ask（取代 BS 估算，避免 vol skew 失真）
+            # 各腳 snapshot 最近 5 個 candidate，挑第一個有真實 ask 的
             w_spread_legs: Dict[str, Any] = {}
-            try:
-                w_put_leg  = _find_spread_leg(w_chain, w_put_c.strike_price,  OptionRight.Put,  is_put=True,  width=CFG.spread_width)
-                w_call_leg = _find_spread_leg(w_chain, w_call_c.strike_price, OptionRight.Call, is_put=False, width=CFG.spread_width)
-                leg_contracts = [c for c in [w_put_leg, w_call_leg] if c]
-                if leg_contracts:
-                    leg_snaps = api.snapshots(leg_contracts)
-                    for c, s in zip(leg_contracts, leg_snaps):
-                        bid = float(s.buy_price)  if s.buy_price  else 0.0
-                        ask = float(s.sell_price) if s.sell_price else 0.0
-                        mid = float(s.close)      if s.close      else (bid + ask) / 2 if (bid and ask) else 0.0
-                        leg_data = {
-                            'strike': c.strike_price,
-                            'symbol': c.symbol,
-                            'bid':    bid,
-                            'ask':    ask,
-                            'mid':    mid,
-                        }
-                        if c.option_right == OptionRight.Put:
-                            w_spread_legs['put_buy']  = leg_data
-                        else:
-                            w_spread_legs['call_buy'] = leg_data
-            except Exception as _le:
-                log.debug(f'{label} spread legs snapshot 失敗（將用 BS 估算）: {_le}')
+            for ref_c, opt_right, leg_key in [
+                (w_put_c,  OptionRight.Put,  'put_buy'),
+                (w_call_c, OptionRight.Call, 'call_buy'),
+            ]:
+                is_put = (opt_right == OptionRight.Put)
+                ref_strike = ref_c.strike_price
+                target = ref_strike - CFG.spread_width if is_put else ref_strike + CFG.spread_width
+                cands = sorted(
+                    [c for c in w_chain
+                     if c.option_right == opt_right
+                     and (c.strike_price < ref_strike if is_put else c.strike_price > ref_strike)],
+                    key=lambda c: abs(c.strike_price - target),
+                )[:5]
+                if not cands:
+                    continue
+                try:
+                    snaps = api.snapshots(cands)
+                except Exception as _le:
+                    log.debug(f'{label} {leg_key} snapshot 失敗: {_le}')
+                    continue
+                # 找第一個有真實 ask 的
+                chosen = None
+                for c, s in zip(cands, snaps):
+                    if s.sell_price and float(s.sell_price) > 0:
+                        chosen = (c, s)
+                        break
+                # 都沒 ask → 用最近的 fallback（之後 BS 估算）
+                if not chosen:
+                    chosen = (cands[0], snaps[0])
+                c, s = chosen
+                bid = float(s.buy_price)  if s.buy_price  else 0.0
+                ask = float(s.sell_price) if s.sell_price else 0.0
+                mid = float(s.close)      if s.close      else (bid + ask) / 2 if (bid and ask) else 0.0
+                w_spread_legs[leg_key] = {
+                    'strike': c.strike_price,
+                    'symbol': c.symbol,
+                    'bid':    bid,
+                    'ask':    ask,
+                    'mid':    mid,
+                }
             w_structs = build_structures(
                 n_contracts=contracts['recommended_contracts'],
                 call_strike=w_call_c.strike_price,
@@ -2399,11 +2438,11 @@ def main():
             except Exception as _e:
                 log.debug(f'broker summary 失敗: {_e}')
 
-        # 14g. 近月股期 5 分 K 布林軌道（盤中通知）
+        # 14g. 近月期貨 5 分 K 布林軌道（盤中通知）
         try:
             today_month = datetime.now().strftime('%Y%m')
             intraday_bb = {}
-            for family, label in [('CDF', '台積電股期'), ('NYF', '0050 ETF期')]:
+            for family, label in [('TXF', '台指期'), ('CDF', '台積電股期'), ('NYF', '0050 ETF期')]:
                 try:
                     sorted_c = sorted(
                         [c for c in getattr(api.Contracts.Futures, family)
