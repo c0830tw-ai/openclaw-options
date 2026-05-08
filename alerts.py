@@ -500,7 +500,26 @@ def main(dry_run: bool = False):
 
     if new_fired and not dry_run:
         msg = format_message(new_fired, data)
-        ok = rules.get('telegram_enabled', True) and send_telegram(msg)
+        # 依 alert key 動態決定按鈕：dd_high → /dd /risk；roll → /roll /positions；其他通用
+        keys = {a['key'] for a in new_fired}
+        rows = []
+        if 'dd_high' in keys or any(k.startswith('risk_') for k in keys):
+            rows.append([{'text': '📉 DD', 'data': '/dd'},
+                         {'text': '⚠️ Risk', 'data': '/risk'}])
+        if any(k.startswith('roll_') or k == 'call_close' for k in keys):
+            rows.append([{'text': '🔧 Roll', 'data': '/roll'},
+                         {'text': '📂 Positions', 'data': '/positions'}])
+        if any(k.startswith('event_') for k in keys):
+            rows.append([{'text': '📅 Events', 'data': '/events'},
+                         {'text': '🎯 Regime', 'data': '/regime'}])
+        if any(k.startswith('iv_') for k in keys):
+            rows.append([{'text': '📊 IV', 'data': '/iv'},
+                         {'text': '🧮 Greeks', 'data': '/greeks'}])
+        # 沒任何 specific 規則 → 通用 row
+        if not rows:
+            rows = [[{'text': '🏥 健診', 'data': '/health'},
+                     {'text': '🧮 Greeks', 'data': '/greeks'}]]
+        ok = rules.get('telegram_enabled', True) and send_telegram(msg, buttons=rows)
         for a in new_fired:
             mark_fired(state, a['key'])
         save_state(state)
