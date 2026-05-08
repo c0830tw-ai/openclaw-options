@@ -2101,6 +2101,217 @@ function _bsGreeks(S, K, T, sigma, isPut) {
   };
 }
 
+function CalendarSpreadHelper({ data }) {
+  const [open, setOpen] = React.useState(false);
+  const [variant, setVariant] = React.useState('reverse');   // 'standard' / 'reverse'
+  const [right, setRight] = React.useState('put');
+  const [strike, setStrike] = React.useState(0);
+  const [qty, setQty] = React.useState(1);
+
+  const tx = data?.market?.tx_futures;
+  const so = data?.selected_options || {};
+  const wedSO = data?.weekly_wed?.selected_options || {};
+  const friSO = data?.weekly_fri?.selected_options || {};
+  if (!tx) return null;
+
+  // 預設履約：用近月 selected_options (依 right 切換)
+  React.useEffect(() => {
+    const k = right === 'put' ? so.put?.strike : so.call?.strike;
+    if (k && !strike) setStrike(k);
+  }, [right, so.put?.strike, so.call?.strike]);
+
+  // Near / Far 月份：
+  // standard: near = 週選 (W or F), far = 近月 monthly
+  // reverse:  near = 週三 W2, far = 週五同月選 / 近月
+  // 簡化：near = 週三 / far = 週五（若都有）；否則 fallback near = weekly / far = monthly
+  const haveWed = !!data?.weekly_wed?.settlement_date;
+  const haveFri = !!data?.weekly_fri?.settlement_date;
+  const haveMonthly = !!data?.dte_trading;
+
+  let nearLeg = null, farLeg = null;
+  if (haveWed && haveFri) {
+    nearLeg = { label: '週三 W', month: data.weekly_wed.delivery_month || '近月', dte: data.weekly_wed.dte_trading || 3, iv: data.weekly_wed.iv_used || 0.20 };
+    farLeg  = { label: '週五 F', month: data.weekly_fri.delivery_month || '近月', dte: data.weekly_fri.dte_trading || 6, iv: data.weekly_fri.iv_used || 0.20 };
+  } else if (haveFri && haveMonthly) {
+    nearLeg = { label: '週五 F', month: data.weekly_fri.delivery_month || '近週', dte: data.weekly_fri.dte_trading || 6, iv: data.weekly_fri.iv_used || 0.20 };
+    farLeg  = { label: '近月 M', month: data.txo_month, dte: data.dte_trading || 30, iv: data.iv_used || 0.20 };
+  } else {
+    // 退化：只有近月 + 遠月
+    farLeg = { label: '遠月', month: data.far_month?.txo_month || '?', dte: data.far_month?.dte_trading || 60, iv: data.far_month?.iv_used || 0.20 };
+    nearLeg = { label: '近月', month: data.txo_month, dte: data.dte_trading || 30, iv: data.iv_used || 0.20 };
+  }
+
+  // BS 估價
+  const bsP = (K, T, iv, isPut) => {
+    if (T <= 0 || iv <= 0 || K <= 0) return 0;
+    const sqrtT = Math.sqrt(T);
+    const d1 = (Math.log(tx/K) + 0.5 * iv*iv * T) / (iv * sqrtT);
+    const d2 = d1 - iv*sqrtT;
+    return isPut
+      ? K * _normCdf(-d2) - tx * _normCdf(-d1)
+      : tx * _normCdf(d1) - K * _normCdf(d2);
+  };
+
+  const K = parseFloat(strike) || 0;
+  const isPut = right === 'put';
+  const nearPx = bsP(K, nearLeg.dte/365, nearLeg.iv, isPut);
+  const farPx  = bsP(K, farLeg.dte/365,  farLeg.iv,  isPut);
+
+  // Standard：buy 遠 + sell 近 → debit
+  // Reverse (輝哥)：buy 近 + sell 遠 → credit (因遠月 premium 通常較高)
+  const isReverse = variant === 'reverse';
+  const TXO_MULT = 50;
+  const Q = parseInt(qty) || 1;
+
+  const buyLeg  = isReverse ? nearLeg : farLeg;
+  const sellLeg = isReverse ? farLeg  : nearLeg;
+  const buyPx   = isReverse ? nearPx  : farPx;
+  const sellPx  = isReverse ? farPx   : nearPx;
+
+  // Net cash = sell - buy（per leg per lot）
+  const netPerLot = sellPx - buyPx;
+  const netCash = netPerLot * Q * TXO_MULT;
+
+  const fmt = n => n == null ? '—' : Math.round(n).toLocaleString();
+  const month = data.txo_month || '202605';
+
+  // Ladder
+  const ladderBuy  = (mid) => ({ try1: Math.max(2, Math.round(mid * 0.97)), try2: Math.round(mid), try3: Math.round(mid * 1.05) });
+  const ladderSell = (mid) => ({ try1: Math.round(mid * 1.05), try2: Math.round(mid), try3: Math.max(1, Math.round(mid * 0.95)) });
+
+  const cmd = (side, lab, qq, price, leg, thesis) => {
+    const sd = side === 'buy' ? 'buy_to_open' : 'sell_to_open';
+    const r = isPut ? 'P' : 'C';
+    const inst = `TXO ${leg.month} ${Math.round(K)}${r}`;
+    const book = side === 'buy' ? 'hedge' : 'trading';
+    return `python3 add_trade.py add ${sd} "${inst}" ${qq} ${price} --book ${book} --thesis "${thesis}"`;
+  };
+
+  const copy = (s) => {
+    navigator.clipboard?.writeText(s).then(() => alert('已複製：\n' + s), () => alert('複製失敗'));
+  };
+
+  const variantLabel = isReverse
+    ? '🎰 輝哥反向：買近 + 賣遠（淨收 credit）'
+    : '📅 標準日曆：買遠 + 賣近（賺 theta 衰退）';
+  const thesisStr = isReverse
+    ? `輝哥反向日曆 ${nearLeg.label}買 / ${farLeg.label}賣 ${K}${right === 'put' ? 'P' : 'C'}`
+    : `標準日曆 ${farLeg.label}買 / ${nearLeg.label}賣 ${K}${right === 'put' ? 'P' : 'C'}`;
+
+  return (
+    <div style={{
+      background:'#0a0e1c', border:'1px solid #a78bfa44',
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div onClick={() => setOpen(!open)} style={{
+        display:'flex', justifyContent:'space-between', alignItems:'center',
+        cursor:'pointer', userSelect:'none',
+      }}>
+        <span style={{fontWeight:700, color:'#a78bfa'}}>📐 水平價差（Calendar Spread）</span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>
+          {variantLabel.split('：')[0]}　{open ? '▲' : '▼'}
+        </span>
+      </div>
+
+      {open && (
+        <>
+          {/* Variant + form */}
+          <div style={{display:'flex', gap:'4px', flexWrap:'wrap', marginTop:'6px'}}>
+            <button onClick={(e) => {e.stopPropagation(); setVariant('reverse');}} style={{
+              background: isReverse ? '#0f1828' : 'transparent',
+              border: isReverse ? '1px solid #fbbf24' : '1px solid #334155',
+              color: isReverse ? '#fbbf24' : '#94a3b8',
+              padding:'2px 8px', borderRadius:'3px', cursor:'pointer', fontSize:'10px',
+            }}>🎰 輝哥反向</button>
+            <button onClick={(e) => {e.stopPropagation(); setVariant('standard');}} style={{
+              background: !isReverse ? '#0f1828' : 'transparent',
+              border: !isReverse ? '1px solid #60a5fa' : '1px solid #334155',
+              color: !isReverse ? '#60a5fa' : '#94a3b8',
+              padding:'2px 8px', borderRadius:'3px', cursor:'pointer', fontSize:'10px',
+            }}>📅 標準日曆</button>
+          </div>
+          <div style={{fontSize:'10px', color:'#94a3b8', marginTop:'4px'}}>
+            {variantLabel}
+          </div>
+
+          <div className="leg-form-row" style={{marginTop:'6px', padding:'6px',
+                                                  background:'#070b15', borderRadius:'3px'}}>
+            <select value={right} onChange={e => setRight(e.target.value)}
+                    style={{background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}}>
+              <option value="put">Put</option>
+              <option value="call">Call</option>
+            </select>
+            <input type="number" value={strike} onChange={e => setStrike(e.target.value)} placeholder="履約"
+                   style={{width:'80px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}} />
+            <span style={{padding:'2px 4px', color:'#64748b'}}>口數</span>
+            <input type="number" value={qty} onChange={e => setQty(e.target.value)} min="1"
+                   style={{width:'50px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}} />
+          </div>
+
+          {/* Summary */}
+          <div style={{padding:'6px 8px', marginTop:'6px',
+                        background:'#0f1828', borderRadius:'3px', fontSize:'10px'}}>
+            買 {buyLeg.label} ({buyLeg.dte}d) × {Q} 口 @{Math.round(buyPx)} 點　|
+            賣 {sellLeg.label} ({sellLeg.dte}d) × {Q} 口 @{Math.round(sellPx)} 點
+            <div style={{marginTop:'2px'}}>
+              估算{netCash > 0 ? '收 ' : '付 '}
+              <b style={{color: netCash > 0 ? '#86efac' : '#fca5a5'}}>NT$ {fmt(Math.abs(netCash))}</b>
+              {' · per lot '}<b>{Math.round(netPerLot)} 點</b>
+            </div>
+          </div>
+
+          {/* Two leg ladder */}
+          {[
+            { side: 'buy',  leg: buyLeg,  px: buyPx,  color: '#86efac', label: `📥 買 ${buyLeg.label}` },
+            { side: 'sell', leg: sellLeg, px: sellPx, color: '#fca5a5', label: `📤 賣 ${sellLeg.label}` },
+          ].map((row, i) => {
+            const ladder = row.side === 'buy' ? ladderBuy(row.px) : ladderSell(row.px);
+            return (
+              <div key={i} style={{marginTop:'6px', padding:'6px 10px',
+                                    background:'#070b15', borderRadius:'4px',
+                                    borderLeft:`3px solid ${row.color}`}}>
+                <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline'}}>
+                  <span style={{fontSize:'11px', fontWeight:700, color: row.color}}>
+                    {row.label} × {Q} 口
+                  </span>
+                  <span style={{fontSize:'9px', color:'#64748b'}}>
+                    TXO {row.leg.month} {K}{isPut ? 'P' : 'C'} ({row.leg.dte}d)
+                  </span>
+                </div>
+                <div className="ladder-row" style={{marginTop:'4px'}}>
+                  {[
+                    { lab: '1️⃣ 試探', p: ladder.try1 },
+                    { lab: '2️⃣ 中位', p: ladder.try2 },
+                    { lab: '3️⃣ 主動', p: ladder.try3 },
+                  ].map((tier, j) => (
+                    <div key={j} style={{padding:'4px 6px', background:'#0a0e1c', borderRadius:'3px',
+                                          border:'1px solid #1e2535'}}>
+                      <div style={{fontSize:'9px', color:'#94a3b8'}}>{tier.lab}</div>
+                      <div style={{fontSize:'13px', color: row.color, fontWeight:700}}>{tier.p} 點</div>
+                      <button onClick={() => copy(cmd(row.side, row.label, Q, tier.p, row.leg, thesisStr))} style={{
+                        marginTop:'2px', fontSize:'9px',
+                        background:'transparent', border:`1px solid ${row.color}`,
+                        color: row.color, padding:'1px 6px', borderRadius:'2px', cursor:'pointer',
+                      }}>📋 複製</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+
+          <div style={{fontSize:'9px', color:'#64748b', marginTop:'6px'}}>
+            {isReverse
+              ? '⚠️ 輝哥反向：賺遠近月選擇權 premium 結構差。需注意近月先到期，要在近月結算前評估遠月處理'
+              : '📅 標準：賣近月（快收 theta）+ 買遠月（保留時間價值），盤整時最賺'}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function HuiRatioHelper({ data }) {
   const [open, setOpen] = React.useState(false);
   const [sets, setSets] = React.useState(1);              // 幾組（1 組 = 1×BP+2×SP+1×SC）
@@ -5370,6 +5581,7 @@ function App() {
         <CollarDashboard data={data} />
         <OrderHelper data={data} />
         <HuiRatioHelper data={data} />
+        <CalendarSpreadHelper data={data} />
         <PretradeSimulator data={data} />
         <RollSuggestions data={data} />
       </Section>
