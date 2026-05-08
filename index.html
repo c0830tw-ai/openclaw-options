@@ -1788,6 +1788,141 @@ function CollarDashboard({ data }) {
   );
 }
 
+function CalendarView({ data }) {
+  const [monthOffset, setMonthOffset] = React.useState(0);
+  const today = new Date();
+  const target = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1);
+  const yr = target.getFullYear(), mo = target.getMonth();
+  const daysInMonth = new Date(yr, mo + 1, 0).getDate();
+  const firstDow = new Date(yr, mo, 1).getDay();   // 0=Sun
+
+  // 收集 markers from latest data
+  const markers = {};   // 'YYYY-MM-DD' → [{type, label, color}, ...]
+  const addMarker = (date, type, label, color) => {
+    if (!markers[date]) markers[date] = [];
+    markers[date].push({ type, label, color });
+  };
+
+  // Events (upcoming)
+  (data?.upcoming_events || []).forEach(ev => {
+    const c = ev.impact === 'high' ? '#fb923c' : '#fbbf24';
+    addMarker(ev.date, ev.type, ev.name, c);
+  });
+
+  // TXO 月選結算（從 data.settlement_date 或近月）
+  const fmt8to10 = s => s && s.length === 8 ? `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}` : s;
+  // far month
+  if (data?.far_month?.settlement_date) {
+    addMarker(fmt8to10(data.far_month.settlement_date), 'monthly', '遠月 TXO 結算', '#fca5a5');
+  }
+  // 週三週選
+  if (data?.weekly_wed?.settlement_date) {
+    addMarker(fmt8to10(data.weekly_wed.settlement_date), 'weekly_wed', '週三週選結算', '#86efac');
+  }
+  if (data?.weekly_fri?.settlement_date) {
+    addMarker(fmt8to10(data.weekly_fri.settlement_date), 'weekly_fri', '週五週選結算', '#60a5fa');
+  }
+  // 近月（current TXO month）— 用 3rd Wed of month 近似
+  // current month settlement
+  const _3rdWed = (y, m) => {
+    const first = new Date(y, m, 1).getDay(); // 0=Sun
+    let firstWed = (3 - first + 7) % 7 + 1;   // Wed = 3
+    return firstWed + 14;
+  };
+  // mark current TXO month settlement (current viewing month)
+  addMarker(`${yr}-${String(mo+1).padStart(2,'0')}-${String(_3rdWed(yr, mo)).padStart(2,'0')}`,
+            'monthly', 'TXO 月選結算', '#fca5a5');
+
+  // 渲染
+  const cells = [];
+  // padding for first row
+  for (let i = 0; i < firstDow; i++) cells.push({ pad: true, key: `pad-${i}` });
+  for (let d = 1; d <= daysInMonth; d++) {
+    const ds = `${yr}-${String(mo+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const dow = new Date(yr, mo, d).getDay();
+    const isToday = ds === today.toISOString().slice(0, 10);
+    const isWeekend = dow === 0 || dow === 6;
+    cells.push({ ds, d, dow, isToday, isWeekend, marks: markers[ds] || [], key: ds });
+  }
+
+  const monthLabel = `${yr} 年 ${mo + 1} 月`;
+  return (
+    <div style={{
+      background:'#0a0e1c', border:'1px solid #1e2535',
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px'}}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>📅 行事曆</span>
+        <div style={{display:'flex', gap:'4px', alignItems:'center'}}>
+          <button onClick={() => setMonthOffset(monthOffset - 1)}
+                  style={{background:'transparent', border:'1px solid #334155', color:'#94a3b8',
+                          padding:'1px 8px', borderRadius:'3px', cursor:'pointer', fontSize:'10px'}}>‹</button>
+          <span style={{fontSize:'12px', minWidth:'80px', textAlign:'center', color:'#cbd5e1'}}>{monthLabel}</span>
+          <button onClick={() => setMonthOffset(monthOffset + 1)}
+                  style={{background:'transparent', border:'1px solid #334155', color:'#94a3b8',
+                          padding:'1px 8px', borderRadius:'3px', cursor:'pointer', fontSize:'10px'}}>›</button>
+          <button onClick={() => setMonthOffset(0)}
+                  style={{background:'transparent', border:'1px solid #334155', color:'#94a3b8',
+                          padding:'1px 8px', borderRadius:'3px', cursor:'pointer', fontSize:'10px',
+                          marginLeft:'4px'}}>今</button>
+        </div>
+      </div>
+
+      {/* Day-of-week header */}
+      <div style={{display:'grid', gridTemplateColumns:'repeat(7, 1fr)', gap:'2px', marginBottom:'2px'}}>
+        {['日', '一', '二', '三', '四', '五', '六'].map(d => (
+          <div key={d} style={{fontSize:'9px', color:'#64748b', textAlign:'center', padding:'2px 0'}}>{d}</div>
+        ))}
+      </div>
+
+      {/* Calendar grid */}
+      <div style={{display:'grid', gridTemplateColumns:'repeat(7, 1fr)', gap:'2px'}}>
+        {cells.map(c => {
+          if (c.pad) return <div key={c.key} />;
+          const bg = c.isToday ? '#0f1828' : c.isWeekend ? '#070b15' : 'transparent';
+          const dimColor = c.isWeekend ? '#475569' : '#cbd5e1';
+          return (
+            <div key={c.key} style={{
+              background: bg,
+              border: c.isToday ? '1px solid #60a5fa' : '1px solid #1e2535',
+              borderRadius: '3px', padding: '3px 4px',
+              minHeight: '52px',
+            }}>
+              <div style={{fontSize:'10px', color: dimColor, fontWeight: c.isToday ? 700 : 400}}>
+                {c.d}
+                {c.isToday && <span style={{fontSize:'8px', color:'#60a5fa', marginLeft:'2px'}}>今</span>}
+              </div>
+              {c.marks.length > 0 && (
+                <div style={{marginTop:'2px', display:'flex', flexDirection:'column', gap:'1px'}}>
+                  {c.marks.slice(0, 3).map((mk, i) => (
+                    <div key={i} title={mk.label} style={{
+                      fontSize:'8px', color: mk.color,
+                      borderLeft: `2px solid ${mk.color}`, paddingLeft:'3px',
+                      whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis',
+                    }}>
+                      {mk.label.slice(0, 8)}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 圖例 */}
+      <div style={{display:'flex', gap:'10px', flexWrap:'wrap', marginTop:'6px',
+                    fontSize:'9px', color:'#64748b'}}>
+        <span><span style={{color:'#fca5a5'}}>━</span> TXO 月選結算</span>
+        <span><span style={{color:'#86efac'}}>━</span> 週三週選</span>
+        <span><span style={{color:'#60a5fa'}}>━</span> 週五週選</span>
+        <span><span style={{color:'#fb923c'}}>━</span> 高影響事件</span>
+      </div>
+    </div>
+  );
+}
+
 function IVPercentile({ data }) {
   const ivp = data?.iv_percentile;
   if (!ivp || !ivp.enough_data) return null;
@@ -3228,6 +3363,7 @@ function App() {
                  data?.upcoming_events?.length ? `${data.upcoming_events.length} 事件` : null,
                  data?.roll_suggestions?.length ? `${data.roll_suggestions.length} 換倉` : null,
                ].filter(Boolean).join(' · ') || null}>
+        <CalendarView data={data} />
         <UpcomingEvents data={data} />
         <CollarDashboard data={data} />
         <RollSuggestions data={data} />
