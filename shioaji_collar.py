@@ -2443,6 +2443,7 @@ def main():
             'iv_percentile':    None,           # ATM IV 百分位（過去 252 天）
             'pnl_attribution':  None,           # 每日 P&L Δ/θ/ν 拆解
             'drawdown':         None,           # 從 peak 追當前 drawdown
+            'risk_limits':      None,           # 風險限額使用率
             'order_helper':     None,           # 從推薦結構產生下單階梯 + add_trade 命令
             'upcoming_events': [],              # 未來 14 天高影響事件
             'market': market,
@@ -2634,6 +2635,18 @@ def main():
                          f"({dd['days_in_dd']} 天從 peak)")
         except Exception as _e:
             log.debug(f'drawdown 失敗: {_e}')
+
+        # 14g-rl. 風險限額使用率
+        try:
+            import risk_limits as _RL
+            import alerts as _AL
+            rl = _RL.evaluate(result, _AL.load_rules())
+            if rl:
+                result['risk_limits'] = rl
+                if rl['n_over'] or rl['n_hot']:
+                    log.info(f"Risk limits: {rl['n_over']} 超限 / {rl['n_hot']} hot ({rl['overall']})")
+        except Exception as _e:
+            log.debug(f'risk_limits 失敗: {_e}')
 
         # 14g-attr. 每日 P&L 拆解（Δ/θ/ν attribution）
         try:

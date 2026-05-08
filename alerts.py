@@ -45,6 +45,14 @@ DEFAULT_RULES = {
     'short_put_distance_sigma':   1.0,   # 你賣的 put 距現價幾個標準差以下警告
     'trading_loss_mtd_cap':      -50000, # 短線交易（trading book）本月累計虧損上限
 
+    # Risk limits（abs 值；達 80% 警告、超過紅色 alert）
+    'risk_max_delta_ntd_per_1pct_tx': 15000,
+    'risk_max_theta_ntd_per_day':     4000,
+    'risk_max_vega_ntd_per_pct_iv':   3000,
+    'risk_max_put_lots':              8,
+    'risk_max_short_call_lots':       4,
+    'risk_max_drawdown_pct':         -10,
+
     'cooldown_minutes':          60,    # 同一規則最少間隔分鐘
     'telegram_enabled':          True,
 }
@@ -276,6 +284,24 @@ def evaluate(data: dict, rules: dict) -> list:
             'msg':   f"短線交易本月累計虧損 {trading_mtd:,.0f} NT（上限 {loss_cap:,.0f}）",
             'tip':   '這個月已經輸太多。停止新建週選 / spread 部位，等下個月重來',
         })
+
+    # 12b. 風險限額使用率（read-only — risk_limits 模組已算好）
+    rl = data.get('risk_limits') or {}
+    for m in (rl.get('metrics') or []):
+        if m.get('status') == 'over':
+            alerts.append({
+                'key':   f"risk_over_{m['label']}",
+                'level': '🔴',
+                'msg':   f"{m['label']} 超限：{m['current']} {m.get('unit', '')} (限 {m['limit']}, 用 {m['usage_pct']}%)",
+                'tip':   '達到風險上限；考慮減倉、roll 履約或調整結構',
+            })
+        elif m.get('status') == 'hot':
+            alerts.append({
+                'key':   f"risk_hot_{m['label']}",
+                'level': '🟠',
+                'msg':   f"{m['label']} 接近上限：{m['current']} {m.get('unit', '')} (用 {m['usage_pct']}%)",
+                'tip':   '已用 80%+，新增部位需審慎',
+            })
 
     # 13a. Drawdown 警戒（從 peak 追當前 DD）
     dd = data.get('drawdown') or {}

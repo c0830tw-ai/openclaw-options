@@ -14,6 +14,14 @@
     "max_short_calls":           "賣出 call 總口數上限。超過會 alert 提醒不要再加",
     "short_put_distance_sigma":  "你賣的 put 距現價幾個標準差以下警告（被指派風險）",
     "trading_loss_mtd_cap":      "短線交易本月累計虧損超過此金額（負數）就 alert 停手",
+
+    "_risk_limits_comment": "風險限額（abs 值；達 80% 警告、超過 alert）",
+    "risk_max_delta_ntd_per_1pct_tx": "abs(net_delta_NT/1%TX) 上限。0 = 停用",
+    "risk_max_theta_ntd_per_day":     "abs(theta_NT/天) 上限",
+    "risk_max_vega_ntd_per_pct_iv":   "abs(vega_NT/1%IV) 上限",
+    "risk_max_put_lots":              "long put 總口數上限",
+    "risk_max_short_call_lots":       "short call 總口數上限（取代 max_short_calls）",
+    "risk_max_drawdown_pct":          "drawdown alert threshold (建議 -10)",
     "cooldown_minutes":          "同一規則至少間隔幾分鐘才再次通知",
     "telegram_enabled":          "true 才送 Telegram；否則只 console"
   },
@@ -30,6 +38,14 @@
   "max_short_calls":           6,
   "short_put_distance_sigma":  1.0,
   "trading_loss_mtd_cap":      -50000,
+
+  "risk_max_delta_ntd_per_1pct_tx": 15000,
+  "risk_max_theta_ntd_per_day":     4000,
+  "risk_max_vega_ntd_per_pct_iv":   3000,
+  "risk_max_put_lots":              8,
+  "risk_max_short_call_lots":       4,
+  "risk_max_drawdown_pct":          -10,
+
   "cooldown_minutes":          60,
   "telegram_enabled":          true
 }
