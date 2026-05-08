@@ -40,6 +40,11 @@ DEFAULT_RULES = {
     # Phase 6 broker drift detection
     'drift_check_enabled':       True,  # positions.json vs broker 真實持倉一致性檢查
 
+    # 多策略紅線（你做 short call、put spread、純短 put 等）
+    'max_short_calls':            6,     # 總賣出 call 口數上限
+    'short_put_distance_sigma':   1.0,   # 你賣的 put 距現價幾個標準差以下警告
+    'trading_loss_mtd_cap':      -50000, # 短線交易（trading book）本月累計虧損上限
+
     'cooldown_minutes':          60,    # 同一規則最少間隔分鐘
     'telegram_enabled':          True,
 }
@@ -218,6 +223,60 @@ def evaluate(data: dict, rules: dict) -> list:
                     'tip':   '你下單後 positions.json 沒更新。對一下實際口數，編輯設定檔即可',
                 })
 
+    # 10. 紅線：總賣 call 過多（避免封頂太多 + 增加風險暴露）
+    broker = data.get('broker') or {}
+    broker_pos = broker.get('positions') or []
+    short_call_qty = sum(
+        p.get('quantity', 0) for p in broker_pos
+        if p.get('direction') == 'Sell'
+        and p.get('category') == 'index_option'
+        and _option_type_from_code(p.get('code', '')) == 'call'
+    )
+    max_calls = rules.get('max_short_calls', 6)
+    if short_call_qty > max_calls:
+        alerts.append({
+            'key':   'too_many_short_calls',
+            'level': '🟠',
+            'msg':   f"你賣出的 Call 已達 {short_call_qty} 口（上限 {max_calls} 口）",
+            'tip':   '上漲被封頂的風險升高。下次新賣 call 前先平掉 1-2 口舊的，或暫停一週',
+        })
+
+    # 11. 紅線：你賣的 put 距現價過近（可能被指派）
+    short_put_min_sigma = rules.get('short_put_distance_sigma', 1.0)
+    if tx and dte_t and dte_t > 0:
+        T = dte_t / 252
+        sd = tx * (iv or 0.20) * (T ** 0.5)
+        if sd > 0:
+            for p in broker_pos:
+                if (p.get('direction') == 'Sell'
+                    and p.get('category') == 'index_option'
+                    and _option_type_from_code(p.get('code', '')) == 'put'):
+                    strike = _option_strike_from_code(p.get('code', ''))
+                    if not strike:
+                        continue
+                    distance = (tx - strike) / sd
+                    if distance < short_put_min_sigma:
+                        alerts.append({
+                            'key':   f'short_put_close_{p["code"]}',
+                            'level': '🔴',
+                            'msg':   f"你賣出的 Put {strike:.0f}（{p['code']}）距現價剩 {distance:.2f} 個標準差",
+                            'tip':   '快變價內 = 快被指派買股。立刻平倉、或往下調履約價（roll down）',
+                        })
+                        break  # 同類別只報 1 條，避免 spam
+
+    # 12. 紅線：trading book 本月累計虧損超過上限
+    ledger = data.get('ledger') or {}
+    by_book_mtd = ledger.get('by_book_mtd') or {}
+    trading_mtd = by_book_mtd.get('trading', 0)
+    loss_cap = rules.get('trading_loss_mtd_cap', -50000)
+    if trading_mtd <= loss_cap:
+        alerts.append({
+            'key':   'trading_loss_cap',
+            'level': '🔴',
+            'msg':   f"短線交易本月累計虧損 {trading_mtd:,.0f} NT（上限 {loss_cap:,.0f}）",
+            'tip':   '這個月已經輸太多。停止新建週選 / spread 部位，等下個月重來',
+        })
+
     return alerts
 
 
@@ -245,7 +304,46 @@ def send_telegram(msg: str) -> bool:
         return False
 
 
+import re
 from typing import Optional
+
+
+_OPTION_PREFIXES = ('TXO', 'TX1', 'TX2', 'TX4', 'TX5',
+                    'TXU', 'TXV', 'TXX', 'TXY', 'TXZ')
+
+
+def _option_strip_prefix(code: str) -> Optional[str]:
+    """剝掉已知 option 前綴後回剩餘字串；非 option code 回 None。"""
+    if not code:
+        return None
+    for p in _OPTION_PREFIXES:
+        if code.startswith(p):
+            return code[len(p):]
+    return None
+
+
+def _option_type_from_code(code: str) -> Optional[str]:
+    """從 TXO / TX2 / TXV 等 option code 抽 call 或 put。
+    Letter 編碼：A-L = Call (Jan-Dec)；M-X = Put (Jan-Dec)。
+    非 option 代碼（個股期、現股）回 None。"""
+    rest = _option_strip_prefix(code)
+    if rest is None or len(rest) < 2 or not rest[-1].isdigit():
+        return None
+    letter = rest[-2]
+    if letter in 'ABCDEFGHIJKL':
+        return 'call'
+    if letter in 'MNOPQRSTUVWX':
+        return 'put'
+    return None
+
+
+def _option_strike_from_code(code: str) -> Optional[float]:
+    """從 option code 抽履約價（4-5 位數字 + month_letter + year_digit）。"""
+    rest = _option_strip_prefix(code)
+    if not rest:
+        return None
+    m = re.match(r'^(\d{4,5})[A-X]\d$', rest)
+    return float(m.group(1)) if m else None
 
 
 def _find_matching_roll(alert_key: str, rolls: list) -> Optional[dict]:

@@ -82,10 +82,17 @@ def summary() -> Optional[Dict[str, Any]]:
     # 各 book 累計（lifetime）
     by_book: Dict[str, float] = {}
     by_book_count: Dict[str, int] = {}
+    by_book_mtd: Dict[str, float] = {}      # 本月各 book 已實現
     for t in closes:
         book = t.get('book', 'trading')
         by_book[book]       = by_book.get(book, 0)       + float(t['realized_pnl'])
         by_book_count[book] = by_book_count.get(book, 0) + 1
+        try:
+            ts = datetime.fromisoformat(t.get('datetime', ''))
+            if ts >= mtd_start:
+                by_book_mtd[book] = by_book_mtd.get(book, 0) + float(t['realized_pnl'])
+        except Exception:
+            pass
 
     lifetime_pnl = sum(float(t['realized_pnl']) for t in closes)
 
@@ -96,6 +103,7 @@ def summary() -> Optional[Dict[str, Any]]:
         'lifetime_realized':  round(lifetime_pnl, 0),
         'by_book':            {k: round(v, 0) for k, v in by_book.items()},
         'by_book_count':      by_book_count,
+        'by_book_mtd':        {k: round(v, 0) for k, v in by_book_mtd.items()},
         'open_positions':     [
             {
                 'id':         t['id'],
