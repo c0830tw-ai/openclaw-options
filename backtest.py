@@ -326,40 +326,68 @@ def load_csv(path: str) -> List[Tuple[date, float]]:
 
 
 # ── Shioaji 真實 TX history（chunked fetch）──────────────────
+def _load_env() -> None:
+    """讀 .env，避免直接依賴 shell 已 export。"""
+    import os
+    env_path = Path(__file__).resolve().parent / '.env'
+    if not env_path.exists():
+        return
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        k, v = line.split('=', 1)
+        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
 def fetch_tx_history_shioaji(days: int = 365) -> List[Tuple[date, float]]:
     """用 Shioaji api.kbars() 抓 TXFR1（連續契約）1-min K，重採成日 K。
     分塊抓避免單次請求太大。"""
+    import os
+    _load_env()
     import shioaji as sj
+    print(f'[backtest] Shioaji login...', file=sys.stderr)
     api = sj.Shioaji()
     api.login(
-        api_key=__import__('os').environ['SHIOAJI_API_KEY'],
-        secret_key=__import__('os').environ['SHIOAJI_SECRET_KEY'],
+        api_key=os.environ['SHIOAJI_API_KEY'],
+        secret_key=os.environ['SHIOAJI_SECRET_KEY'],
+        contracts_timeout=60_000,
     )
     # TXFR1 連續期貨
     contract = next((c for c in api.Contracts.Futures.TXF if c.symbol == 'TXFR1'), None)
     if not contract:
-        raise RuntimeError('TXFR1 not found')
+        api.logout()
+        raise RuntimeError('TXFR1 contract not found')
+    print(f'[backtest] contract: {contract.code} ({contract.symbol})', file=sys.stderr)
 
     from collections import OrderedDict
-    daily: dict = OrderedDict()
+    daily: OrderedDict = OrderedDict()
     end = datetime.now().date()
-    chunks = []
-    while days > 0:
-        chunk_days = min(60, days)   # 60 天 / chunk
+    remaining = days
+    chunk_count = 0
+    while remaining > 0:
+        chunk_days = min(60, remaining)
         start = end - timedelta(days=chunk_days)
+        chunk_count += 1
         try:
+            print(f'[backtest] chunk {chunk_count}: {start} → {end} ({chunk_days}d)...', file=sys.stderr)
             kb = api.kbars(contract=contract,
                            start=start.strftime('%Y-%m-%d'),
                            end=end.strftime('%Y-%m-%d'))
-            ts_arr = kb.ts
-            close_arr = kb.Close
+            ts_arr = list(kb.ts)
+            close_arr = list(kb.Close)
+            n_bars = len(ts_arr)
+            new_days = set()
             for ts_ns, c in zip(ts_arr, close_arr):
                 d = datetime.fromtimestamp(ts_ns / 1e9).date()
                 daily[d] = float(c)   # last close of day overwrites
+                new_days.add(d)
+            print(f'[backtest]   got {n_bars} 1-min bars → {len(new_days)} unique days', file=sys.stderr)
         except Exception as e:
-            print(f'[backtest] chunk {start}→{end} failed: {e}', file=sys.stderr)
-        end = start
-        days -= chunk_days
+            print(f'[backtest] chunk failed: {e}', file=sys.stderr)
+            break
+        end = start - timedelta(days=1)
+        remaining -= chunk_days
 
     out = sorted(daily.items())
     api.logout()
