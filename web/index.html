@@ -1674,7 +1674,11 @@ function UpcomingEvents({ data }) {
 }
 
 function PortfolioGreeks({ data }) {
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen]    = React.useState(false);
+  const [whatIf, setWhatIf] = React.useState(false);
+  const [txPct, setTxPct]  = React.useState(-3);
+  const [ivPp,  setIvPp]   = React.useState(5);
+  const [days,  setDays]   = React.useState(7);
   const pg = data?.portfolio_greeks;
   if (!pg || !pg.totals) return null;
   const t = pg.totals;
@@ -1718,8 +1722,64 @@ function PortfolioGreeks({ data }) {
           🧮 Portfolio Greeks（選擇權整體曝險）
         </span>
         <span style={{fontSize:'9px', color:'#64748b'}}>
-          {pg.legs?.length || 0} 腳　{open ? '▲ 收起' : '▼ 展開'}
+          {pg.legs?.length || 0} 腳　{open ? '▲ 收起' : '▼ 展開明細'}
         </span>
+      </div>
+
+      {/* What-if 情境計算機 */}
+      <div style={{marginTop:'6px', borderTop:'1px solid #1e2535', paddingTop:'6px'}}>
+        <div onClick={(e)=>{e.stopPropagation(); setWhatIf(!whatIf);}}
+             style={{display:'flex', justifyContent:'space-between', alignItems:'center',
+                     cursor:'pointer', userSelect:'none'}}>
+          <span style={{fontSize:'10px', color:'#94a3b8'}}>🎯 What-if 情境</span>
+          <span style={{fontSize:'9px', color:'#64748b'}}>{whatIf ? '▲' : '▼ 點開試算'}</span>
+        </div>
+        {whatIf && (() => {
+          const deltaPL = (t.delta_ntd_per_1pct_tx || 0) * txPct;
+          const thetaPL = (t.theta_ntd_per_day      || 0) * days;
+          const vegaPL  = (t.vega_ntd_per_pct_iv    || 0) * ivPp;
+          const total   = deltaPL + thetaPL + vegaPL;
+          const Slider = ({label, value, onChange, min, max, step, suffix}) => (
+            <div style={{flex:'1 1 200px', padding:'4px 8px'}}>
+              <div style={{fontSize:'10px', color:'#94a3b8', display:'flex', justifyContent:'space-between'}}>
+                <span>{label}</span>
+                <b style={{color:'#cbd5e1'}}>{value > 0 ? '+' : ''}{value}{suffix}</b>
+              </div>
+              <input type="range" min={min} max={max} step={step} value={value}
+                     onChange={e => onChange(parseFloat(e.target.value))}
+                     style={{width:'100%', accentColor:'#60a5fa'}} />
+            </div>
+          );
+          const Cell = ({label, value}) => (
+            <div style={{flex:'1 1 90px', textAlign:'center', padding:'4px 8px',
+                         background: value === total ? '#0f1828' : 'transparent',
+                         borderRadius: '4px'}}>
+              <div style={{fontSize:'9px', color:'#64748b'}}>{label}</div>
+              <div style={{fontSize: value === total ? '14px' : '12px',
+                           fontWeight: value === total ? 700 : 400,
+                           color: colN(value), marginTop:'2px'}}>{fmtS(Math.round(value))}</div>
+            </div>
+          );
+          return (
+            <div style={{marginTop:'4px'}}>
+              <div style={{display:'flex', flexWrap:'wrap'}}>
+                <Slider label="TX 變動 %"   value={txPct} onChange={setTxPct} min={-15} max={15} step={0.5} suffix="%" />
+                <Slider label="IV 變動 pp"  value={ivPp}  onChange={setIvPp}  min={-30} max={30} step={1}   suffix="pp" />
+                <Slider label="持有天數"    value={days}  onChange={setDays}  min={0}   max={45} step={1}   suffix="d" />
+              </div>
+              <div style={{display:'flex', flexWrap:'wrap', marginTop:'6px',
+                           background:'#070b15', borderRadius:'4px', padding:'4px 0'}}>
+                <Cell label="Δ × TX"     value={deltaPL} />
+                <Cell label="θ × 天"     value={thetaPL} />
+                <Cell label="ν × IV"     value={vegaPL} />
+                <Cell label="合計 P&L"   value={total} />
+              </div>
+              <div style={{fontSize:'9px', color:'#64748b', marginTop:'4px'}}>
+                線性近似（Black-76 一階）；大幅 TX 變動時實際 P&L 因 gamma 略有偏差
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       <div style={{display:'flex', gap:'8px', flexWrap:'wrap', marginTop:'6px'}}>
