@@ -909,6 +909,166 @@ function MarketHoursNote() {
   );
 }
 
+// 通用線圖：series = [{label, color, values:[{x, y, label?}]}, ...]
+function LineChart({ series, height = 100, showZero = true, yLabel, dateLabels = true }) {
+  if (!series || series.length === 0) return null;
+  const allVals = series.flatMap(s => (s.values || []).map(p => p.y));
+  if (allVals.length < 2) return null;
+
+  let minY = Math.min(...allVals);
+  let maxY = Math.max(...allVals);
+  if (showZero) {
+    if (minY > 0) minY = 0;
+    if (maxY < 0) maxY = 0;
+  }
+  const rangeY = maxY - minY || 1;
+
+  const w = 320, h = height;
+  const padL = 40, padR = 8, padT = 8, padB = dateLabels ? 18 : 4;
+  const innerW = w - padL - padR;
+  const innerH = h - padT - padB;
+
+  const allX = series.flatMap(s => s.values.map(p => p.x));
+  const xMin = Math.min(...allX), xMax = Math.max(...allX);
+  const rangeX = xMax - xMin || 1;
+
+  const px = x => padL + ((x - xMin) / rangeX) * innerW;
+  const py = y => padT + ((maxY - y) / rangeY) * innerH;
+  const zeroY = py(0);
+
+  const fmtY = v => {
+    const a = Math.abs(v);
+    if (a >= 1_000_000) return (v / 1_000_000).toFixed(1) + 'M';
+    if (a >= 1000) return Math.round(v).toLocaleString();
+    return v.toFixed(2);
+  };
+
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"
+         style={{width:'100%', height:`${h}px`, display:'block'}}>
+      <text x="2" y={padT + 6} fontSize="9" fill="#64748b">{fmtY(maxY)}</text>
+      <text x="2" y={h - padB} fontSize="9" fill="#64748b">{fmtY(minY)}</text>
+      {yLabel && <text x="2" y={padT + 16} fontSize="8" fill="#475569">{yLabel}</text>}
+
+      {showZero && minY < 0 && maxY > 0 && (
+        <line x1={padL} y1={zeroY} x2={padL + innerW} y2={zeroY}
+              stroke="#1e2535" strokeDasharray="2,2" strokeWidth="0.5" />
+      )}
+      <rect x={padL} y={padT} width={innerW} height={innerH}
+            fill="none" stroke="#1e2535" strokeWidth="0.5" />
+
+      {series.map((s, i) => {
+        if (s.values.length < 2) return null;
+        const points = s.values.map(p => `${px(p.x).toFixed(1)},${py(p.y).toFixed(1)}`).join(' ');
+        return <polyline key={i} fill="none" stroke={s.color || '#60a5fa'}
+                          strokeWidth="1.5" points={points} />;
+      })}
+
+      {dateLabels && series[0]?.values?.length >= 2 && (
+        <>
+          <text x={padL} y={h - 4} fontSize="8" fill="#64748b">{series[0].values[0].label || ''}</text>
+          <text x={padL + innerW} y={h - 4} fontSize="8" fill="#64748b" textAnchor="end">
+            {series[0].values[series[0].values.length - 1].label || ''}
+          </text>
+        </>
+      )}
+    </svg>
+  );
+}
+
+function ChartLegend({ series }) {
+  return (
+    <div style={{display:'flex', gap:'12px', flexWrap:'wrap', fontSize:'9px', color:'#94a3b8',
+                  marginTop:'2px', justifyContent:'center'}}>
+      {series.map((s, i) => (
+        <span key={i}>
+          <span style={{display:'inline-block', width:'12px', height:'2px',
+                         background: s.color, marginRight:'4px', verticalAlign:'middle'}} />
+          {s.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function GreeksHistoryChart({ data }) {
+  const gh = data?.greeks_history;
+  if (!gh || !gh.history || gh.history.length < 2) return null;
+
+  // 建 3 條 series
+  const toX = (i) => i;
+  const series = [
+    {
+      label: 'Δ NT/1%TX', color: '#7dd3fc',
+      values: gh.history.map((r, i) => ({
+        x: toX(i), y: r.delta_ntd_per_1pct_tx || 0,
+        label: i === 0 || i === gh.history.length - 1 ? r.date.slice(5) : '',
+      })),
+    },
+    {
+      label: 'θ NT/天', color: '#fca5a5',
+      values: gh.history.map((r, i) => ({
+        x: toX(i), y: r.theta_ntd_per_day || 0, label: '',
+      })),
+    },
+    {
+      label: 'ν NT/1%IV', color: '#86efac',
+      values: gh.history.map((r, i) => ({
+        x: toX(i), y: r.vega_ntd_per_pct_iv || 0, label: '',
+      })),
+    },
+  ];
+
+  return (
+    <div style={{
+      background:'#0a0e1c', border:'1px solid #1e2535',
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div style={{display:'flex', justifyContent:'space-between', marginBottom:'4px'}}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>📈 Greeks 走勢（{gh.snapshot_count} 天）</span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>{gh.first_date} → 今日</span>
+      </div>
+      <LineChart series={series} height={120} yLabel="NT$" />
+      <ChartLegend series={series} />
+    </div>
+  );
+}
+
+function EquityChart({ data }) {
+  const dd = data?.drawdown;
+  if (!dd || !dd.series || dd.series.length < 2) return null;
+
+  const equitySeries = {
+    label: 'Equity', color: '#7dd3fc',
+    values: dd.series.map((r, i) => ({
+      x: i, y: r.equity,
+      label: i === 0 || i === dd.series.length - 1 ? r.date.slice(5) : '',
+    })),
+  };
+  const ddSeries = {
+    label: 'Drawdown %', color: '#fca5a5',
+    values: dd.series.map((r, i) => ({ x: i, y: r.dd_pct, label: '' })),
+  };
+
+  return (
+    <div style={{
+      background:'#0a0e1c', border:'1px solid #1e2535',
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div style={{display:'flex', justifyContent:'space-between', marginBottom:'4px'}}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>💰 Equity 曲線（最近 {dd.series.length} 天）</span>
+      </div>
+      <LineChart series={[equitySeries]} height={100} showZero={false} yLabel="NT$" />
+      <div style={{marginTop:'6px'}}>
+        <div style={{fontSize:'9px', color:'#64748b', marginBottom:'2px'}}>Drawdown %</div>
+        <LineChart series={[ddSeries]} height={70} dateLabels={false} yLabel="%" />
+      </div>
+    </div>
+  );
+}
+
 function Section({ title, defaultOpen = true, badge, accent = 'gray', children }) {
   const [open, setOpen] = React.useState(defaultOpen);
   const accentColors = {
@@ -4342,6 +4502,8 @@ function App() {
                  data?.trade_journal?.total_trades ? `${data.trade_journal.total_trades} 日記` : null,
                  data?.event_history ? `${data.event_history.event_count} 歷史事件` : null,
                ].filter(Boolean).join(' · ') || null}>
+        <EquityChart data={data} />
+        <GreeksHistoryChart data={data} />
         <PnLAttribution data={data} />
         <TradeJournalPanel data={data} />
         <PastEventImpact data={data} />
