@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openclaw.event_analysis</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/chenchinghung/openclaw/options/event_analysis.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/chenchinghung/openclaw/options</string>
+
+    <!-- 每月 1 日 04:00 跑（events_sync 03:30 之後 30 分；夜盤期間 Shioaji 可登入）。
+         過去事件不常變動，月跑足夠 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Day</key>
+        <integer>1</integer>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/chenchinghung/openclaw/options/logs/event_analysis.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/chenchinghung/openclaw/options/logs/event_analysis.log</string>
+</dict>
+</plist>
