@@ -1678,9 +1678,31 @@ function PortfolioGreeks({ data }) {
   const pg = data?.portfolio_greeks;
   if (!pg || !pg.totals) return null;
   const t = pg.totals;
+  const gh = data?.greeks_history;
   const fmt  = n => n == null ? '—' : n.toLocaleString(undefined, {maximumFractionDigits: 0});
-  const fmtS = n => (n > 0 ? '+' : '') + fmt(n);
+  const fmtS = n => n == null ? '—' : (n > 0 ? '+' : '') + fmt(n);
   const colN = n => n > 0 ? '#4ade80' : n < 0 ? '#f87171' : '#94a3b8';
+
+  // Mini sparkline for theta history
+  const Sparkline = ({ values, w = 80, h = 18, color = '#64748b' }) => {
+    if (!values || values.length < 2) return null;
+    const min = Math.min(...values), max = Math.max(...values);
+    const range = max - min || 1;
+    const pts = values.map((v, i) => {
+      const x = (i / (values.length - 1)) * w;
+      const y = h - ((v - min) / range) * h;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+    const zeroY = h - ((0 - min) / range) * h;
+    return (
+      <svg width={w} height={h} style={{verticalAlign:'middle'}}>
+        {(min < 0 && max > 0) && (
+          <line x1="0" y1={zeroY} x2={w} y2={zeroY} stroke="#1e2535" strokeWidth="0.5" />
+        )}
+        <polyline fill="none" stroke={color} strokeWidth="1.2" points={pts} />
+      </svg>
+    );
+  };
 
   return (
     <div style={{
@@ -1712,14 +1734,28 @@ function PortfolioGreeks({ data }) {
           </div>
         </div>
         <div style={{flex:'1 1 160px', padding:'6px 10px', borderLeft:`3px solid ${colN(t.theta_ntd_per_day)}`}}>
-          <div style={{fontSize:'10px', color:'#94a3b8'}}>每日 Theta（時間）</div>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+            <div style={{fontSize:'10px', color:'#94a3b8'}}>每日 Theta（時間）</div>
+            {gh?.history?.length >= 2 && (
+              <Sparkline values={gh.history.map(h => h.theta_ntd_per_day || 0)}
+                         color={colN(t.theta_ntd_per_day)} />
+            )}
+          </div>
           <div style={{fontSize:'14px', marginTop:'2px'}}>
             <b style={{color: colN(t.theta_ntd_per_day)}}>{fmtS(t.theta_ntd_per_day)}</b>
             <span style={{fontSize:'10px', color:'#64748b'}}> NT$ / 天</span>
           </div>
-          <div style={{fontSize:'9px', color:'#64748b', marginTop:'2px'}}>
-            {t.theta_ntd_per_day >= 0 ? '賣方部位每日收 theta' : '長部位每日付 theta（hedge 成本）'}
-          </div>
+          {gh?.cumulative ? (
+            <div style={{fontSize:'9px', color:'#64748b', marginTop:'2px'}}>
+              累積 7d <b style={{color: colN(gh.cumulative.last_7d)}}>{fmtS(gh.cumulative.last_7d)}</b>
+              {' · '}30d <b style={{color: colN(gh.cumulative.last_30d)}}>{fmtS(gh.cumulative.last_30d)}</b>
+              {' · '}lifetime <b style={{color: colN(gh.cumulative.lifetime)}}>{fmtS(gh.cumulative.lifetime)}</b>
+            </div>
+          ) : (
+            <div style={{fontSize:'9px', color:'#64748b', marginTop:'2px'}}>
+              {t.theta_ntd_per_day >= 0 ? '賣方部位每日收 theta' : '長部位每日付 theta（hedge 成本）'}
+            </div>
+          )}
         </div>
         <div style={{flex:'1 1 160px', padding:'6px 10px', borderLeft:`3px solid ${colN(t.vega_ntd_per_pct_iv)}`}}>
           <div style={{fontSize:'10px', color:'#94a3b8'}}>淨 Vega（波動率）</div>

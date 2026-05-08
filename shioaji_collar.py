@@ -2527,6 +2527,7 @@ def main():
             'weekly_opportunities': None,       # filled below
             'intraday_bb': None,                # 5-min K BB 軌寬狀態
             'portfolio_greeks': None,           # broker 選擇權部位 Greeks 聚合
+            'greeks_history':   None,           # 過去 30 天 Greeks 趨勢 + 累積 theta
             'upcoming_events': [],              # 未來 14 天高影響事件
             'market': market,
             'txo_month': month,
@@ -2595,10 +2596,9 @@ def main():
         except Exception as _e:
             log.debug(f'ledger summary 失敗（可忽略）: {_e}')
 
-        # 14c. Daily snapshot capture + trend
+        # 14c. Daily snapshot trend（先讀歷史；當日 capture 延後到所有 enrichment 後）
         try:
             import snapshot as _S
-            _S.capture(result)
             result['trend'] = _S.trend_summary(window_days=60)
             if result.get('trend'):
                 _ch = result['trend']['changes']
@@ -2607,7 +2607,7 @@ def main():
                     log.info(f"Trend vs 昨日: TX {_y['tx_delta_pct']:+.2f}%  "
                              f"unrealized Δ {_y['unrealized_delta'] or 0:+,.0f}")
         except Exception as _e:
-            log.debug(f'snapshot 失敗（可忽略）: {_e}')
+            log.debug(f'snapshot trend 失敗（可忽略）: {_e}')
 
         # 14d. Roll 操作建議
         try:
@@ -2697,6 +2697,19 @@ def main():
                 result['intraday_bb'] = intraday_bb
         except Exception as _e:
             log.debug(f'intraday BB 整體失敗: {_e}')
+
+        # 14i. Daily snapshot capture（在所有 enrichment 後，含 Greeks）+ greeks history
+        try:
+            import snapshot as _S2
+            _S2.capture(result)
+            result['greeks_history'] = _S2.greeks_trend(window_days=30)
+            if result.get('greeks_history'):
+                _gh = result['greeks_history']
+                log.info(f"Greeks history: {_gh['snapshot_count']} 天紀錄  "
+                         f"累積 theta（30d/lifetime）: "
+                         f"{_gh['cumulative']['last_30d']:+,} / {_gh['cumulative']['lifetime']:+,} NT")
+        except Exception as _e:
+            log.debug(f'snapshot.capture / greeks_trend 失敗: {_e}')
 
         # 報價回填保護：當「這次抓到 BS 估算」且「快取有真實報價」時才回填
         # （之前條件是 not is_market_hours，現在夜盤 TXO 也有真實報價，改用 quotes_source 直接判斷）

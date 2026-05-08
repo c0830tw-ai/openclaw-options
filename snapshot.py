@@ -56,6 +56,9 @@ def capture(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     pf_items  = (portfolio.get('items')  or [])
     ledger    = result.get('ledger') or {}
     betas     = result.get('betas')  or {}
+    pg        = result.get('portfolio_greeks') or {}
+    pg_totals = (pg.get('totals') or {})
+    pg_legs   = pg.get('legs') or []
 
     now = datetime.now()
     snap = {
@@ -84,6 +87,13 @@ def capture(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             'beta_2330': betas.get('beta_2330'),
             'beta_0050': betas.get('beta_0050'),
         } if betas else None,
+        'greeks': {
+            'net_delta':              pg_totals.get('net_delta'),
+            'delta_ntd_per_1pct_tx':  pg_totals.get('delta_ntd_per_1pct_tx'),
+            'theta_ntd_per_day':      pg_totals.get('theta_ntd_per_day'),
+            'vega_ntd_per_pct_iv':    pg_totals.get('vega_ntd_per_pct_iv'),
+            'leg_count':              len(pg_legs),
+        } if pg_totals else None,
     }
 
     data = load()
@@ -171,5 +181,52 @@ def trend_summary(window_days: int = 60) -> Optional[Dict[str, Any]]:
             'vs_yesterday':   _delta(today, yesterday),
             'vs_week_ago':    _delta(today, week_ago),
             'vs_month_start': _delta(today, month_first),
+        },
+    }
+
+
+def greeks_trend(window_days: int = 30) -> Optional[Dict[str, Any]]:
+    """從歷次 daily snapshot 抽 greeks，回傳：
+      - history: 過去 window_days 內每日 greeks 值（時間序列）
+      - cumulative: 各時段累積 theta cost 估算
+        7d / 30d / lifetime（snapshot 起算）— 把每日 theta_ntd_per_day 加總
+    沒有 greeks 資料的天會被略過。
+    """
+    data = load()
+    snaps = sorted(data.get('snapshots', []), key=lambda s: s.get('date', ''))
+    rows = [s for s in snaps if s.get('greeks')]
+    if not rows:
+        return None
+
+    # 時間序列（取後 window_days 筆）
+    history = [{
+        'date':                  s['date'],
+        'net_delta':             s['greeks'].get('net_delta'),
+        'delta_ntd_per_1pct_tx': s['greeks'].get('delta_ntd_per_1pct_tx'),
+        'theta_ntd_per_day':     s['greeks'].get('theta_ntd_per_day'),
+        'vega_ntd_per_pct_iv':   s['greeks'].get('vega_ntd_per_pct_iv'),
+        'leg_count':             s['greeks'].get('leg_count'),
+    } for s in rows[-window_days:]]
+
+    # 累積 theta：簡化假設「每筆 snapshot 代表持倉 1 日」
+    today_str = rows[-1]['date']
+
+    def _sum_window(days: int) -> int:
+        try:
+            cutoff = (datetime.strptime(today_str, '%Y-%m-%d')
+                      - timedelta(days=days - 1)).strftime('%Y-%m-%d')
+        except Exception:
+            return 0
+        return int(sum((s['greeks'].get('theta_ntd_per_day') or 0)
+                       for s in rows if s['date'] >= cutoff))
+
+    return {
+        'history':         history,
+        'snapshot_count':  len(rows),
+        'first_date':      rows[0]['date'],
+        'cumulative': {
+            'last_7d':      _sum_window(7),
+            'last_30d':     _sum_window(30),
+            'lifetime':     int(sum((s['greeks'].get('theta_ntd_per_day') or 0) for s in rows)),
         },
     }
