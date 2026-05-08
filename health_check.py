@@ -125,6 +125,64 @@ def evaluate(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         r3_score, r3_detail = 50, '資料不足無法評估'
     breakdown.append({'rule': 'Theta 預算', 'score': r3_score, 'detail': r3_detail})
 
+    # ── Rule 5: 比例式價差對齊（BP:SP = 1:2 的偵測）─────────
+    # 只在用戶有 short puts 時才評估（否則跳過、視為 N/A）
+    short_puts = [L for L in pg_legs
+                   if L.get('right') == 'put' and (L.get('qty_signed') or 0) < 0]
+    held_short_put_lots = sum(-(L.get('qty_signed') or 0) for L in short_puts)
+
+    if held_short_put_lots > 0:
+        # 有短 put → 檢查比例
+        if held_put_lots > 0:
+            actual_ratio = held_short_put_lots / held_put_lots
+            if 1.8 <= actual_ratio <= 2.2:
+                r5_score = 100
+                r5_detail = f'BP:SP = 1:{actual_ratio:.2f}（接近 1:2，符合輝哥比例式）'
+            elif 1.5 <= actual_ratio < 1.8 or 2.2 < actual_ratio <= 2.5:
+                r5_score = 80
+                r5_detail = f'BP:SP = 1:{actual_ratio:.2f}（略偏離 1:2）'
+            elif actual_ratio > 2.5:
+                r5_score = 50
+                r5_detail = f'BP:SP = 1:{actual_ratio:.2f}（短 SP 比例過高，下檔風險放大）'
+                violations.append(f'short put ({held_short_put_lots} 口) 對 long put ({held_put_lots} 口) '
+                                  f'比例 1:{actual_ratio:.1f}，超過建議 1:2')
+                suggestions.append('考慮減少 short put 口數或加買 long put 平衡')
+            else:
+                r5_score = 70
+                r5_detail = f'BP:SP = 1:{actual_ratio:.2f}（短 SP 比例偏低，credit 收益少）'
+        else:
+            # 無 long put 但有 short put → 純裸賣，極危險
+            r5_score = 30
+            r5_detail = f'⚠️ 持有 {held_short_put_lots} 口裸賣 put（無 BP 保護！）'
+            violations.append(f'裸賣 put {held_short_put_lots} 口無上方保護，極端跌幅 unlimited 虧損')
+            suggestions.append('立即加買對應 long put 形成 spread，至少 1:2 比例')
+        breakdown.append({'rule': '比例式對齊', 'score': r5_score, 'detail': r5_detail})
+
+        # ── Rule 6: 保證金壓力（簡化：每口短 put × 60K NT 估算）──
+        margin_per_lot = 60000     # 永豐 TXO 短 put 約略保證金 (NT$)
+        used_margin = held_short_put_lots * margin_per_lot
+        # 假設可用資金 = core_long_notional × 30%（保守，避免動到 hedge core）
+        available = pf_notional * 0.30 if pf_notional > 0 else 0
+        if available > 0:
+            usage_pct = used_margin / available * 100
+            if usage_pct < 50:
+                r6_score = 100
+                r6_detail = f'估保證金 {used_margin:,} NT ({usage_pct:.0f}% 預算，安全)'
+            elif usage_pct < 75:
+                r6_score = 75
+                r6_detail = f'估保證金 {used_margin:,} NT ({usage_pct:.0f}% 預算，中度)'
+            elif usage_pct < 100:
+                r6_score = 50
+                r6_detail = f'估保證金 {used_margin:,} NT ({usage_pct:.0f}% 預算，偏高)'
+                violations.append(f'保證金佔可用資金 {usage_pct:.0f}%，下跌時可能追繳')
+                suggestions.append('減少 short put 口數或預留更多現金')
+            else:
+                r6_score = 30
+                r6_detail = f'估保證金 {used_margin:,} NT ({usage_pct:.0f}% 預算，超標)'
+                violations.append(f'保證金已超出可用 30% 預算（{usage_pct:.0f}%），追繳風險高')
+                suggestions.append('立即減 short put 部位')
+            breakdown.append({'rule': '保證金壓力', 'score': r6_score, 'detail': r6_detail})
+
     # ── Rule 4: 趨勢市賣 call 風險 ─────────────────────────
     if held_short_call_lots > 0:
         # 用 trend 區段 vs_week_ago 看上漲動能
