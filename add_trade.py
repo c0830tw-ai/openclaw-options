@@ -19,10 +19,33 @@ add_trade.py — 期權交易紀錄 CLI
   # 彙總
   python3 add_trade.py summary
 """
-import argparse, sys
+import argparse, json, sys
 from datetime import datetime
+from pathlib import Path
 
 import ledger as L
+
+
+def _capture_context() -> dict:
+    """從 latest_collar.json 抓 TX/IV/event 當前快照。"""
+    try:
+        latest = Path(__file__).resolve().parent / 'latest_collar.json'
+        if not latest.exists():
+            return {}
+        d = json.loads(latest.read_text(encoding='utf-8'))
+        m = d.get('market') or {}
+        evs = d.get('upcoming_events') or []
+        nearest_ev = next((e for e in evs if (e.get('days_until') or 99) <= 5), None)
+        return {
+            'tx':       m.get('tx_futures'),
+            'taiex':    m.get('taiex'),
+            'iv_atm':   d.get('iv_used'),
+            'dte':      d.get('dte_trading'),
+            'session':  d.get('market_session'),
+            'next_event': f"{nearest_ev['days_until']}d {nearest_ev['name']}" if nearest_ev else None,
+        }
+    except Exception:
+        return {}
 
 
 # ─── ID 產生 ──────────────────────────────────────────────────────
@@ -56,12 +79,21 @@ def cmd_add(args):
         'linked_id':   None,
         'realized_pnl': None,
         'note':        args.note,
+        'thesis':      args.thesis,                    # 投資論點（為什麼下這單）
+        'context':     _capture_context(),             # 當下市況快照
     }
     data['trades'].append(trade)
     L.save(data)
     print(f"✓ 新增: {trade['id']}")
     print(f"  {trade['side']} {trade['instrument']}  qty={trade['qty']}  @ {trade['price']}  fee={trade['fee']}")
     print(f"  book={trade['book']}")
+    if args.thesis:
+        print(f"  論點：{args.thesis}")
+    ctx = trade['context']
+    if ctx.get('tx'):
+        iv = ctx.get('iv_atm') or 0
+        print(f"  context: TX={ctx['tx']:.0f} IV={iv*100:.1f}% DTE={ctx.get('dte', '?')}d "
+              f"{ctx.get('next_event') or ''}")
 
 
 # ─── close ────────────────────────────────────────────────────────
@@ -95,6 +127,11 @@ def cmd_close(args):
     open_t['status']        = 'closed'
     open_t['linked_id']     = close_t['id']
     open_t['realized_pnl']  = pnl['net_pnl']
+    # 平倉時補上 outcome 反思
+    if args.outcome:
+        open_t['outcome'] = args.outcome
+    if args.thesis_correct is not None:
+        open_t['thesis_correct'] = args.thesis_correct
 
     L.save(data)
     sign = '+' if pnl['net_pnl'] >= 0 else ''
@@ -162,6 +199,7 @@ def main():
     p_add.add_argument('--fee', type=float, default=25)
     p_add.add_argument('--book', choices=['hedge', 'trading', 'core'], default='trading')
     p_add.add_argument('--note', default='')
+    p_add.add_argument('--thesis', default='', help='投資論點（為何下這單）— 月底回看用')
     p_add.set_defaults(func=cmd_add)
 
     p_close = sub.add_parser('close', help='平倉 + 算 P&L')
@@ -169,6 +207,9 @@ def main():
     p_close.add_argument('price', type=float)
     p_close.add_argument('--fee', type=float, default=25)
     p_close.add_argument('--note', default='')
+    p_close.add_argument('--outcome', default='', help='實際結果反思（與 thesis 對照）')
+    p_close.add_argument('--thesis-correct', type=int, choices=[0, 1], default=None,
+                          help='thesis 是否成立 (1=是, 0=否)')
     p_close.set_defaults(func=cmd_close)
 
     p_list = sub.add_parser('list', help='列表')

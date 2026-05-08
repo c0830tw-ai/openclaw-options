@@ -2530,6 +2530,112 @@ function PortfolioBreakdown({ data }) {
   );
 }
 
+function TradeJournalPanel({ data }) {
+  const [open, setOpen] = React.useState(false);
+  const tj = data?.trade_journal;
+  if (!tj || tj.total_trades === 0) return null;
+
+  const fmt = n => n == null ? '—' : Math.round(n).toLocaleString();
+  const fmtS = n => n == null ? '—' : (n > 0 ? '+' : '') + Math.round(n).toLocaleString();
+  const colN = n => n > 0 ? '#4ade80' : n < 0 ? '#f87171' : '#94a3b8';
+
+  const months = Object.entries(tj.by_month || {}).slice(0, 3);
+  const theses = Object.entries(tj.by_thesis || {});
+
+  return (
+    <div style={{
+      background:'#0a0e1c', border:'1px solid #1e2535',
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div onClick={() => setOpen(!open)} style={{
+        display:'flex', justifyContent:'space-between', alignItems:'center',
+        cursor:'pointer', userSelect:'none',
+      }}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>📓 交易日記</span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>
+          {tj.total_trades} 筆 ({tj.closed_trades} closed)　{open ? '▲' : '▼'}
+        </span>
+      </div>
+
+      {/* 月度 mini cards */}
+      <div style={{display:'flex', gap:'6px', marginTop:'4px', flexWrap:'wrap'}}>
+        {months.map(([m, s]) => (
+          <div key={m} style={{flex:'1 1 110px', padding:'4px 8px',
+                                background:'#070b15', borderRadius:'3px',
+                                borderLeft:`3px solid ${colN(s.pnl)}`}}>
+            <div style={{fontSize:'9px', color:'#94a3b8'}}>{m}</div>
+            <div style={{fontSize:'13px', color: colN(s.pnl), fontWeight:700}}>{fmtS(s.pnl)}</div>
+            <div style={{fontSize:'9px', color:'#64748b'}}>
+              {s.count} 筆
+              {s.win_rate != null && ` · 勝率 ${s.win_rate}%`}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {open && (
+        <>
+          {/* By thesis */}
+          {theses.length > 0 && (
+            <div style={{marginTop:'8px', borderTop:'1px solid #1e2535', paddingTop:'6px'}}>
+              <div style={{fontSize:'10px', color:'#64748b', marginBottom:'4px'}}>按論點分類</div>
+              {theses.map(([k, s]) => (
+                <div key={k} style={{display:'flex', alignItems:'baseline', gap:'8px', fontSize:'10px', padding:'2px 0'}}>
+                  <span style={{minWidth:'80px', color:'#cbd5e1'}}>{k}</span>
+                  <span style={{minWidth:'40px', color:'#94a3b8'}}>n={s.count}</span>
+                  {s.win_rate != null && (
+                    <span style={{minWidth:'60px', color: s.win_rate >= 50 ? '#86efac' : '#fca5a5'}}>
+                      勝率 {s.win_rate}%
+                    </span>
+                  )}
+                  {s.thesis_hit_rate != null && (
+                    <span style={{minWidth:'80px', color:'#fbbf24'}}>
+                      論點命中 {s.thesis_hit_rate}%
+                    </span>
+                  )}
+                  <span style={{flex:1, textAlign:'right', color: colN(s.pnl)}}>{fmtS(s.pnl)} NT</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Recent entries */}
+          {tj.recent_entries?.length > 0 && (
+            <div style={{marginTop:'8px', borderTop:'1px solid #1e2535', paddingTop:'6px'}}>
+              <div style={{fontSize:'10px', color:'#64748b', marginBottom:'4px'}}>近期日記</div>
+              {tj.recent_entries.map((e, i) => (
+                <div key={i} style={{padding:'4px 6px', marginBottom:'4px',
+                                      background:'#070b15', borderRadius:'3px',
+                                      borderLeft:`3px solid ${e.thesis_correct === 1 ? '#86efac' : e.thesis_correct === 0 ? '#fca5a5' : '#475569'}`}}>
+                  <div style={{display:'flex', justifyContent:'space-between'}}>
+                    <span style={{fontSize:'10px', color:'#94a3b8'}}>{e.date} · {e.instrument}</span>
+                    <span style={{fontSize:'10px', color: colN(e.realized_pnl)}}>{fmtS(e.realized_pnl)}</span>
+                  </div>
+                  {e.thesis && (
+                    <div style={{fontSize:'10px', color:'#cbd5e1', marginTop:'2px'}}>
+                      <span style={{color:'#fbbf24'}}>論點：</span>{e.thesis}
+                    </div>
+                  )}
+                  {e.outcome && (
+                    <div style={{fontSize:'10px', color:'#94a3b8', marginTop:'1px'}}>
+                      <span style={{color:'#86efac'}}>結果：</span>{e.outcome}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{fontSize:'9px', color:'#64748b', marginTop:'4px'}}>
+            記錄方式：python3 add_trade.py add ... --thesis "..."
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function PastEventImpact({ data }) {
   const eh = data?.event_history;
   if (!eh || !eh.aggregates) return null;
@@ -3094,7 +3200,11 @@ function App() {
 
       {/* 📈 績效追蹤 — 月底看 */}
       <Section title="📈 績效追蹤" defaultOpen={false}
-               badge={data?.event_history ? `${data.event_history.event_count} 歷史事件` : null}>
+               badge={[
+                 data?.trade_journal?.total_trades ? `${data.trade_journal.total_trades} 日記` : null,
+                 data?.event_history ? `${data.event_history.event_count} 歷史事件` : null,
+               ].filter(Boolean).join(' · ') || null}>
+        <TradeJournalPanel data={data} />
         <PastEventImpact data={data} />
         <TrendStrip data={data} />
         <TradingLedger data={data} />

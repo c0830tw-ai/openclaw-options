@@ -2439,6 +2439,7 @@ def main():
             'health_check':     None,           # 持倉健診評分（對齊 SOP）
             'collar_dashboard': None,           # collar 整合 dashboard（per-leg + 結構推薦）
             'event_history':    None,           # 歷史事件 P&L 解析（events analysis CLI 寫入）
+            'trade_journal':    None,           # 交易日記聚合（thesis 命中率、月度）
             'upcoming_events': [],              # 未來 14 天高影響事件
             'market': market,
             'txo_month': month,
@@ -2594,6 +2595,16 @@ def main():
                 log.info(f"Collar 推薦結構: {rs.get('label', '?')}  ({rs.get('reason', '')})")
         except Exception as _e:
             log.debug(f'collar_dashboard 失敗: {_e}')
+
+        # 14g-bis. 交易日記聚合（thesis 命中率 / monthly stats）
+        try:
+            import trade_journal as _TJ
+            tj = _TJ.summary()
+            if tj:
+                result['trade_journal'] = tj
+                log.info(f"Trade journal: {tj['total_trades']} 筆 ({tj['closed_trades']} closed)")
+        except Exception as _e:
+            log.debug(f'trade_journal 失敗: {_e}')
 
         # 14h-pre. 歷史事件 P&L 解析（從 event_history.json 載入；event_analysis.py CLI 產生）
         try:
