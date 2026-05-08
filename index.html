@@ -2101,6 +2101,186 @@ function _bsGreeks(S, K, T, sigma, isPut) {
   };
 }
 
+function HuiRatioHelper({ data }) {
+  const [open, setOpen] = React.useState(false);
+  const [sets, setSets] = React.useState(1);              // 幾組（1 組 = 1×BP+2×SP+1×SC）
+  const [spOffset, setSpOffset] = React.useState(500);    // SP 履約價差 BP 下方
+  const so = data?.selected_options || {};
+  const tx = data?.market?.tx_futures;
+  if (!so.put?.strike || !tx) return null;
+
+  const month = data?.txo_month || '202605';
+  const dte = data?.dte_trading || 30;
+  const iv  = data?.iv_used || 0.20;
+  const T = dte / 365;
+
+  const bpStrike = so.put.strike;
+  const spStrike = bpStrike - parseInt(spOffset);
+  const scStrike = so.call?.strike;
+
+  // BS 估價
+  const bsP = (K, isPut) => {
+    const sqrtT = Math.sqrt(T);
+    const d1 = (Math.log(tx/K) + 0.5 * iv*iv * T) / (iv * sqrtT);
+    const d2 = d1 - iv*sqrtT;
+    return isPut
+      ? K * _normCdf(-d2) - tx * _normCdf(-d1)
+      : tx * _normCdf(d1) - K * _normCdf(d2);
+  };
+
+  // Greeks per leg
+  const legs = [
+    {
+      label: '📥 買 BP（保護腳）', side: 'buy', right: 'put', strike: bpStrike,
+      qty: 1 * sets, color: '#86efac', book: 'hedge',
+      thesis: `輝哥比例式：1 BP 保護 ${sets} 組`,
+      midPrice: bsP(bpStrike, true),
+    },
+    {
+      label: '📤 賣 SP（×2 收 credit）', side: 'sell', right: 'put', strike: spStrike,
+      qty: 2 * sets, color: '#fca5a5', book: 'trading',
+      thesis: `輝哥比例式：2 SP credit ${sets} 組`,
+      midPrice: bsP(spStrike, true),
+    },
+  ];
+  if (scStrike) legs.push({
+    label: '📤 賣 SC（covered call）', side: 'sell', right: 'call', strike: scStrike,
+    qty: 1 * sets, color: '#fca5a5', book: 'trading',
+    thesis: `輝哥 covered call ${sets} 組`,
+    midPrice: bsP(scStrike, false),
+  });
+
+  // Net credit estimate
+  const netCash = legs.reduce((sum, L) => {
+    const sign = L.side === 'sell' ? 1 : -1;
+    return sum + sign * L.midPrice * L.qty * 50;
+  }, 0);
+
+  // Max loss / breakeven for ratio
+  // 1×BP_K1 + 2×SP_K2 (K1 > K2)
+  // Max profit at TX = K2: profit = (K1-K2) - net_debit (if debit) or + net_credit (if credit)
+  // Max loss: TX → 0, lose 2×K2 - K1 + 2×TX_loss... actually unlimited downside
+  const netCredit = netCash > 0 ? netCash : 0;
+  const netDebit  = netCash < 0 ? -netCash : 0;
+  // breakeven below: TX = SP - (BP-SP) - net_credit_per_set / 50
+  const credit_pts = (legs[0].midPrice * -1) + (legs[1].midPrice * 2);
+  const lower_be = spStrike - (bpStrike - spStrike) - credit_pts;
+
+  const fmt = n => n == null ? '—' : Math.round(n).toLocaleString();
+
+  // Ladder for each leg
+  const ladderBuy  = (mid) => ({ try1: Math.max(2, Math.round(mid * 0.97)), try2: Math.round(mid), try3: Math.round(mid * 1.05) });
+  const ladderSell = (mid) => ({ try1: Math.round(mid * 1.05), try2: Math.round(mid), try3: Math.max(1, Math.round(mid * 0.95)) });
+
+  const cmd = (leg, price) => {
+    const sd = leg.side === 'buy' ? 'buy_to_open' : 'sell_to_open';
+    const right = leg.right === 'put' ? 'P' : 'C';
+    const inst = `TXO ${month} ${Math.round(leg.strike)}${right}`;
+    return `python3 add_trade.py add ${sd} "${inst}" ${leg.qty} ${price} --book ${leg.book} --thesis "${leg.thesis}"`;
+  };
+
+  const copy = (s) => {
+    navigator.clipboard?.writeText(s).then(
+      () => alert('已複製：\n' + s),
+      () => alert('複製失敗'),
+    );
+  };
+
+  return (
+    <div style={{
+      background:'#0a0e1c', border:'1px solid #fbbf2444',
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div onClick={() => setOpen(!open)} style={{
+        display:'flex', justifyContent:'space-between', alignItems:'center',
+        cursor:'pointer', userSelect:'none',
+      }}>
+        <span style={{fontWeight:700, color:'#fbbf24'}}>
+          🎰 輝哥比例式價差 + Covered Call
+        </span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>
+          {legs.length} 腳 × {sets} 組　{open ? '▲' : '▼'}
+        </span>
+      </div>
+
+      {open && (
+        <>
+          {/* 設定 */}
+          <div style={{display:'flex', gap:'8px', marginTop:'6px', flexWrap:'wrap', alignItems:'center',
+                        padding:'6px', background:'#070b15', borderRadius:'3px'}}>
+            <span style={{fontSize:'10px', color:'#94a3b8'}}>組數</span>
+            <input type="number" value={sets} onChange={e => setSets(Math.max(1, parseInt(e.target.value)||1))} min="1" max="10"
+                   style={{width:'50px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}} />
+            <span style={{fontSize:'10px', color:'#94a3b8'}}>SP 距 BP 下方</span>
+            <input type="number" value={spOffset} onChange={e => setSpOffset(parseInt(e.target.value)||500)} step="100" min="100"
+                   style={{width:'70px', background:'#0a0e1c', color:'#cbd5e1', border:'1px solid #334155', padding:'2px 4px'}} />
+            <span style={{fontSize:'10px', color:'#64748b'}}>點</span>
+          </div>
+
+          {/* Summary */}
+          <div style={{padding:'6px 8px', marginTop:'6px',
+                        background:'#0f1828', borderRadius:'3px'}}>
+            <div style={{fontSize:'10px', color:'#cbd5e1'}}>
+              結構：1×BP {bpStrike} / 2×SP {spStrike}{scStrike ? ` / 1×SC ${scStrike}` : ''} × {sets} 組
+            </div>
+            <div style={{fontSize:'10px', color:'#94a3b8', marginTop:'2px'}}>
+              估算{netCash > 0 ? '收 ' : '付 '}
+              <b style={{color: netCash > 0 ? '#86efac' : '#fca5a5'}}>NT$ {fmt(Math.abs(netCash))}</b>
+              {' · '}下方損益平衡 ≈ <b>{Math.round(lower_be)}</b>
+              <span style={{fontSize:'9px', color:'#64748b'}}>（再下跌進入 ×2 損失區）</span>
+            </div>
+          </div>
+
+          {/* Each leg with ladder */}
+          {legs.map((leg, i) => {
+            const ladder = leg.side === 'buy' ? ladderBuy(leg.midPrice) : ladderSell(leg.midPrice);
+            return (
+              <div key={i} style={{
+                marginTop:'6px', padding:'6px 10px',
+                background:'#070b15', borderRadius:'4px',
+                borderLeft:`3px solid ${leg.color}`,
+              }}>
+                <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline'}}>
+                  <span style={{fontSize:'11px', fontWeight:700, color: leg.color}}>
+                    {leg.label} × {leg.qty} 口
+                  </span>
+                  <span style={{fontSize:'9px', color:'#64748b'}}>
+                    TXO {month} {leg.strike}{leg.right === 'put' ? 'P' : 'C'}
+                  </span>
+                </div>
+                <div className="ladder-row" style={{marginTop:'4px'}}>
+                  {[
+                    { label: '1️⃣ 試探', price: ladder.try1 },
+                    { label: '2️⃣ 中位', price: ladder.try2 },
+                    { label: '3️⃣ 主動', price: ladder.try3 },
+                  ].map((tier, j) => (
+                    <div key={j} style={{padding:'4px 6px', background:'#0a0e1c', borderRadius:'3px',
+                                          border:'1px solid #1e2535'}}>
+                      <div style={{fontSize:'9px', color:'#94a3b8'}}>{tier.label}</div>
+                      <div style={{fontSize:'13px', color: leg.color, fontWeight:700}}>{tier.price} 點</div>
+                      <button onClick={() => copy(cmd(leg, tier.price))} style={{
+                        marginTop:'2px', fontSize:'9px',
+                        background:'transparent', border:`1px solid ${leg.color}`,
+                        color: leg.color, padding:'1px 6px', borderRadius:'2px', cursor:'pointer',
+                      }}>📋 複製</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+
+          <div style={{fontSize:'9px', color:'#64748b', marginTop:'6px'}}>
+            ⚠ 跌破下方損益平衡點 ≈ {Math.round(lower_be)} 後虧損加倍。
+            建議組數對齊資金：50 萬 → 1 組、100 萬 → 2 組、200 萬 → 4 組
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function PretradeSimulator({ data }) {
   const [open, setOpen] = React.useState(false);
   const t = data?.portfolio_greeks?.totals;
@@ -2194,6 +2374,35 @@ function PretradeSimulator({ data }) {
         { id: newId(), side: 'sell', right: 'put', strike: so.put.strike, dte: data.dte_trading || 30, iv: data.iv_used || 0.20, qty: 1 },
         { id: newId(), side: 'buy',  right: 'put', strike: fm.selected_options.put.strike, dte: fm.dte_trading || 60, iv: fm.iv_used || 0.20, qty: 1 },
       ] : null,
+    },
+    {
+      label: '輝哥 1×BP + 2×SP',
+      desc:  '比例式價差單：買 1 高履約 put + 賣 2 低履約 put（小樂透）',
+      build: () => {
+        if (!so.put?.strike) return null;
+        const bpStrike = so.put.strike;
+        const spStrike = bpStrike - 500;     // 預設 BP 下方 500 點
+        const dte = data.dte_trading || 30;
+        const iv  = data.iv_used || 0.20;
+        return [
+          { id: newId(), side: 'buy',  right: 'put', strike: bpStrike, dte, iv, qty: 1 },
+          { id: newId(), side: 'sell', right: 'put', strike: spStrike, dte, iv, qty: 2 },
+        ];
+      },
+    },
+    {
+      label: '輝哥全套（+ Covered Call）',
+      desc:  '1×BP + 2×SP + 1×SC，每 50 萬資金 1 組',
+      build: () => {
+        if (!so.put?.strike || !so.call?.strike) return null;
+        const dte = data.dte_trading || 30;
+        const iv  = data.iv_used || 0.20;
+        return [
+          { id: newId(), side: 'buy',  right: 'put',  strike: so.put.strike,        dte, iv, qty: 1 },
+          { id: newId(), side: 'sell', right: 'put',  strike: so.put.strike - 500, dte, iv, qty: 2 },
+          { id: newId(), side: 'sell', right: 'call', strike: so.call.strike,       dte, iv, qty: 1 },
+        ];
+      },
     },
   ];
 
@@ -5160,6 +5369,7 @@ function App() {
         <RegimeAdvisor data={data} />
         <CollarDashboard data={data} />
         <OrderHelper data={data} />
+        <HuiRatioHelper data={data} />
         <PretradeSimulator data={data} />
         <RollSuggestions data={data} />
       </Section>
