@@ -1876,6 +1876,7 @@ python3 add_trade.py add buy_to_open  "TXO ${monthCode} ${bc.buy_strike?.toFixed
               <span style={{fontSize:'9px', color: bp.buy_premium_source?.startsWith('real') ? '#4ade80' : '#fbbf24', marginLeft:'4px'}}>
                 {bp.buy_premium_source === 'real_ask' ? '[真實 ask]' :
                  bp.buy_premium_source === 'real_mid' ? '[真實 mid]' :
+                 bp.buy_premium_source === 'bs_estimate_skew' ? '[BS+skew]' :
                  '[BS 估算]'}
               </span>
             </div>
@@ -1892,6 +1893,7 @@ python3 add_trade.py add buy_to_open  "TXO ${monthCode} ${bc.buy_strike?.toFixed
               <span style={{fontSize:'9px', color: bc.buy_premium_source?.startsWith('real') ? '#4ade80' : '#fbbf24', marginLeft:'4px'}}>
                 {bc.buy_premium_source === 'real_ask' ? '[真實 ask]' :
                  bc.buy_premium_source === 'real_mid' ? '[真實 mid]' :
+                 bc.buy_premium_source === 'bs_estimate_skew' ? '[BS+skew]' :
                  '[BS 估算]'}
               </span>
             </div>
@@ -1919,7 +1921,7 @@ python3 add_trade.py add buy_to_open  "TXO ${monthCode} ${bc.buy_strike?.toFixed
       {wos.map((wo, i) => <SectionForOpp key={i} wo={wo} />)}
 
       <div style={{fontSize:'9px', color:'#475569', marginTop:'6px'}}>
-        ※「真實 ask」= 即時券商報價（最準）；「BS 估算」= 該外腳沒成交資料，用理論模型估算（會低估，因為 vol skew）。「市場不利」= 信用價差太薄不值得做。
+        ※「真實 ask」= 即時券商報價（最準）；「BS+skew」= 沒成交資料時用 skew 內插的 IV 估算（已修正 vol skew，較準）；「BS 估算」= 純 ATM IV 估算（會低估）。「市場不利」= 信用價差太薄不值得做。
       </div>
     </div>
   );

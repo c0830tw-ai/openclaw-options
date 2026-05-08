@@ -573,6 +573,42 @@ def implied_vol_newton(S: float, K: float, T: float, market_price: float,
     return None
 
 
+def interp_iv(curve: List[Tuple[float, float]], K: float,
+              fallback_iv: float) -> float:
+    """從 (strike, iv) skew 曲線線性內插指定履約的 IV；超出範圍時用最近端點（flat extrapolation）。
+    曲線需先按 strike 升序排列。空曲線回 fallback_iv。"""
+    if not curve:
+        return fallback_iv
+    if K <= curve[0][0]:
+        return curve[0][1]
+    if K >= curve[-1][0]:
+        return curve[-1][1]
+    for i in range(len(curve) - 1):
+        K0, iv0 = curve[i]
+        K1, iv1 = curve[i + 1]
+        if K0 <= K <= K1 and K1 > K0:
+            t = (K - K0) / (K1 - K0)
+            return iv0 + t * (iv1 - iv0)
+    return fallback_iv
+
+
+def build_skew_from_snaps(items: List[Tuple[float, float, bool]],
+                          S: float, T: float, r: float = 0.0
+                          ) -> List[Tuple[float, float]]:
+    """從一組 (strike, mid_price, is_put) 反推 IV，建 (strike, iv) 曲線。
+    多筆同 strike 取平均；無效點略過；按 strike 升序排序。"""
+    bucket: Dict[float, List[float]] = {}
+    for K, mid, is_put in items:
+        if K <= 0 or mid <= 0:
+            continue
+        iv = implied_vol_newton(S, K, T, mid, is_put=is_put, r=r)
+        if iv is None:
+            continue
+        bucket.setdefault(K, []).append(iv)
+    return sorted(((K, sum(vs) / len(vs)) for K, vs in bucket.items()),
+                  key=lambda x: x[0])
+
+
 # ── 履約價選擇 ────────────────────────────────────────────────
 
 def compute_target_strikes(
@@ -902,11 +938,16 @@ def compute_weekly_opportunities(
     put_leg     = spread_legs.get('put_buy')  or {}
     call_leg    = spread_legs.get('call_buy') or {}
 
+    # Vol skew curve（_calc_weekly 已從 spread_legs snapshots + ATM 反推）
+    skew_curve: List[Tuple[float, float]] = [
+        (s['strike'], s['iv']) for s in (weekly_data.get('skew') or [])
+    ]
+
     def _leg_prices(leg, fallback_strike, is_put):
         """回傳 (worst_buy, mid_buy, strike, source)：
         worst_buy = 真實 ask（吃對方掛價）
         mid_buy   = 真實 (bid+ask)/2 或 mid（組合單預期 fill）
-        缺則退回 BS 估算。"""
+        缺則退回 BS 估算（用 skew curve 內插的 IV，而非 ATM IV）。"""
         bid = (leg.get('bid') or 0) if leg else 0
         ask = (leg.get('ask') or 0) if leg else 0
         mid = (leg.get('mid') or 0) if leg else 0
@@ -916,8 +957,11 @@ def compute_weekly_opportunities(
             return ask, mid if mid > 0 else ask, leg['strike'], 'real_ask'
         if mid > 0:
             return mid, mid, leg['strike'], 'real_mid'
-        bs_v = bs_price(bs_s, fallback_strike, T, iv, is_put=is_put, r=0.0)
-        return bs_v, bs_v, fallback_strike, 'bs_estimate'
+        # BS fallback：優先用 skew 內插；無 skew 才退回 ATM IV
+        local_iv = interp_iv(skew_curve, fallback_strike, iv) if skew_curve else iv
+        bs_v = bs_price(bs_s, fallback_strike, T, local_iv, is_put=is_put, r=0.0)
+        src = 'bs_estimate_skew' if skew_curve else 'bs_estimate'
+        return bs_v, bs_v, fallback_strike, src
 
     # Bull put spread: 賣高履約 put（收 bid 或 mid）+ 買低履約 put（付 ask 或 mid）
     put_worst_buy, put_mid_buy, put_buy_strike, put_src = _leg_prices(put_leg, put_strike - spread_width, True)
@@ -2314,8 +2358,10 @@ def main():
             w_q = fetch_option_quotes(api, w_put_c, w_call_c, bs_s=bs_s, T=w_T, sigma=w_iv, r=bs_r or 0.0)
 
             # 找價差另一腳並抓真實 bid/ask（取代 BS 估算，避免 vol skew 失真）
-            # 各腳 snapshot 最近 5 個 candidate，挑第一個有真實 ask 的
+            # 各腳 snapshot 最近 5 個 candidate，挑第一個有真實 ask 的；
+            # 順便累積 (strike, mid, is_put) 做為 skew 曲線輸入
             w_spread_legs: Dict[str, Any] = {}
+            skew_input: List[Tuple[float, float, bool]] = []
             for ref_c, opt_right, leg_key in [
                 (w_put_c,  OptionRight.Put,  'put_buy'),
                 (w_call_c, OptionRight.Call, 'call_buy'),
@@ -2336,6 +2382,13 @@ def main():
                 except Exception as _le:
                     log.debug(f'{label} {leg_key} snapshot 失敗: {_le}')
                     continue
+                # 累積 skew 點：每個 candidate 的 mid → IV
+                for cc, ss in zip(cands, snaps):
+                    bb = float(ss.buy_price)  if ss.buy_price  else 0.0
+                    aa = float(ss.sell_price) if ss.sell_price else 0.0
+                    mm = (bb + aa) / 2 if (bb > 0 and aa > 0) else (float(ss.close) if ss.close else 0.0)
+                    if mm > 0:
+                        skew_input.append((float(cc.strike_price), mm, is_put))
                 # 找第一個有真實 ask 的
                 chosen = None
                 for c, s in zip(cands, snaps):
@@ -2356,6 +2409,20 @@ def main():
                     'ask':    ask,
                     'mid':    mid,
                 }
+
+            # 加入 ATM put + ATM call 的 mid 做曲線錨點
+            for sel_c, sel_q_mid, sel_is_put in [
+                (w_put_c,  w_q.get('put_mid'),  True),
+                (w_call_c, w_q.get('call_mid'), False),
+            ]:
+                if sel_q_mid and sel_q_mid > 0:
+                    skew_input.append((float(sel_c.strike_price), float(sel_q_mid), sel_is_put))
+
+            w_skew = build_skew_from_snaps(skew_input, bs_s, w_T, r=bs_r or 0.0)
+            if w_skew:
+                log.info(f'{label} skew curve: {len(w_skew)} 點 '
+                         f'({w_skew[0][0]:.0f}→{w_skew[0][1]:.1%} ... '
+                         f'{w_skew[-1][0]:.0f}→{w_skew[-1][1]:.1%})')
             w_structs = build_structures(
                 n_contracts=contracts['recommended_contracts'],
                 call_strike=w_call_c.strike_price,
@@ -2399,6 +2466,7 @@ def main():
                 },
                 'structures': [asdict(s) for s in w_structs],
                 'spread_legs': w_spread_legs,
+                'skew': [{'strike': K, 'iv': round(iv, 4)} for K, iv in w_skew],
             }
 
         # 10c. 週三週選
