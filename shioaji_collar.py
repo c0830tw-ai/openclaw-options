@@ -2442,6 +2442,7 @@ def main():
             'trade_journal':    None,           # 交易日記聚合（thesis 命中率、月度）
             'iv_percentile':    None,           # ATM IV 百分位（過去 252 天）
             'pnl_attribution':  None,           # 每日 P&L Δ/θ/ν 拆解
+            'drawdown':         None,           # 從 peak 追當前 drawdown
             'order_helper':     None,           # 從推薦結構產生下單階梯 + add_trade 命令
             'upcoming_events': [],              # 未來 14 天高影響事件
             'market': market,
@@ -2622,6 +2623,17 @@ def main():
                 log.info(f"Order helper: {oh['label']}  {len(oh['legs'])} 腳")
         except Exception as _e:
             log.debug(f'order_helper 失敗: {_e}')
+
+        # 14g-dd. Drawdown tracker（peak vs current）
+        try:
+            import drawdown_tracker as _DD
+            dd = _DD.compute()
+            if dd:
+                result['drawdown'] = dd
+                log.info(f"Drawdown: {dd['current_dd_pct']:+.2f}% [{dd['severity']}] "
+                         f"({dd['days_in_dd']} 天從 peak)")
+        except Exception as _e:
+            log.debug(f'drawdown 失敗: {_e}')
 
         # 14g-attr. 每日 P&L 拆解（Δ/θ/ν attribution）
         try:

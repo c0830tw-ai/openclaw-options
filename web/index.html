@@ -3017,6 +3017,88 @@ function PortfolioBreakdown({ data }) {
   );
 }
 
+function DrawdownPanel({ data }) {
+  const dd = data?.drawdown;
+  if (!dd) return null;
+  const cur = dd.current_dd_pct || 0;
+  const sev = dd.severity || 'ok';
+  const color = sev === 'critical' ? '#dc2626' :
+                sev === 'high'     ? '#fb923c' :
+                sev === 'medium'   ? '#fbbf24' :
+                sev === 'low'      ? '#94a3b8' : '#4ade80';
+
+  // Mini sparkline of equity DD% (last 30 days)
+  const series = dd.series || [];
+  const Sparkline = () => {
+    if (series.length < 2) return null;
+    const vals = series.map(s => s.dd_pct);
+    const min = Math.min(...vals, -2);   // floor at -2 to keep some scale
+    const max = Math.max(...vals, 0);
+    const range = max - min || 1;
+    const w = 120, h = 24;
+    const pts = vals.map((v, i) => {
+      const x = (i / (vals.length - 1)) * w;
+      const y = h - ((v - min) / range) * h;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+    const zeroY = h - ((0 - min) / range) * h;
+    return (
+      <svg width={w} height={h} style={{verticalAlign:'middle'}}>
+        <line x1="0" y1={zeroY} x2={w} y2={zeroY} stroke="#1e2535" strokeWidth="0.5" />
+        <polyline fill="none" stroke={color} strokeWidth="1.2" points={pts} />
+      </svg>
+    );
+  };
+
+  // DD bar (visual: -20% scale)
+  const barFill = Math.min(100, Math.abs(cur) / 20 * 100);
+
+  const fmt = n => n == null ? '—' : n.toLocaleString();
+  return (
+    <div style={{
+      background:'#0a0e1c', border:`1px solid ${color}33`,
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:'4px'}}>
+        <span style={{fontWeight:700, color}}>📉 Drawdown 追蹤</span>
+        <span style={{fontSize:'9px', color:'#64748b'}}>n={dd.snapshot_count}</span>
+      </div>
+
+      <div style={{display:'flex', alignItems:'baseline', gap:'12px', marginBottom:'4px', flexWrap:'wrap'}}>
+        <span style={{fontSize:'18px', fontWeight:700, color}}>
+          {cur >= 0 ? '+' : ''}{cur.toFixed(2)}%
+        </span>
+        <span style={{fontSize:'10px', color:'#94a3b8'}}>
+          {dd.days_in_dd} 天從 peak
+        </span>
+        <span style={{flex:1, fontSize:'10px', color, textAlign:'right'}}>
+          {dd.severity_msg}
+        </span>
+      </div>
+
+      {/* DD bar */}
+      <div style={{position:'relative', height:'8px', background:'#1e2535', borderRadius:'2px', overflow:'hidden'}}>
+        <div style={{position:'absolute', right:'50%', top:0, height:'100%', width: `${barFill / 2}%`, background: color}} />
+        {/* zero marker */}
+        <div style={{position:'absolute', left:'50%', top:0, width:'1px', height:'100%', background:'#475569'}} />
+      </div>
+      <div style={{display:'flex', justifyContent:'space-between', fontSize:'9px', color:'#64748b', marginTop:'2px'}}>
+        <span>-20%</span>
+        <span>0%</span>
+      </div>
+
+      <div style={{display:'flex', gap:'12px', flexWrap:'wrap', marginTop:'6px',
+                    fontSize:'10px', color:'#94a3b8'}}>
+        <span>Peak {fmt(dd.peak_value)} <span style={{color:'#64748b'}}>({dd.peak_date})</span></span>
+        <span>當前 {fmt(dd.current_value)}</span>
+        <span style={{color: '#fca5a5'}}>歷史 max DD {dd.max_dd_pct}%</span>
+        <span style={{flex:1, textAlign:'right'}}><Sparkline /></span>
+      </div>
+    </div>
+  );
+}
+
 function PnLAttribution({ data }) {
   const [open, setOpen] = React.useState(false);
   const pa = data?.pnl_attribution;
@@ -3757,6 +3839,7 @@ function App() {
                  data?.health_check ? `${data.health_check.overall_score}/100 ${data.health_check.grade}` : null,
                ].filter(Boolean).join(' · ') || null}>
         <IVPercentile data={data} />
+        <DrawdownPanel data={data} />
         <HealthCheck data={data} />
         <PortfolioGreeks data={data} />
         <StressTest data={data} />

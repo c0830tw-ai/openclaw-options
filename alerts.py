@@ -277,6 +277,18 @@ def evaluate(data: dict, rules: dict) -> list:
             'tip':   '這個月已經輸太多。停止新建週選 / spread 部位，等下個月重來',
         })
 
+    # 13a. Drawdown 警戒（從 peak 追當前 DD）
+    dd = data.get('drawdown') or {}
+    if dd.get('current_dd_pct') is not None:
+        cdd = dd['current_dd_pct']
+        if cdd <= -10:
+            alerts.append({
+                'key':   'dd_high',
+                'level': '🔴' if cdd <= -15 else '🟠',
+                'msg':   f"Drawdown {cdd:+.1f}% (peak {dd.get('peak_date', '?')} → 已 {dd.get('days_in_dd', 0)} 天)",
+                'tip':   dd.get('severity_msg') or '檢視 hedge 結構是否生效；嚴重時減碼或 roll 履約',
+            })
+
     # 13. 高影響事件（events.json）— 事件前 5 天 IV spike 風險
     upcoming = data.get('upcoming_events') or []
     for ev in upcoming:
