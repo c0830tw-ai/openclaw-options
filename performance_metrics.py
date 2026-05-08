@@ -110,11 +110,38 @@ def compute() -> Optional[Dict[str, Any]]:
     total_pct = (rows[-1]['equity'] - rows[0]['equity']) / rows[0]['equity'] * 100
     alpha = total_pct - bench_total_pct if bench_total_pct is not None else None
 
+    # Rolling 30-day Sharpe / Calmar
+    rolling = []
+    W = 30
+    if n >= W + 1:
+        for end in range(W, n + 1):
+            window = daily_rets[end - W:end]
+            wm = statistics.mean(window)
+            wstd = statistics.stdev(window) if len(window) > 1 else 0
+            wr = (1 + wm) ** 252 - 1
+            wv = wstd * math.sqrt(252)
+            wsharpe = wr / wv if wv > 0 else 0
+            # max DD within window
+            wpeak = rows[end - W]['equity']
+            wdd = 0.0
+            for j in range(end - W, end):
+                wpeak = max(wpeak, rows[j]['equity'])
+                if wpeak > 0:
+                    wdd = min(wdd, (rows[j]['equity'] - wpeak) / wpeak)
+            wcalmar = wr / abs(wdd) if wdd < 0 else 0
+            rolling.append({
+                'date':   rows[end]['date'] if end < len(rows) else rows[-1]['date'],
+                'sharpe': round(wsharpe, 2),
+                'calmar': round(wcalmar, 2),
+            })
+
     return {
         'period_days':        n,
         'period_years':       round(n / 252, 2),
         'first_date':         rows[0]['date'],
         'last_date':          rows[-1]['date'],
+        'rolling':            rolling,
+        'rolling_window':     W,
 
         'total_return_pct':   round(total_pct, 2),
         'annual_return_pct':  round(annual_ret * 100, 2),

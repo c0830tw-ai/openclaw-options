@@ -3883,6 +3883,50 @@ function PerformanceMetrics({ data }) {
   );
 }
 
+function RollingMetricsChart({ data }) {
+  const pm = data?.performance;
+  if (!pm || !pm.rolling || pm.rolling.length < 2) return null;
+  const w = pm.rolling_window || 30;
+
+  const sharpeSeries = {
+    label: `Sharpe (${w}d)`, color: '#7dd3fc',
+    values: pm.rolling.map((r, i) => ({
+      x: i, y: r.sharpe,
+      label: i === 0 || i === pm.rolling.length - 1 ? r.date.slice(5) : '',
+    })),
+  };
+  const calmarSeries = {
+    label: `Calmar (${w}d)`, color: '#a78bfa',
+    values: pm.rolling.map((r, i) => ({ x: i, y: r.calmar, label: '' })),
+  };
+
+  const last = pm.rolling[pm.rolling.length - 1];
+  const colN = v => v >= 1 ? '#86efac' : v >= 0 ? '#fbbf24' : '#fca5a5';
+
+  return (
+    <div style={{
+      background:'#0a0e1c', border:'1px solid #1e2535',
+      borderRadius:'6px', padding:'8px 12px', margin:'8px 0',
+      fontSize:'11px', color:'#cbd5e1',
+    }}>
+      <div style={{display:'flex', justifyContent:'space-between', marginBottom:'4px', flexWrap:'wrap'}}>
+        <span style={{fontWeight:700, color:'#94a3b8'}}>📈 滾動指標走勢（{w} 天 window）</span>
+        <span style={{fontSize:'10px'}}>
+          Sharpe <b style={{color: colN(last.sharpe)}}>{last.sharpe}</b>
+          <span style={{color:'#64748b', margin:'0 4px'}}>·</span>
+          Calmar <b style={{color: colN(last.calmar)}}>{last.calmar}</b>
+        </span>
+      </div>
+      <LineChart series={[sharpeSeries, calmarSeries]} height={120} yLabel="ratio" />
+      <ChartLegend series={[sharpeSeries, calmarSeries]} />
+      <div style={{fontSize:'9px', color:'#64748b', marginTop:'4px'}}>
+        Sharpe 持續 &gt; 1 = 風險調整報酬好；Calmar &gt; 0 = 報酬蓋過回檔成本。
+        負值 = 該段表現差，但短期波動正常
+      </div>
+    </div>
+  );
+}
+
 function PnLAttribution({ data }) {
   const [open, setOpen] = React.useState(false);
   const pa = data?.pnl_attribution;
@@ -5159,6 +5203,7 @@ function App() {
                ].filter(Boolean).join(' · ') || null}>
         <PerformanceMetrics data={data} />
         <EquityChart data={data} />
+        <RollingMetricsChart data={data} />
         <GreeksHistoryChart data={data} />
         <PnLAttribution data={data} />
         <TradeJournalPanel data={data} />
