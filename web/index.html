@@ -3017,12 +3017,12 @@ function OrderHelper({ data }) {
 
 function RegimeAdvisor({ data }) {
   const ra = data?.regime_advisor;
-  if (!ra) return null;
+  if (!ra || !ra.recommendation) return null;
   const aligned = ra.aligned;
   const headerColor = aligned ? '#4ade80' : ra.deviations?.length >= 2 ? '#fb923c' : '#fbbf24';
 
-  const r = ra.recommendation;
-  const cur = ra.current;
+  const r = ra.recommendation || {};
+  const cur = ra.current || {};
 
   return (
     <div style={{
