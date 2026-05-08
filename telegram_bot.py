@@ -118,7 +118,12 @@ def cmd_help(data):
             '/close <id> <價> [outcome]\n'
             '/positions — 未平倉清單\n'
             '/last — 近 5 筆交易\n'
-            '\n例：/buy 39000P 3 50 hedge FOMC')
+            '\n⚙️ 設定命令：\n'
+            '/setrisk — 列出當前風險限額\n'
+            '/setrisk <key> <value> — 動態調整\n'
+            '   key: delta / theta / vega / puts / calls / dd\n'
+            '\n例：/buy 39000P 3 50 hedge FOMC\n'
+            '例：/setrisk delta 18000')
 
 
 def cmd_status(data):
@@ -432,6 +437,93 @@ def cmd_positions(data, args_text=''):
     return '\n'.join(lines)
 
 
+RISK_ALIASES = {
+    'delta':  'risk_max_delta_ntd_per_1pct_tx',
+    'theta':  'risk_max_theta_ntd_per_day',
+    'vega':   'risk_max_vega_ntd_per_pct_iv',
+    'puts':   'risk_max_put_lots',
+    'put':    'risk_max_put_lots',
+    'calls':  'risk_max_short_call_lots',
+    'call':   'risk_max_short_call_lots',
+    'dd':     'risk_max_drawdown_pct',
+    'drawdown': 'risk_max_drawdown_pct',
+}
+RISK_LABELS = {
+    'risk_max_delta_ntd_per_1pct_tx': 'Delta 曝險 (NT/1%TX)',
+    'risk_max_theta_ntd_per_day':     'Theta 成本 (NT/天)',
+    'risk_max_vega_ntd_per_pct_iv':   'Vega 曝險 (NT/1%IV)',
+    'risk_max_put_lots':              'Long put 口數',
+    'risk_max_short_call_lots':       'Short call 口數',
+    'risk_max_drawdown_pct':          'Drawdown 警戒 (%)',
+}
+
+
+def _load_alerts_config():
+    cfg_path = _HERE / 'alerts_config.json'
+    if not cfg_path.exists():
+        return {}, cfg_path
+    try:
+        return json.loads(cfg_path.read_text(encoding='utf-8')), cfg_path
+    except Exception:
+        return {}, cfg_path
+
+
+def _save_alerts_config(cfg):
+    (_HERE / 'alerts_config.json').write_text(
+        json.dumps(cfg, ensure_ascii=False, indent=2), encoding='utf-8')
+
+
+def cmd_setrisk(data, args_text):
+    """/setrisk <key> <value>  或  /setrisk 無參數列出當前。"""
+    sys.path.insert(0, str(_HERE))
+    import alerts as _A
+    rules = _A.load_rules()
+
+    if not args_text or args_text.strip() == '':
+        # 列出
+        lines = ['⚙️ 當前風險限額（編輯方式：/setrisk <key> <value>）']
+        for alias, full in [('delta','risk_max_delta_ntd_per_1pct_tx'),
+                             ('theta','risk_max_theta_ntd_per_day'),
+                             ('vega','risk_max_vega_ntd_per_pct_iv'),
+                             ('puts','risk_max_put_lots'),
+                             ('calls','risk_max_short_call_lots'),
+                             ('dd','risk_max_drawdown_pct')]:
+            v = rules.get(full)
+            lines.append(f'  /{alias} → {v}  ({RISK_LABELS[full]})')
+        return '\n'.join(lines)
+
+    parts = args_text.split(maxsplit=1)
+    if len(parts) < 2:
+        return '用法：/setrisk <key> <value>\n例：/setrisk delta 18000\nkey 可用 delta/theta/vega/puts/calls/dd'
+
+    key_raw, val_raw = parts[0].lower(), parts[1].strip()
+    full_key = RISK_ALIASES.get(key_raw)
+    if not full_key:
+        return f'❌ 未知 key：{key_raw}\n支援 delta/theta/vega/puts/calls/dd'
+
+    # 解析值；類型需與 alerts.DEFAULT_RULES 對齊（load_rules 用 isinstance 過濾）
+    try:
+        val = float(val_raw)
+        default_type = type(rules.get(full_key, 0))
+        if default_type is int and val.is_integer():
+            val = int(val)
+    except ValueError:
+        return f'❌ 數值格式錯誤：{val_raw}'
+
+    # 寫回 config
+    cfg, _ = _load_alerts_config()
+    old = rules.get(full_key)
+    cfg[full_key] = val
+    try:
+        _save_alerts_config(cfg)
+    except Exception as e:
+        return f'❌ 寫入 config 失敗：{e}'
+
+    return (f'✓ 已更新 {RISK_LABELS[full_key]}\n'
+            f'  {old} → {val}\n'
+            f'下次 refresh 後生效')
+
+
 def cmd_last(data, args_text=''):
     sys.path.insert(0, str(_HERE))
     import ledger as L
@@ -470,6 +562,7 @@ HANDLERS_WITH_ARGS = {
     '/close':     cmd_close,
     '/positions': cmd_positions,
     '/last':      cmd_last,
+    '/setrisk':   cmd_setrisk,
 }
 
 
