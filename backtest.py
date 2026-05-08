@@ -139,7 +139,9 @@ _find_strike_at_delta = _find_put_strike_at_delta
 def run_backtest(prices: List[Tuple[date, float]],
                  hedge_lots: int = HEDGE_LOTS,
                  notional_qty: int = NOTIONAL_QTY,
-                 sell_call: bool = True) -> StrategyResult:
+                 sell_call: bool = True,
+                 dte_target: int = DTE_TARGET,
+                 delta_target: float = DELTA_TARGET) -> StrategyResult:
     """執行月選 hedge 回測。同時追蹤 3 種策略：
        1. naked      — 純長部位（無 hedge）
        2. put_only   — 長部位 + 買 put
@@ -196,9 +198,9 @@ def run_backtest(prices: List[Tuple[date, float]],
                 cur_call = None
 
             # open new put
-            expiry = dt + timedelta(days=DTE_TARGET)
-            T = DTE_TARGET / 365
-            new_put_K = _find_put_strike_at_delta(S, T, hv)
+            expiry = dt + timedelta(days=dte_target)
+            T = dte_target / 365
+            new_put_K = _find_put_strike_at_delta(S, T, hv, target_delta=delta_target)
             put_prem = bs_price(S, new_put_K, T, hv, is_put=True, r=RF)
             cost = put_prem * hedge_lots * TXO_MULTIPLIER
             put_paid += cost
@@ -212,7 +214,7 @@ def run_backtest(prices: List[Tuple[date, float]],
 
             # open new short call (only for collar strategy)
             if sell_call:
-                new_call_K = _find_call_strike_at_delta(S, T, hv)
+                new_call_K = _find_call_strike_at_delta(S, T, hv, target_delta=delta_target)
                 call_prem = bs_price(S, new_call_K, T, hv, is_put=False, r=RF)
                 received = call_prem * hedge_lots * TXO_MULTIPLIER
                 call_cash += received
