@@ -4017,6 +4017,8 @@ function PastEventImpact({ data }) {
 
 function IVHeatmap({ data }) {
   const [open, setOpen] = React.useState(false);
+  const [metric, setMetric] = React.useState('iv');     // 'iv' / 'theta' / 'vega'
+  const [side, setSide] = React.useState('put');        // theta/vega 須指定 put or call
   const tx = data?.market?.tx_futures;
   if (!tx) return null;
 
@@ -4069,29 +4071,56 @@ function IVHeatmap({ data }) {
     return col.iv;
   };
 
-  // 整個矩陣計算 + 找全域 min/max 為 colorscale
-  const matrix = strikes.map(K => cols.map(c => interpIV(c, K) * 100));
-  const allIvs = matrix.flat();
-  const ivMin = Math.min(...allIvs);
-  const ivMax = Math.max(...allIvs);
+  // 計算 cell value 依 metric
+  const cellValue = (col, K) => {
+    const iv = interpIV(col, K);
+    if (metric === 'iv') return iv * 100;
+    const T = Math.max(1, col.dte) / 365;
+    const isPut = side === 'put';
+    const g = _bsGreeks(tx, K, T, iv, isPut);
+    if (metric === 'theta') return g.theta_per_day * 50;   // NT$/day per contract
+    if (metric === 'vega')  return g.vega_per_pct  * 50;   // NT$/1%IV per contract
+    return 0;
+  };
 
-  // 顏色：低 IV = 冷藍、高 IV = 暖橙
-  const cellColor = (iv_pct) => {
-    const t = (iv_pct - ivMin) / (ivMax - ivMin || 1);
-    // gradient: blue (low) → yellow (mid) → orange (high)
-    if (t < 0.5) {
-      const u = t * 2;
-      const r = Math.round(96 + u * (251 - 96));
-      const g = Math.round(165 + u * (191 - 165));
-      const b = Math.round(250 + u * (36 - 250));
-      return `rgba(${r},${g},${b},0.5)`;
-    } else {
-      const u = (t - 0.5) * 2;
-      const r = Math.round(251 + u * (251 - 251));
-      const g = Math.round(191 + u * (146 - 191));
-      const b = Math.round(36 + u * (60 - 36));
-      return `rgba(${r},${g},${b},${0.5 + u * 0.3})`;
+  const matrix = strikes.map(K => cols.map(c => cellValue(c, K)));
+  const allVals = matrix.flat();
+  let minV = Math.min(...allVals);
+  let maxV = Math.max(...allVals);
+
+  // For theta/vega: include 0 in scale to make sign visible
+  if (metric !== 'iv') {
+    if (minV > 0) minV = 0;
+    if (maxV < 0) maxV = 0;
+  }
+
+  const fmtCell = (v) => {
+    if (metric === 'iv') return v.toFixed(1);
+    if (Math.abs(v) >= 1000) return Math.round(v).toLocaleString();
+    return v.toFixed(0);
+  };
+
+  // 顏色函式
+  const cellColor = (v) => {
+    if (metric === 'iv') {
+      const t = (v - minV) / (maxV - minV || 1);
+      if (t < 0.5) {
+        const u = t * 2;
+        return `rgba(${96+u*155},${165+u*26},${250+u*-214},0.5)`;
+      } else {
+        const u = (t - 0.5) * 2;
+        return `rgba(251,${191+u*-45},${36+u*24},${0.5+u*0.3})`;
+      }
     }
+    // theta / vega: 紅藍兩極（負紅、正綠/藍），0 = 灰
+    const range = Math.max(Math.abs(minV), Math.abs(maxV)) || 1;
+    const t = v / range;   // -1 to 1
+    if (t < 0) {
+      const u = -t;   // 0..1
+      return `rgba(252,165,165,${0.2 + u * 0.6})`;   // 紅色強度
+    }
+    const u = t;
+    return `rgba(134,239,172,${0.2 + u * 0.6})`;   // 綠色強度
   };
 
   // 持倉
@@ -4114,15 +4143,39 @@ function IVHeatmap({ data }) {
         cursor:'pointer', userSelect:'none',
       }}>
         <span style={{fontWeight:700, color:'#94a3b8'}}>
-          🌡️ IV 熱圖（strike × 月份）
+          🌡️ Greeks 熱圖（strike × 月份）
         </span>
         <span style={{fontSize:'9px', color:'#64748b'}}>
-          {ivMin.toFixed(1)}% ~ {ivMax.toFixed(1)}%　{open ? '▲' : '▼'}
+          {metric.toUpperCase()}{metric !== 'iv' ? ` · ${side}` : ''}　{open ? '▲' : '▼'}
         </span>
       </div>
 
       {open && (
         <>
+          {/* Metric toggle */}
+          <div style={{display:'flex', gap:'4px', marginTop:'6px', flexWrap:'wrap'}}>
+            {['iv', 'theta', 'vega'].map(m => (
+              <button key={m} onClick={(e) => {e.stopPropagation(); setMetric(m);}} style={{
+                background: metric === m ? '#0f1828' : 'transparent',
+                border: metric === m ? '1px solid #60a5fa' : '1px solid #334155',
+                color: metric === m ? '#60a5fa' : '#94a3b8',
+                padding:'2px 10px', borderRadius:'3px', cursor:'pointer', fontSize:'10px',
+              }}>{m === 'iv' ? 'IV %' : m === 'theta' ? 'θ NT/天' : 'ν NT/1%IV'}</button>
+            ))}
+            {metric !== 'iv' && (
+              <>
+                <span style={{padding:'2px 4px', color:'#64748b', fontSize:'10px'}}>|</span>
+                {['put', 'call'].map(s => (
+                  <button key={s} onClick={(e) => {e.stopPropagation(); setSide(s);}} style={{
+                    background: side === s ? '#0f1828' : 'transparent',
+                    border: side === s ? `1px solid ${s === 'put' ? '#fca5a5' : '#86efac'}` : '1px solid #334155',
+                    color: side === s ? (s === 'put' ? '#fca5a5' : '#86efac') : '#94a3b8',
+                    padding:'2px 10px', borderRadius:'3px', cursor:'pointer', fontSize:'10px',
+                  }}>{s === 'put' ? 'Put' : 'Call'}</button>
+                ))}
+              </>
+            )}
+          </div>
           <div style={{overflowX:'auto', marginTop:'6px'}}>
             <table style={{width:'100%', borderCollapse:'collapse', fontSize:'10px', minWidth:'320px'}}>
               <thead>
@@ -4154,14 +4207,14 @@ function IVHeatmap({ data }) {
                         {isAtm && <span style={{marginLeft:'4px', fontSize:'8px', color:'#fbbf24'}}>ATM</span>}
                       </td>
                       {cols.map((c, ci) => {
-                        const iv_pct = matrix[ri][ci];
+                        const v = matrix[ri][ci];
                         return (
                           <td key={ci} style={{
                             padding:'3px 6px', textAlign:'center',
-                            background: cellColor(iv_pct),
+                            background: cellColor(v),
                             color: '#0a0e1c', fontWeight:600,
                           }}>
-                            {iv_pct.toFixed(1)}
+                            {fmtCell(v)}
                           </td>
                         );
                       })}
@@ -4174,19 +4227,27 @@ function IVHeatmap({ data }) {
 
           {/* color legend */}
           <div style={{display:'flex', alignItems:'center', gap:'4px', marginTop:'6px', justifyContent:'center'}}>
-            <span style={{fontSize:'9px', color:'#64748b'}}>低 IV</span>
+            <span style={{fontSize:'9px', color:'#64748b'}}>
+              {metric === 'iv' ? `低 ${minV.toFixed(1)}%` : fmtCell(minV)}
+            </span>
             <div style={{display:'flex', height:'8px', flex:'1 1 200px', maxWidth:'200px'}}>
               {Array.from({length: 20}, (_, i) => {
-                const v = ivMin + (i / 19) * (ivMax - ivMin);
+                const v = minV + (i / 19) * (maxV - minV);
                 return <div key={i} style={{flex:1, background: cellColor(v)}} />;
               })}
             </div>
-            <span style={{fontSize:'9px', color:'#64748b'}}>高 IV</span>
+            <span style={{fontSize:'9px', color:'#64748b'}}>
+              {metric === 'iv' ? `高 ${maxV.toFixed(1)}%` : fmtCell(maxV)}
+            </span>
           </div>
 
           <div style={{fontSize:'9px', color:'#64748b', marginTop:'4px'}}>
-            單元格 IV%。週選有 skew 內插，月選暫用 ATM IV 平攤。
-            ★ 標記持倉履約，TX 整百行（{atm}）標 ATM
+            {metric === 'iv'
+              ? '單元格 IV%；週選有 skew 內插，月選用 ATM IV 平攤'
+              : metric === 'theta'
+                ? `單元格 θ NT$/天 per ${side === 'put' ? 'Put' : 'Call'} 1 口（負=長部位耗損；BS 估算）`
+                : `單元格 ν NT$ per 1% IV per ${side === 'put' ? 'Put' : 'Call'} 1 口（BS 估算）`}
+            。★ 持倉履約，TX 整百行（{atm}）標 ATM
           </div>
         </>
       )}
