@@ -99,8 +99,8 @@ def evaluate(data: dict, rules: dict) -> list:
         alerts.append({
             'key':   'tx_drop',
             'level': '🔴',
-            'msg':   f"TX 急跌 {chgpct:.2f}%",
-            'tip':   '若 put 距 TX > 8% 已失效，加 closer put 或減 1-2 口停損',
+            'msg':   f"TX 大跌 {chgpct:.2f}%",
+            'tip':   '若你的 put 履約價已比現價低超過 8%（保護太遠等於沒用），加買履約價較高的新 put，或平倉 1-2 口期貨停損',
         })
 
     # 2. TX 急漲
@@ -108,8 +108,8 @@ def evaluate(data: dict, rules: dict) -> list:
         alerts.append({
             'key':   'tx_rise',
             'level': '🟡',
-            'msg':   f"TX 急漲 +{chgpct:.2f}%",
-            'tip':   '可減 1 口 0050 期落袋鎖獲利，別追長',
+            'msg':   f"TX 大漲 +{chgpct:.2f}%",
+            'tip':   '可平倉 1 口 0050 期把獲利落袋，不要在高點再加碼',
         })
 
     # 3. 短 call 距現價過近
@@ -124,8 +124,8 @@ def evaluate(data: dict, rules: dict) -> list:
             alerts.append({
                 'key':   'call_close',
                 'level': '🟠',
-                'msg':   f"近月 Call {call_strike:.0f} 距現價剩 {distance_sigma:.2f}σ",
-                'tip':   'Roll up 早做比晚做便宜，距 < 1σ 已是行動點',
+                'msg':   f"你賣出的 Call 履約 {call_strike:.0f}，距現價已剩 {distance_sigma:.2f} 個標準差",
+                'tip':   '這個 call 越來越接近被軋，把它買回來換成更高履約價的新 call。早做比晚做便宜——等變成價內就賠定了',
             })
 
     # 4. Weekly put 即將失效
@@ -135,8 +135,8 @@ def evaluate(data: dict, rules: dict) -> list:
             alerts.append({
                 'key':   f'roll_{w_key}',
                 'level': '🟡',
-                'msg':   f"{w_label} {wk.get('settlement_date','')} 剩 {wk['dte_trading']} 交易日",
-                'tip':   '組合單一次 roll，避免分腿；記得 add_trade.py 紀錄',
+                'msg':   f"{w_label} {wk.get('settlement_date','')} 結算還剩 {wk['dte_trading']} 個交易日",
+                'tip':   '保護快過期了。用「組合單」（賣舊+買新一次成交）換倉，避免一邊買到一邊沒買到。記得用 add_trade.py 紀錄這筆交易',
             })
 
     # 5. IV 飆
@@ -144,8 +144,8 @@ def evaluate(data: dict, rules: dict) -> list:
         alerts.append({
             'key':   'iv_spike',
             'level': '🔴',
-            'msg':   f"ATM IV {iv*100:.1f}% (≥ {rules['iv_spike']*100:.0f}%)",
-            'tip':   '保險貴，暫緩加買 put，等 IV 回落',
+            'msg':   f"市場波動率衝到 {iv*100:.1f}%（平常 25-30% 算正常）",
+            'tip':   '波動率高 = 保險變貴，暫停加買 put，等市場冷靜下來再動',
         })
 
     # 6. IV 崩
@@ -153,8 +153,8 @@ def evaluate(data: dict, rules: dict) -> list:
         alerts.append({
             'key':   'iv_crush',
             'level': '🟢',
-            'msg':   f"ATM IV {iv*100:.1f}% (≤ {rules['iv_crush']*100:.0f}%)",
-            'tip':   '保險便宜，可加買 put 或賣 call 收 premium',
+            'msg':   f"市場波動率掉到 {iv*100:.1f}%（保險打折中）",
+            'tip':   '波動率低 = 保險便宜，可趁機加買 put，或賣 call 收一點權利金',
         })
 
     # 7. TX drawdown from anchor — 從基準價跌 X% 提醒平倉
@@ -165,8 +165,8 @@ def evaluate(data: dict, rules: dict) -> list:
             alerts.append({
                 'key':   'tx_drawdown',
                 'level': '🔴',
-                'msg':   f"TX 從基準 {anchor:.0f} 跌 {drawdown_pct:.1f}% (現 {tx:.0f})",
-                'tip':   '減 1-2 口 0050 期鎖損失，深 ITM put 可 roll down 落袋',
+                'msg':   f"TX 從你進場時的 {anchor:.0f} 跌了 {drawdown_pct:.1f}%（現 {tx:.0f}）",
+                'tip':   '已是大幅回檔。建議：平倉 1-2 口 0050 期鎖部分損失。已經大賺的 put（變成價內很深）可以平掉換成更低履約價的新 put，把利潤先入袋',
             })
 
     # 8. Unrealized profit lock — 0050 ETF期浮盈超過閾值
@@ -182,8 +182,8 @@ def evaluate(data: dict, rules: dict) -> list:
             alerts.append({
                 'key':   'profit_lock',
                 'level': '🟡',
-                'msg':   f"0050 ETF期浮盈 {unrealized:,.0f}",
-                'tip':   '落袋 1-2 口 + roll up put，sequence risk 最大時',
+                'msg':   f"0050 ETF期未實現獲利已達 {unrealized:,.0f} NT",
+                'tip':   '賺最多的時候反而最危險（一波 -10% 修正就吃掉一半）。建議：平倉 1-2 口落袋，並把保護 put 換到更高履約價鎖剩餘獲利',
             })
 
     # 9. Positions drift — positions.json vs broker 真實持倉不一致
@@ -214,8 +214,8 @@ def evaluate(data: dict, rules: dict) -> list:
                 alerts.append({
                     'key':   'positions_drift',
                     'level': '🟡',
-                    'msg':   'positions drift: ' + '；'.join(drifts),
-                    'tip':   '下單後忘了更新 positions.json，對一下即可',
+                    'msg':   '系統紀錄與券商實際持倉不一致：' + '；'.join(drifts),
+                    'tip':   '你下單後 positions.json 沒更新。對一下實際口數，編輯設定檔即可',
                 })
 
     return alerts
@@ -279,12 +279,12 @@ def _format_price_line(rs: dict) -> Optional[str]:
         strike = int(est['replace_strike'])
         qty    = est.get('replace_qty', 0)
         cost   = est.get('total_cost', 0)
-        cost_s = f' (~{cost/1000:.0f}k)' if cost else ''
-        return f"📍 買 {qty}口月選 {strike}P  限 {t1}→{t2}→{t3}{cost_s}"
+        cost_s = f'，約 NT$ {cost:,.0f}' if cost else ''
+        return f"📍 買 {qty} 口月選 {strike} Put  限價試 {t1}→{t2}→{t3} 點{cost_s}"
 
     if rs['action'] == 'roll_up_call' and est.get('current_strike'):
         strike = int(est['current_strike'])
-        return f"📍 買回 {strike}C  限 {t1}→{t2}→{t3}（再賣更遠 OTM）"
+        return f"📍 先買回履約 {strike} 的 Call  限價試 {t1}→{t2}→{t3} 點，再賣更遠的新 Call"
 
     return None
 
