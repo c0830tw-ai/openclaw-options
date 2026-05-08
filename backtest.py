@@ -40,7 +40,7 @@ class PutPosition:
     iv_at_entry: float
 
     def value_at(self, S: float, T_days: int, hv: float) -> float:
-        """以當日 BS 估價（用滾動 HV 當 IV）。"""
+        """以當日 BS 估價（用滾動 HV 當 IV）。長 put 的當前價值（NT$）。"""
         if T_days <= 0:
             return max(0.0, self.strike - S) * self.qty * TXO_MULTIPLIER
         T = T_days / 365
@@ -48,17 +48,43 @@ class PutPosition:
 
 
 @dataclass
+class CallPosition:
+    """短部位 sell call。"""
+    entry_date: date
+    expiry: date
+    strike: float
+    qty: int
+    entry_premium: float       # 點數（賣方收）
+    iv_at_entry: float
+
+    def buyback_value(self, S: float, T_days: int, hv: float) -> float:
+        """買回所需成本（NT$）。短 call 的「義務」金額。"""
+        if T_days <= 0:
+            return max(0.0, S - self.strike) * self.qty * TXO_MULTIPLIER
+        T = T_days / 365
+        return bs_price(S, self.strike, T, hv, is_put=False, r=RF) * self.qty * TXO_MULTIPLIER
+
+
+@dataclass
 class StrategyResult:
     dates: List[date] = field(default_factory=list)
     tx:    List[float] = field(default_factory=list)
     hv:    List[float] = field(default_factory=list)
+    # put leg
     put_value:  List[float] = field(default_factory=list)
     put_strike: List[Optional[float]] = field(default_factory=list)
     put_dte:    List[Optional[int]]   = field(default_factory=list)
-    cash_paid:  List[float] = field(default_factory=list)   # 累積已付 premium
-    long_value: List[float] = field(default_factory=list)
-    equity_collar: List[float] = field(default_factory=list)
-    equity_naked:  List[float] = field(default_factory=list)
+    put_cash_paid: List[float] = field(default_factory=list)   # 累積 net 已付 (paid - received)
+    # call leg (short)
+    call_liab:    List[float] = field(default_factory=list)    # mark-to-market 義務金額
+    call_strike:  List[Optional[float]] = field(default_factory=list)
+    call_dte:     List[Optional[int]]   = field(default_factory=list)
+    call_cash:    List[float] = field(default_factory=list)    # 累積 net 已收 (received - paid)
+    # equity
+    long_value:        List[float] = field(default_factory=list)
+    equity_naked:      List[float] = field(default_factory=list)
+    equity_put_only:   List[float] = field(default_factory=list)
+    equity_collar:     List[float] = field(default_factory=list)
     rolls: List[dict] = field(default_factory=list)
 
 
@@ -80,10 +106,10 @@ def _rolling_hv(prices: List[float], period: int = HV_PERIOD) -> List[float]:
     return out
 
 
-def _find_strike_at_delta(S: float, T: float, sigma: float,
-                          target_delta: float = DELTA_TARGET,
-                          step: float = 100) -> float:
-    """從 ATM 往下移 strike，找 |delta| 最接近 target 的（線性掃描）。"""
+def _find_put_strike_at_delta(S: float, T: float, sigma: float,
+                               target_delta: float = DELTA_TARGET,
+                               step: float = 100) -> float:
+    """OTM put：從 ATM 往下移到 |delta| ≤ target。"""
     K = S
     while K > S * 0.5:
         d = bs_delta(S, K, T, sigma, is_put=True, r=RF)
@@ -93,91 +119,128 @@ def _find_strike_at_delta(S: float, T: float, sigma: float,
     return K
 
 
+def _find_call_strike_at_delta(S: float, T: float, sigma: float,
+                                target_delta: float = DELTA_TARGET,
+                                step: float = 100) -> float:
+    """OTM call：從 ATM 往上移到 delta ≤ target。"""
+    K = S
+    while K < S * 1.5:
+        d = bs_delta(S, K, T, sigma, is_put=False, r=RF)
+        if d <= target_delta:
+            return K
+        K += step
+    return K
+
+
+# 向後相容
+_find_strike_at_delta = _find_put_strike_at_delta
+
+
 def run_backtest(prices: List[Tuple[date, float]],
                  hedge_lots: int = HEDGE_LOTS,
-                 notional_qty: int = NOTIONAL_QTY) -> StrategyResult:
-    """執行月選 put hedge 回測。"""
+                 notional_qty: int = NOTIONAL_QTY,
+                 sell_call: bool = True) -> StrategyResult:
+    """執行月選 hedge 回測。同時追蹤 3 種策略：
+       1. naked      — 純長部位（無 hedge）
+       2. put_only   — 長部位 + 買 put
+       3. collar     — 長部位 + 買 put + 賣 call（如 sell_call=True）
+    """
     if not prices:
         raise ValueError('empty price series')
 
-    dates  = [p[0] for p in prices]
     pxs    = [p[1] for p in prices]
     hv_arr = _rolling_hv(pxs)
 
-    # naked-long base notional：用第一天價格 × notional_qty × multiplier 模擬常持倉
-    base_notional = pxs[0] * notional_qty * TXO_MULTIPLIER
-
     res = StrategyResult()
-    cur_put: Optional[PutPosition] = None
-    cum_paid = 0.0       # 累積支付 premium（NT$）
-    cum_received = 0.0   # 累積到期收回 / 平倉收回（NT$）
+    cur_put:  Optional[PutPosition]  = None
+    cur_call: Optional[CallPosition] = None
+    # net cash flows (累積)
+    put_paid   = 0.0   # 累積買 put 支出 - 結算/平倉收回
+    call_cash  = 0.0   # 累積賣 call 收入 - 買回/履約支付
     last_roll_month = None
 
     for i, (dt, S) in enumerate(prices):
-        hv = max(0.10, hv_arr[i])     # IV 不要太低
-        # 1. 處理到期：若有 put 且今天 ≥ expiry，結算
+        hv = max(0.10, hv_arr[i])
+
+        # === 1. 到期處理 ===
         if cur_put and dt >= cur_put.expiry:
             payoff = max(0, cur_put.strike - S) * cur_put.qty * TXO_MULTIPLIER
-            cum_received += payoff
-            res.rolls.append({
-                'date':   dt.isoformat(),
-                'action': 'expire',
-                'strike': cur_put.strike,
-                'payoff_ntd': payoff,
-                'tx_at_expiry': S,
-            })
+            put_paid -= payoff
+            res.rolls.append({'date': dt.isoformat(), 'action': 'put_expire',
+                              'strike': cur_put.strike, 'payoff_ntd': round(payoff)})
             cur_put = None
+        if cur_call and dt >= cur_call.expiry:
+            assigned = max(0, S - cur_call.strike) * cur_call.qty * TXO_MULTIPLIER
+            call_cash -= assigned
+            res.rolls.append({'date': dt.isoformat(), 'action': 'call_expire',
+                              'strike': cur_call.strike, 'assigned_ntd': round(assigned)})
+            cur_call = None
 
-        # 2. 月初 roll：每個自然月第一個交易日建倉
+        # === 2. 月初 roll ===
         if dt.month != (last_roll_month or 0):
-            # close existing if any（mark-to-market）
+            # close put for roll
             if cur_put:
-                T_left_days = max(1, (cur_put.expiry - dt).days)
-                close_value = cur_put.value_at(S, T_left_days, hv)
-                cum_received += close_value
-                res.rolls.append({
-                    'date':   dt.isoformat(),
-                    'action': 'close_for_roll',
-                    'strike': cur_put.strike,
-                    'value':  close_value,
-                })
+                T_left = max(1, (cur_put.expiry - dt).days)
+                close_v = cur_put.value_at(S, T_left, hv)
+                put_paid -= close_v
+                res.rolls.append({'date': dt.isoformat(), 'action': 'put_close',
+                                  'strike': cur_put.strike, 'value_ntd': round(close_v)})
                 cur_put = None
+            # close call (buy back) for roll
+            if cur_call:
+                T_left = max(1, (cur_call.expiry - dt).days)
+                buyback = cur_call.buyback_value(S, T_left, hv)
+                call_cash -= buyback
+                res.rolls.append({'date': dt.isoformat(), 'action': 'call_buyback',
+                                  'strike': cur_call.strike, 'cost_ntd': round(buyback)})
+                cur_call = None
 
-            # 開新倉：DTE_TARGET 天到期
+            # open new put
             expiry = dt + timedelta(days=DTE_TARGET)
             T = DTE_TARGET / 365
-            new_strike = _find_strike_at_delta(S, T, hv)
-            entry_prem = bs_price(S, new_strike, T, hv, is_put=True, r=RF)
-            cost = entry_prem * hedge_lots * TXO_MULTIPLIER
-            cum_paid += cost
+            new_put_K = _find_put_strike_at_delta(S, T, hv)
+            put_prem = bs_price(S, new_put_K, T, hv, is_put=True, r=RF)
+            cost = put_prem * hedge_lots * TXO_MULTIPLIER
+            put_paid += cost
             cur_put = PutPosition(
-                entry_date=dt, expiry=expiry, strike=new_strike,
-                qty=hedge_lots, entry_premium=entry_prem, iv_at_entry=hv,
+                entry_date=dt, expiry=expiry, strike=new_put_K,
+                qty=hedge_lots, entry_premium=put_prem, iv_at_entry=hv,
             )
-            res.rolls.append({
-                'date':   dt.isoformat(),
-                'action': 'open',
-                'strike': new_strike,
-                'iv':     round(hv, 4),
-                'premium_pt': round(entry_prem, 1),
-                'cost_ntd':   round(cost),
-                'expiry':     expiry.isoformat(),
-            })
+            res.rolls.append({'date': dt.isoformat(), 'action': 'put_open',
+                              'strike': new_put_K, 'premium_pt': round(put_prem, 1),
+                              'cost_ntd': round(cost), 'expiry': expiry.isoformat()})
+
+            # open new short call (only for collar strategy)
+            if sell_call:
+                new_call_K = _find_call_strike_at_delta(S, T, hv)
+                call_prem = bs_price(S, new_call_K, T, hv, is_put=False, r=RF)
+                received = call_prem * hedge_lots * TXO_MULTIPLIER
+                call_cash += received
+                cur_call = CallPosition(
+                    entry_date=dt, expiry=expiry, strike=new_call_K,
+                    qty=hedge_lots, entry_premium=call_prem, iv_at_entry=hv,
+                )
+                res.rolls.append({'date': dt.isoformat(), 'action': 'call_sell',
+                                  'strike': new_call_K, 'premium_pt': round(call_prem, 1),
+                                  'received_ntd': round(received), 'expiry': expiry.isoformat()})
             last_roll_month = dt.month
 
-        # 3. mark-to-market
+        # === 3. Mark-to-market ===
         long_v = S * notional_qty * TXO_MULTIPLIER
-        put_v  = 0.0
-        put_strike = None
-        put_dte = None
+        put_v, put_strike, put_dte = 0.0, None, None
+        call_liab, call_strike, call_dte = 0.0, None, None
         if cur_put:
-            T_left_days = max(0, (cur_put.expiry - dt).days)
-            put_v = cur_put.value_at(S, T_left_days, hv)
-            put_strike = cur_put.strike
-            put_dte = T_left_days
+            T_left = max(0, (cur_put.expiry - dt).days)
+            put_v = cur_put.value_at(S, T_left, hv)
+            put_strike, put_dte = cur_put.strike, T_left
+        if cur_call:
+            T_left = max(0, (cur_call.expiry - dt).days)
+            call_liab = cur_call.buyback_value(S, T_left, hv)
+            call_strike, call_dte = cur_call.strike, T_left
 
-        equity_collar = long_v + put_v - cum_paid + cum_received
-        equity_naked  = long_v   # 對照組：無 hedge
+        equity_naked    = long_v
+        equity_put_only = long_v + put_v - put_paid
+        equity_collar   = equity_put_only + call_cash - call_liab
 
         res.dates.append(dt)
         res.tx.append(S)
@@ -185,100 +248,106 @@ def run_backtest(prices: List[Tuple[date, float]],
         res.put_value.append(put_v)
         res.put_strike.append(put_strike)
         res.put_dte.append(put_dte)
-        res.cash_paid.append(cum_paid - cum_received)
+        res.put_cash_paid.append(put_paid)
+        res.call_liab.append(call_liab)
+        res.call_strike.append(call_strike)
+        res.call_dte.append(call_dte)
+        res.call_cash.append(call_cash)
         res.long_value.append(long_v)
-        res.equity_collar.append(equity_collar)
         res.equity_naked.append(equity_naked)
+        res.equity_put_only.append(equity_put_only)
+        res.equity_collar.append(equity_collar)
 
     return res
 
 
 def report(res: StrategyResult) -> dict:
-    """計算 metrics 並印出總結。"""
-    if not res.equity_collar:
+    """三策略對照：naked / put_only / collar"""
+    if not res.equity_naked:
         return {}
 
     def _max_dd(eq: List[float]) -> float:
         peak = eq[0]
-        max_dd = 0.0
+        m = 0.0
         for v in eq:
             peak = max(peak, v)
             if peak > 0:
-                max_dd = min(max_dd, (v - peak) / peak)
-        return max_dd
+                m = min(m, (v - peak) / peak)
+        return m
 
     base = res.equity_naked[0]
-    final_collar = res.equity_collar[-1]
-    final_naked  = res.equity_naked[-1]
     n_days = len(res.dates)
     yrs = n_days / 252
 
-    ret_collar = (final_collar - base) / base
-    ret_naked  = (final_naked - base) / base
-    annual_collar = (1 + ret_collar) ** (1 / max(yrs, 0.01)) - 1
-    annual_naked  = (1 + ret_naked)  ** (1 / max(yrs, 0.01)) - 1
+    def _stats(eq):
+        ret = (eq[-1] - base) / base
+        ann = (1 + ret) ** (1 / max(yrs, 0.01)) - 1
+        return ret * 100, ann * 100, _max_dd(eq) * 100
 
-    dd_collar = _max_dd(res.equity_collar)
-    dd_naked  = _max_dd(res.equity_naked)
+    n_ret, n_ann, n_dd = _stats(res.equity_naked)
+    p_ret, p_ann, p_dd = _stats(res.equity_put_only)
+    c_ret, c_ann, c_dd = _stats(res.equity_collar)
 
-    # cash_paid[-1] = 累積支付 - 累積回收。正 = 淨支付 (hedge 成本)，負 = 淨收回 (hedge 賺錢)
-    net_cost = res.cash_paid[-1] if res.cash_paid else 0
-    n_rolls  = sum(1 for r in res.rolls if r['action'] == 'open')
+    put_net  = res.put_cash_paid[-1] if res.put_cash_paid else 0
+    call_net = res.call_cash[-1] if res.call_cash else 0
+    has_call = sum(1 for r in res.rolls if r['action'] == 'call_sell') > 0
 
-    # Hit rate：put 結算時 ITM 的比例
-    expiries = [r for r in res.rolls if r['action'] == 'expire']
-    hits = sum(1 for r in expiries if (r.get('payoff_ntd') or 0) > 0)
-    hit_rate = hits / len(expiries) if expiries else 0
+    rolls_open    = sum(1 for r in res.rolls if r['action'] == 'put_open')
+    put_expiries  = [r for r in res.rolls if r['action'] == 'put_expire']
+    call_expiries = [r for r in res.rolls if r['action'] == 'call_expire']
+    put_hits  = sum(1 for r in put_expiries  if (r.get('payoff_ntd') or 0) > 0)
+    call_hits = sum(1 for r in call_expiries if (r.get('assigned_ntd') or 0) > 0)
 
     metrics = {
-        'period_days':        n_days,
-        'period_years':       round(yrs, 2),
-        'tx_start':           round(res.tx[0], 0),
-        'tx_end':             round(res.tx[-1], 0),
-        'tx_change_pct':      round((res.tx[-1] / res.tx[0] - 1) * 100, 2),
-
-        'collar_total_return_pct':  round(ret_collar * 100, 2),
-        'naked_total_return_pct':   round(ret_naked  * 100, 2),
-        'collar_annualized_pct':    round(annual_collar * 100, 2),
-        'naked_annualized_pct':     round(annual_naked  * 100, 2),
-
-        'collar_max_drawdown_pct':  round(dd_collar * 100, 2),
-        'naked_max_drawdown_pct':   round(dd_naked  * 100, 2),
-
-        'hedge_net_cost_ntd':       round(net_cost),    # 正=支付, 負=賺錢
-        'hedge_avg_monthly_ntd':    round(net_cost / max(yrs * 12, 1)),
-        'rolls':                    n_rolls,
-        'put_hits_at_expiry':       hits,
-        'put_hit_rate_pct':         round(hit_rate * 100, 1),
+        'period_days':       n_days,
+        'period_years':      round(yrs, 2),
+        'tx_start':          round(res.tx[0], 0),
+        'tx_end':            round(res.tx[-1], 0),
+        'tx_change_pct':     round((res.tx[-1] / res.tx[0] - 1) * 100, 2),
+        'naked':    {'total_return_pct': round(n_ret, 2), 'annualized_pct': round(n_ann, 2), 'max_dd_pct': round(n_dd, 2)},
+        'put_only': {'total_return_pct': round(p_ret, 2), 'annualized_pct': round(p_ann, 2), 'max_dd_pct': round(p_dd, 2)},
+        'collar':   {'total_return_pct': round(c_ret, 2), 'annualized_pct': round(c_ann, 2), 'max_dd_pct': round(c_dd, 2)},
+        'put_net_cost_ntd':       round(put_net),
+        'call_net_received_ntd':  round(call_net),
+        'rolls':                  rolls_open,
+        'put_hit_rate_pct':       round(put_hits / len(put_expiries) * 100, 1) if put_expiries else 0,
+        'call_assigned_pct':      round(call_hits / len(call_expiries) * 100, 1) if call_expiries else 0,
     }
 
     print()
-    print('━' * 50)
+    print('━' * 60)
     print(f'回測期間：{res.dates[0]} → {res.dates[-1]}  ({n_days} 個交易日)')
-    print('━' * 50)
-    print(f'TX:       {res.tx[0]:.0f} → {res.tx[-1]:.0f}  ({metrics["tx_change_pct"]:+.2f}%)')
-    print()
-    print(f'                    │  collar 策略   │  裸長部位')
-    print(f'  總報酬           │  {metrics["collar_total_return_pct"]:+8.2f}%   │  {metrics["naked_total_return_pct"]:+8.2f}%')
-    print(f'  年化報酬         │  {metrics["collar_annualized_pct"]:+8.2f}%   │  {metrics["naked_annualized_pct"]:+8.2f}%')
-    print(f'  最大回檔         │  {metrics["collar_max_drawdown_pct"]:+8.2f}%   │  {metrics["naked_max_drawdown_pct"]:+8.2f}%')
-    print()
-    cost_label = '淨成本（hedge 支出）' if net_cost > 0 else '淨收益（hedge 賺錢）'
-    sign = '' if net_cost > 0 else '−'
-    print(f'Hedge {cost_label}：{abs(metrics["hedge_net_cost_ntd"]):>9,} NT')
-    print(f'月均：             {metrics["hedge_avg_monthly_ntd"]:>+10,} NT')
-    print(f'換倉次數：         {metrics["rolls"]} 次')
-    print(f'Put 到期 hit rate：{metrics["put_hits_at_expiry"]}/{len(expiries)}  ({metrics["put_hit_rate_pct"]}%)')
-    print()
-    # 觀點摘要
-    diff = metrics['collar_total_return_pct'] - metrics['naked_total_return_pct']
-    if diff > 0:
-        print(f'💡 collar 比裸長部位多保住 {diff:+.2f}%（drawdown 也少 {abs(metrics["collar_max_drawdown_pct"] - metrics["naked_max_drawdown_pct"]):.2f}%）')
-    elif diff < -2:
-        print(f'💡 collar 因 hedge 成本拖累 {-diff:.2f}%（在無大跌的市場 hedge 是純成本）')
+    print(f'TX: {res.tx[0]:.0f} → {res.tx[-1]:.0f}  ({metrics["tx_change_pct"]:+.2f}%)')
+    print('━' * 60)
+    print(f'{"":10} │ {"裸長部位":>10} │ {"put-only":>10} │ {"collar":>10}')
+    print(f'{"總報酬":10} │ {n_ret:+9.2f}% │ {p_ret:+9.2f}% │ {c_ret:+9.2f}%')
+    print(f'{"年化":10} │ {n_ann:+9.2f}% │ {p_ann:+9.2f}% │ {c_ann:+9.2f}%')
+    print(f'{"最大回檔":10} │ {n_dd:+9.2f}% │ {p_dd:+9.2f}% │ {c_dd:+9.2f}%')
+    print('━' * 60)
+    print(f'Put leg 淨現金流（負=hedge 成本）：{-put_net:>+12,.0f} NT')
+    if has_call:
+        print(f'Call leg 淨現金流（正=收 premium）：{call_net:>+11,.0f} NT')
+        print(f'Collar 整體 hedge 淨：{call_net - put_net:>+24,.0f} NT')
+    print(f'換倉次數：{rolls_open}  |  Put hit {put_hits}/{len(put_expiries)} ({metrics["put_hit_rate_pct"]}%)', end='')
+    if has_call:
+        print(f'  |  Call 被軋 {call_hits}/{len(call_expiries)} ({metrics["call_assigned_pct"]}%)')
     else:
-        print(f'💡 collar vs 裸 差異 {diff:+.2f}%（hedge 在這段期間影響中性）')
-    print('━' * 50)
+        print()
+    print()
+    print('💡 解讀：')
+    if c_ret > n_ret + 1:
+        print(f'   collar 勝過裸長 {c_ret - n_ret:+.2f}%（call 收入抵掉 put 成本）')
+    elif c_ret < n_ret - 3:
+        print(f'   collar 落後裸長 {c_ret - n_ret:+.2f}%（call 被軋 / put 純成本）')
+    else:
+        print(f'   collar vs 裸長 {c_ret - n_ret:+.2f}%（call premium ≈ put 成本）')
+    if c_ret < p_ret - 2:
+        print(f'   collar < put-only {c_ret - p_ret:+.2f}%：賣 call 限制了上漲（call 被深度 ITM）')
+    elif c_ret > p_ret + 1:
+        print(f'   collar > put-only {c_ret - p_ret:+.2f}%：call premium 是免費 yield')
+    if abs(n_dd - c_dd) > 2:
+        print(f'   最大回檔縮減 {abs(n_dd - c_dd):.1f}%（{n_dd:.1f}% → {c_dd:.1f}%）')
+    print('━' * 60)
 
     return metrics
 
@@ -400,7 +469,8 @@ def main():
     ap.add_argument('--csv', help='Path to TX history CSV (date,close)')
     ap.add_argument('--shioaji', action='store_true', help='Fetch live TX history via Shioaji')
     ap.add_argument('--days', type=int, default=252, help='Synthetic series length')
-    ap.add_argument('--lots', type=int, default=HEDGE_LOTS, help='Put hedge lots')
+    ap.add_argument('--lots', type=int, default=HEDGE_LOTS, help='Put/call hedge lots')
+    ap.add_argument('--no-call', action='store_true', help='Disable sell-call leg (put-only)')
     ap.add_argument('--save', help='Save equity curve to CSV')
     args = ap.parse_args()
 
@@ -418,21 +488,28 @@ def main():
         print('not enough data', file=sys.stderr)
         return 1
 
-    res = run_backtest(prices, hedge_lots=args.lots)
+    res = run_backtest(prices, hedge_lots=args.lots, sell_call=not args.no_call)
     metrics = report(res)
 
     if args.save:
         import csv
         with open(args.save, 'w') as f:
             w = csv.writer(f)
-            w.writerow(['date', 'tx', 'hv', 'put_strike', 'put_dte', 'put_value',
-                        'long_value', 'cash_paid_cum',
-                        'equity_collar', 'equity_naked'])
+            w.writerow(['date', 'tx', 'hv',
+                        'put_strike', 'put_dte', 'put_value', 'put_cash_paid',
+                        'call_strike', 'call_dte', 'call_liab', 'call_cash',
+                        'long_value',
+                        'equity_naked', 'equity_put_only', 'equity_collar'])
             for i, d in enumerate(res.dates):
                 w.writerow([d.isoformat(), round(res.tx[i], 1), round(res.hv[i], 4),
-                            res.put_strike[i], res.put_dte[i], round(res.put_value[i]),
-                            round(res.long_value[i]), round(res.cash_paid[i]),
-                            round(res.equity_collar[i]), round(res.equity_naked[i])])
+                            res.put_strike[i], res.put_dte[i],
+                            round(res.put_value[i]), round(res.put_cash_paid[i]),
+                            res.call_strike[i], res.call_dte[i],
+                            round(res.call_liab[i]), round(res.call_cash[i]),
+                            round(res.long_value[i]),
+                            round(res.equity_naked[i]),
+                            round(res.equity_put_only[i]),
+                            round(res.equity_collar[i])])
         print(f'[backtest] saved equity curve → {args.save}')
 
     return 0
