@@ -1836,8 +1836,10 @@ function ShortPutRecommender({ data, recommender, tx }) {
   const r = spr.recommended;
   const fmt = n => n == null ? '—' : Math.round(n).toLocaleString();
   const fu = spr.filters_used || {};
-  const lvlColor = { strict:'#22c55e', no_20d_low:'#fbbf24', min_safety:'#fb923c', none:'#ef4444' }[spr.relax_level] || '#94a3b8';
-  const lvlLabel = { strict:'全通過', no_20d_low:'放寬 20d', min_safety:'最低安全', none:'無候選' }[spr.relax_level] || spr.relax_level;
+  const lvlColor = spr.iv_too_low ? '#ef4444'
+                : { strict:'#22c55e', no_20d_low:'#fbbf24', min_safety:'#fb923c', none:'#ef4444' }[spr.relax_level] || '#94a3b8';
+  const lvlLabel = spr.iv_too_low ? 'IV 太低 暫不賣'
+                : { strict:'全通過', no_20d_low:'放寬 20d', min_safety:'最低安全', none:'無候選' }[spr.relax_level] || spr.relax_level;
   const txStrike = tx ?? data?.market?.tx_futures;
   const credit_pts = r ? Math.max(0, txStrike ? Math.round((txStrike - r.strike) * 0.05) / 100 : 0) : 0;
 
@@ -1854,6 +1856,9 @@ function ShortPutRecommender({ data, recommender, tx }) {
             <div><span style={{color:'#94a3b8'}}>Δ</span> <b style={{color:Math.abs(r.delta) <= 0.10 ? '#86efac' : '#fbbf24'}}>{r.delta.toFixed(3)}</b></div>
             <div><span style={{color:'#94a3b8'}}>OTM</span> <b>{r.otm_pct.toFixed(1)}%</b></div>
             <div><span style={{color:'#94a3b8'}}>prob ITM</span> <b style={{color:r.prob_itm < 0.15 ? '#86efac' : r.prob_itm < 0.25 ? '#fbbf24' : '#fca5a5'}}>{(r.prob_itm*100).toFixed(1)}%</b></div>
+            {spr.iv_percentile != null && (
+              <div><span style={{color:'#94a3b8'}}>IV pctile</span> <b style={{color:spr.iv_too_low ? '#fca5a5' : spr.iv_percentile > 60 ? '#86efac' : '#cbd5e1'}}>{spr.iv_percentile.toFixed(0)}</b></div>
+            )}
             {spr.has_event_in_dte && <span style={{fontSize:10, color:'#fca5a5'}}>⚠ 事件週</span>}
           </div>
           <div style={{fontSize:10, color:'#86efac', marginTop:4}}>

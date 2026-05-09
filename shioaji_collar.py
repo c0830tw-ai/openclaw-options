@@ -683,6 +683,8 @@ def recommend_short_put_strike(
     min_otm_pct: float = 4.0,
     max_otm_pct: float = 8.0,
     max_prob_itm: float = 0.25,
+    iv_percentile: Optional[float] = None,   # 近月 ATM IV 在過去 252 天的百分位
+    min_iv_percentile: float = 30.0,
 ) -> Dict[str, Any]:
     """為 BPS / put credit spread 推薦 short put 履約。
 
@@ -711,6 +713,9 @@ def recommend_short_put_strike(
     bb_30m = put_refs.get('bb_30m_low') if put_refs else None
     bb_60m = put_refs.get('bb_60m_low') if put_refs else None
     p20    = put_refs.get('past_20d_low') if put_refs else None
+
+    # IV 環境檢查（不影響每個 strike 評分，只影響整體推薦）
+    iv_too_low = iv_percentile is not None and iv_percentile < min_iv_percentile
 
     # 收集 OTM put 候選（strike < tx）
     puts = [c for c in chain
@@ -819,20 +824,26 @@ def recommend_short_put_strike(
         notes.append(f'近 20 日 low ({p20:.0f}) 太低（最近有大跌），已放寬此 filter')
     elif relax_level == 'min_safety':
         notes.append('多 filter 全失，僅保留 delta + 30M/60M BB 最低安全要求')
+    if iv_too_low:
+        notes.append(f'⚠ IV @ {iv_percentile:.0f} pctile < {min_iv_percentile:.0f} → '
+                     f'credit 太薄，建議**不賣 put**或等 IV 反彈')
 
     return {
         'recommended':       chosen,
         'relax_level':       relax_level if chosen else 'none',
         'rejected_nearby':   nearby_rejected,
         'has_event_in_dte':  has_event,
+        'iv_too_low':        iv_too_low,
+        'iv_percentile':     iv_percentile,
         'filters_used': {
-            'max_delta':      eff_max_delta,
-            'min_otm_pct':    min_otm_pct,
-            'max_otm_pct':    max_otm_pct,
-            'bb_30m_low':     bb_30m,
-            'bb_60m_low':     bb_60m,
-            'past_20d_low':   p20,
-            'max_prob_itm':   max_prob_itm,
+            'max_delta':       eff_max_delta,
+            'min_otm_pct':     min_otm_pct,
+            'max_otm_pct':     max_otm_pct,
+            'bb_30m_low':      bb_30m,
+            'bb_60m_low':      bb_60m,
+            'past_20d_low':    p20,
+            'max_prob_itm':    max_prob_itm,
+            'min_iv_pct':      min_iv_percentile,
         },
         'note': ' · '.join(notes) if notes else None,
     }
@@ -2387,18 +2398,28 @@ def main():
                 log.warning(f'build_spreads 失敗: {e}')
 
         # 10c. Short put 推薦器（multi-filter）
-        # 提早抓 upcoming events 以便 event filter（近月/週選/遠月共用）
+        # 提早抓 upcoming events + IV percentile 以便 event/IV filter（4 個月份共用）
         try:
             import events as _EV_early
             _events_for_filter = _EV_early.upcoming(window_days=45)
         except Exception:
             _events_for_filter = []
 
+        _iv_pct_for_filter = None
+        try:
+            import iv_percentile as _IVP_early
+            _ivp_pre = _IVP_early.summary(near_iv) if near_iv else None
+            if _ivp_pre and _ivp_pre.get('enough_data'):
+                _iv_pct_for_filter = _ivp_pre.get('percentile')
+        except Exception:
+            pass
+
         def _safe_short_put_rec(_chain, _tx, _T, _iv, _dte, _put_refs, _r):
             try:
                 return recommend_short_put_strike(
                     _chain, tx_futures=_tx, T=_T, iv=_iv, dte=_dte,
                     put_refs=_put_refs, upcoming_events=_events_for_filter, r=_r,
+                    iv_percentile=_iv_pct_for_filter,
                 )
             except Exception as _e:
                 log.warning(f'recommend_short_put_strike 失敗（{_dte}d): {_e}')
