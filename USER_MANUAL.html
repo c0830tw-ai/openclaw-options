@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>OpenClaw Options Dashboard 使用說明書</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; @bottom-right { content: counter(page); font-size: 9pt; color: #999; } }
+  body { font-family: "PingFang TC", "Heiti TC", "Microsoft JhengHei", sans-serif; color: #1f2937; font-size: 10.5pt; line-height: 1.55; margin: 0; }
+  h1 { font-size: 22pt; color: #0f172a; border-bottom: 3px solid #fbbf24; padding-bottom: 6px; margin: 0 0 12px; }
+  h2 { font-size: 15pt; color: #0f172a; border-left: 4px solid #fbbf24; padding-left: 10px; margin: 22px 0 10px; page-break-after: avoid; }
+  h3 { font-size: 12pt; color: #334155; margin: 14px 0 6px; page-break-after: avoid; }
+  h4 { font-size: 11pt; color: #475569; margin: 10px 0 4px; page-break-after: avoid; }
+  p, li { font-size: 10.5pt; }
+  code { background: #f1f5f9; padding: 1px 4px; border-radius: 3px; font-size: 9.5pt; color: #be185d; }
+  pre { background: #0f172a; color: #cbd5e1; padding: 8px 10px; border-radius: 4px; font-size: 9pt; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.5pt; page-break-inside: avoid; }
+  th, td { border: 1px solid #cbd5e1; padding: 4px 8px; text-align: left; vertical-align: top; }
+  th { background: #f1f5f9; font-weight: 700; }
+  .cover { text-align: center; padding: 60mm 0 10mm; page-break-after: always; }
+  .cover h1 { border: 0; font-size: 32pt; }
+  .cover .sub { font-size: 14pt; color: #64748b; margin-top: 16px; }
+  .cover .meta { font-size: 11pt; color: #94a3b8; margin-top: 80mm; }
+  .toc ol { padding-left: 20px; line-height: 1.8; }
+  .toc a { color: #1f2937; text-decoration: none; }
+  .box { border: 1px solid #cbd5e1; border-radius: 4px; padding: 10px 14px; margin: 10px 0; background: #f8fafc; page-break-inside: avoid; }
+  .box.tip { border-left: 4px solid #22c55e; background: #f0fdf4; }
+  .box.warn { border-left: 4px solid #f59e0b; background: #fffbeb; }
+  .box.danger { border-left: 4px solid #ef4444; background: #fef2f2; }
+  .box.example { border-left: 4px solid #60a5fa; background: #eff6ff; }
+  .field-table th { width: 22%; }
+  .field-table td:first-child { font-weight: 700; color: #0f172a; }
+  .ascii { font-family: monospace; font-size: 8.5pt; line-height: 1.4; white-space: pre; background: #0a0f1c; color: #cbd5e1; padding: 10px; border-radius: 4px; }
+  .legend { display: inline-block; width: 12px; height: 12px; border-radius: 50%; vertical-align: middle; margin-right: 4px; }
+  .page-break { page-break-after: always; }
+  .center { text-align: center; }
+  svg { display: block; margin: 8px auto; max-width: 100%; }
+  .caption { text-align: center; font-size: 9pt; color: #64748b; margin-top: -6px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+
+<!-- ── 封面 ────────────────────────────────────── -->
+<div class="cover">
+  <h1>OpenClaw Options</h1>
+  <h1 style="font-size:22pt; border:0; color:#475569;">使用說明書</h1>
+  <div class="sub">TXO 領式對沖 · 0050 ETF 主動避險 Dashboard</div>
+  <div class="sub" style="margin-top:30mm; font-size:11pt; line-height:1.8;">
+    持倉假設：5 口 0050 股期 · TXO put 主動 hedge<br>
+    資料來源：永豐 Shioaji · Firebase RTDB · 本地 server :8081
+  </div>
+  <div class="meta">
+    版本 v2026-05 · 印製日期 2026-05-09<br>
+    本機路徑 /Users/chenchinghung/openclaw/options/
+  </div>
+</div>
+
+<!-- ── 目錄 ────────────────────────────────────── -->
+<div class="toc">
+<h2>目錄</h2>
+<ol>
+  <li>系統概觀與資料流</li>
+  <li>頁面總覽（從上到下）</li>
+  <li>市場資訊區
+    <ol>
+      <li>大盤 · 台指期 + Put 進場參考線</li>
+      <li>2330 / 0050 範圍溫度計</li>
+    </ol>
+  </li>
+  <li>選擇權月份區（近月 / 週三 / 週五 / 遠月）
+    <ol>
+      <li>OptionCard — 推薦履約細節</li>
+      <li>StructCard + PayoffMini — 5 種結構與到期損益圖</li>
+      <li>SimTable — 損益模擬表</li>
+      <li>RollPanel — 換倉建議</li>
+      <li>WheelPanel — 整月策略檢核</li>
+      <li>輝距檢查 / Strike 警示</li>
+      <li>SpreadCard — 4 種 spread</li>
+    </ol>
+  </li>
+  <li>0050 領口區段</li>
+  <li>持倉明細</li>
+  <li>績效追蹤</li>
+  <li>每日操作流程（建議）</li>
+  <li>策略推薦邏輯（regime advisor）</li>
+  <li>常見情境決策流程圖</li>
+  <li>名詞對照表</li>
+</ol>
+</div>
+
+<div class="page-break"></div>
+
+<!-- ── 1. 系統概觀 ──────────────────────────────── -->
+<h2>1. 系統概觀與資料流</h2>
+
+<p>OpenClaw Options 是一個自動化的選擇權避險決策輔助工具，每 5 分鐘從永豐 Shioaji 抓取台指選擇權鏈、TX 期貨、加權指數、台積電 / 0050 現股報價，計算多種領式（collar）結構，並透過本地網頁 + Firebase 即時顯示。</p>
+
+<h3>核心資料流</h3>
+<pre>
+[永豐 Shioaji API]
+       ↓ (snapshot + kbars)
+[shioaji_collar.py]  ← 計算 ATR/BB/HV/ADX/IV/delta，挑選最佳履約價
+       ↓
+[latest_collar.json] (本機快取)
+       ↓                    ↓
+[server.py :8081]    [Firebase RTDB]
+       ↓
+[web/index.html]  ← React + Babel CDN，無需 build
+</pre>
+
+<h3>持倉假設</h3>
+<table class="field-table">
+  <tr><th>項目</th><th>說明</th></tr>
+  <tr><td>0050 ETF 股期</td><td>5 口 × 10,000 單位（每口）= 50,000 單位</td></tr>
+  <tr><td>對應 TXO 避險</td><td>用 TX 點位 × beta_0050 (≈0.97) 計算名目，建議 1–2 口 put</td></tr>
+  <tr><td>2330 大台股期</td><td>0 口（已平倉。設定保留以便日後重新進場）</td></tr>
+</table>
+
+<div class="box tip">
+<strong>提示：</strong>持倉設定在 <code>positions.json</code>。修改後重啟 server.py，dashboard 會用新的口數重算所有避險口數。
+</div>
+
+<!-- ── 2. 頁面總覽 ──────────────────────────────── -->
+<h2>2. 頁面總覽（從上到下）</h2>
+
+<div class="ascii">┌─────────────────────────────────────────────────────────────┐
+│ 💡 市場機會（折疊）                                          │
+│   └─ WeeklyOpportunities (週選 + Edge 比較條)              │
+├─────────────────────────────────────────────────────────────┤
+│ MarketStrip                                                 │
+│   ├─ 大盤 · 台指期（TAIEX / OTC / TX 近 / TX 遠）           │
+│   │   └─ Put 進場參考線（10MA + 30M/60M BB）  ★            │
+│   ├─ 台積電 2330（現股 / 股期近 / 股期遠）                 │
+│   │   ├─ IndicatorBar（ATR/BB/HV/輝SP/ADX/Put目標/Call目標）│
+│   │   └─ 範圍溫度計（BB↓/MA20/現價/BB↑/Put/Call）  ★       │
+│   └─ 元大 0050（同上結構）                                  │
+├─────────────────────────────────────────────────────────────┤
+│ 近月 / 週三週選 / 週五週選 / 遠月（按 DTE 升序）            │
+│   ├─ StrikeAlert（觸發警示）                                │
+│   ├─ HuiDistCheck（輝距檢查）                               │
+│   ├─ OptionCard × 2（Put + Call 推薦履約）                  │
+│   ├─ SimTable（到期損益模擬，預設折疊）                     │
+│   ├─ RollPanel（換倉建議）                                  │
+│   ├─ WheelPanel（整月健檢）                                 │
+│   ├─ StructCard × 5（5 種結構 + Payoff 曲線圖）  ★          │
+│   └─ SpreadsSection（4 種 spread）                          │
+├─────────────────────────────────────────────────────────────┤
+│ 0050 領口（5 口 ETF 對應 TXO 領口）                         │
+├─────────────────────────────────────────────────────────────┤
+│ 📋 持倉明細（折疊）                                          │
+├─────────────────────────────────────────────────────────────┤
+│ 📈 績效追蹤（折疊）                                          │
+└─────────────────────────────────────────────────────────────┘
+★ 表示新加的視覺化區塊</div>
+
+<div class="page-break"></div>
+
+<!-- ── 3. 市場資訊區 ────────────────────────────── -->
+<h2>3. 市場資訊區</h2>
+
+<h3>3.1 大盤 · 台指期 + Put 進場參考線</h3>
+
+<p>畫面最頂端顯示 4 個大盤指標數字：</p>
+
+<table class="field-table">
+  <tr><th>欄位</th><th>意義</th><th>用途</th></tr>
+  <tr><td>加權指數 TAIEX</td><td>台股大盤指數（白天 09:00–13:30 即時，夜盤為昨日收盤）</td><td>判斷 TX 期貨基差正逆向</td></tr>
+  <tr><td>櫃買指數 OTC</td><td>櫃買中心指數</td><td>科技 vs 中小型股景氣訊號</td></tr>
+  <tr><td>TX 近月</td><td>台指期最近月（含基差顯示）</td><td>選擇權履約價的真實標的</td></tr>
+  <tr><td>TX 遠月</td><td>下個月台指期</td><td>遠月選擇權標的、roll 用</td></tr>
+</table>
+
+<h4>★ Put 進場參考線（藍框）</h4>
+
+<p>這是一條水平視覺化條，顯示 TX 現價與 5 條歷史關鍵價位的距離百分比。</p>
+
+<div class="box example">
+<strong>讀法：</strong>
+<ul>
+<li><span class="legend" style="background:#22c55e"></span><strong>60M 下軌</strong>（綠）：60 分鐘 K 棒 BB(20) 下軌，超賣訊號</li>
+<li><span class="legend" style="background:#86efac"></span><strong>30M 下軌</strong>（淺綠）：30 分鐘 K 棒 BB(20) 下軌</li>
+<li><span class="legend" style="background:#94a3b8"></span><strong>10 日線</strong>（灰）：10 日均價，中期支撐</li>
+<li><span class="legend" style="background:#fbbf24"></span><strong>30M 中軌</strong>（黃）：30M MA20</li>
+<li><span class="legend" style="background:#fb923c"></span><strong>60M 中軌</strong>（橘）：60M MA20</li>
+<li><span class="legend" style="background:#fde047; box-shadow:0 0 0 2px #fde04740"></span><strong>現價</strong>（亮黃，大圓點）：TX 即時</li>
+</ul>
+</div>
+
+<div class="box tip">
+<strong>買 Put 訊號（你的習慣）：</strong>
+<ol>
+<li>現價跌到 30M 下軌 → 短期超賣，可能是反彈點，<strong>但也是「跌勢確認」進場 put 的時機</strong></li>
+<li>現價跌到 60M 下軌 → 中期跌破，put 多買一點</li>
+<li>現價跌破 10 日線 → 中期轉弱，hedge 加碼</li>
+<li>現價在 30M / 60M 中軌之上 → 短期偏多，按兵不動</li>
+</ol>
+</div>
+
+<h3>3.2 範圍溫度計（2330 / 0050）</h3>
+
+<p>每個標的下方各有一條溫度計。所有 marker 用「離現價 %」當共同 X 軸，所以可同時看到不同 scale 的 BB 通道（2330 點位）跟選擇權履約（TX 點位）。</p>
+
+<svg width="500" height="120" viewBox="0 0 500 120">
+  <!-- baseline -->
+  <line x1="20" y1="60" x2="480" y2="60" stroke="#94a3b8" stroke-width="2"/>
+  <!-- 0% line -->
+  <line x1="280" y1="40" x2="280" y2="80" stroke="#475569" stroke-width="1"/>
+
+  <!-- BB↓ -->
+  <circle cx="80" cy="60" r="5" fill="#22c55e"/>
+  <text x="80" y="35" font-size="9" text-anchor="middle" fill="#22c55e" font-weight="700">BB↓</text>
+  <text x="80" y="100" font-size="8" text-anchor="middle" fill="#475569">1,930 (-15.7%)</text>
+  <!-- Put -->
+  <circle cx="160" cy="60" r="5" fill="#86efac"/>
+  <text x="160" y="35" font-size="9" text-anchor="middle" fill="#86efac" font-weight="700">Put</text>
+  <text x="160" y="100" font-size="8" text-anchor="middle" fill="#475569">39,200 (-7.3%)</text>
+  <!-- MA20 -->
+  <circle cx="220" cy="60" r="5" fill="#94a3b8"/>
+  <text x="220" y="35" font-size="9" text-anchor="middle" fill="#94a3b8" font-weight="700">MA20</text>
+  <text x="220" y="100" font-size="8" text-anchor="middle" fill="#475569">2,140 (-6.6%)</text>
+  <!-- 現價 -->
+  <circle cx="280" cy="60" r="7" fill="#fbbf24"/>
+  <circle cx="280" cy="60" r="11" fill="none" stroke="#fbbf24" stroke-width="2" stroke-opacity="0.4"/>
+  <text x="280" y="35" font-size="10" text-anchor="middle" fill="#fbbf24" font-weight="700">現價</text>
+  <text x="280" y="100" font-size="9" text-anchor="middle" fill="#0f172a" font-weight="700">2,290</text>
+  <!-- BB↑ -->
+  <circle cx="320" cy="60" r="5" fill="#ef4444"/>
+  <text x="320" y="35" font-size="9" text-anchor="middle" fill="#ef4444" font-weight="700">BB↑</text>
+  <text x="320" y="100" font-size="8" text-anchor="middle" fill="#475569">2,350 (+2.6%)</text>
+  <!-- Call -->
+  <circle cx="380" cy="60" r="5" fill="#fbbf24"/>
+  <text x="380" y="35" font-size="9" text-anchor="middle" fill="#fbbf24" font-weight="700">Call</text>
+  <text x="380" y="100" font-size="8" text-anchor="middle" fill="#475569">42,750 (+1.1%)</text>
+</svg>
+<div class="caption">2330 範圍溫度計示意圖（淺綠 = 向下保護點、亮黃 = 上限封頂點）</div>
+
+<h4>判讀邏輯</h4>
+<ul>
+<li><strong>現價靠近 BB↑（紅）</strong>：超買，注意拉回，賣 call 收 premium 機會佳</li>
+<li><strong>現價靠近 BB↓（綠）</strong>：超賣，反彈機會，但跌破代表結構轉弱</li>
+<li><strong>Put 履約離現價愈遠</strong>：保護愈淺、premium 愈低</li>
+<li><strong>Call 履約離現價愈近</strong>：上限愈低、premium 愈高（收得多但容易被軋）</li>
+</ul>
+
+<div class="box warn">
+<strong>注意：</strong>2330 / 0050 的 BB 通道是「個股」尺度，但 Put / Call 履約是「TAIEX」尺度。X 軸統一用「距現價 %」所以可疊在同一條。% 數值的「離現價」中，Put / Call 的基準是 TX 期貨價。
+</div>
+
+<div class="page-break"></div>
+
+<!-- ── 4. 選擇權月份區 ────────────────────────── -->
+<h2>4. 選擇權月份區（近月 / 週三 / 週五 / 遠月）</h2>
+
+<p>每個月份自成一個區段，按 DTE（距結算天數）升序排。標題行有「DTE Xd（交易日 Y）」資訊。</p>
+
+<h3>4.1 OptionCard — 推薦履約細節</h3>
+
+<p>每個月份顯示 2 張 OptionCard（一張 Put、一張 Call），由系統依 ATR/BB/delta 篩選後給的最佳履約價。</p>
+
+<table class="field-table">
+  <tr><th>欄位</th><th>意義</th></tr>
+  <tr><td>履約價</td><td>系統選的 TXO put / call 履約點位（TAIEX scale）</td></tr>
+  <tr><td>Δ (delta)</td><td>絕對值 ≤ 0.10 是預設目標（保守）。看 1% TAIEX 變動會讓選擇權變動多少點</td></tr>
+  <tr><td>IV</td><td>該履約價對應的隱含波動率，數字越高代表權利金越貴</td></tr>
+  <tr><td>價格</td><td>bid / mid / ask 三組數字。下單建議用 mid，急著進可用 ask</td></tr>
+  <tr><td>距現價 %</td><td>履約離 TX 期貨多遠（負 = 下方保護位、正 = 上方封頂位）</td></tr>
+</table>
+
+<h3>4.2 ★ StructCard + PayoffMini — 5 種結構與到期損益曲線</h3>
+
+<p>每個月份下方並排 5 張 StructCard，每張代表一種領口結構。</p>
+
+<table class="field-table">
+  <tr><th>結構</th><th>組合</th><th>特性</th></tr>
+  <tr><td>symmetric</td><td>NC × Put + NC × Call</td><td>對稱領口，下行有底、上行有蓋，淨權利金接近 0</td></tr>
+  <tr><td>skewed</td><td>NC × Call + halfP × Put</td><td>偏賣方，credit 多但保護薄</td></tr>
+  <tr><td>covered_call</td><td>NC × Call only</td><td>無下行保護，純收 call premium</td></tr>
+  <tr><td>defensive</td><td>halfC × Call + NP × Put</td><td>偏防守，賣 call 少、買 put 多</td></tr>
+  <tr><td>protective_put</td><td>NP × Put only</td><td>純保護，沒有 credit 補貼</td></tr>
+</table>
+
+<h4>每張卡片包含</h4>
+<ul>
+<li>結構名稱 + 描述</li>
+<li>口數（C / P）</li>
+<li>履約價 + 權利金</li>
+<li>淨權利金（藍框 = credit 收 / 紅框 = debit 付）</li>
+<li>避險覆蓋率 %（progress bar）</li>
+<li>下跌觸底 % / 上漲觸頂 %</li>
+<li><strong>★ PayoffMini 到期損益曲線</strong>（重點）</li>
+</ul>
+
+<h4>PayoffMini 讀圖</h4>
+
+<svg width="450" height="160" viewBox="0 0 450 160">
+  <!-- y axis labels -->
+  <text x="20" y="30" font-size="9" fill="#64748b">+ 賺</text>
+  <text x="20" y="80" font-size="9" fill="#64748b">0</text>
+  <text x="20" y="135" font-size="9" fill="#64748b">- 賠</text>
+
+  <!-- chart area -->
+  <rect x="50" y="20" width="380" height="120" fill="#040810" stroke="#334155"/>
+
+  <!-- y=0 line -->
+  <line x1="50" y1="80" x2="430" y2="80" stroke="#475569" stroke-width="0.5" stroke-dasharray="2 2"/>
+
+  <!-- 綠色填充（賺） -->
+  <path d="M 50,80 L 50,80 L 100,80 L 100,80 L 200,80 L 240,80 L 240,55 L 280,55 L 280,80 L 380,80 L 430,80 L 430,80 Z" fill="#22c55e30"/>
+  <!-- 紅色填充（賠） -->
+  <path d="M 50,80 L 50,135 L 80,135 L 100,80 L 200,80 L 240,80 L 240,80 L 280,80 L 280,80 L 380,80 L 430,135 L 430,80 Z" fill="#ef444430" />
+
+  <!-- 簡化 collar 損益曲線 -->
+  <path d="M 50,135 L 100,80 L 240,55 L 280,55 L 380,80 L 430,135"
+        fill="none" stroke="#cbd5e1" stroke-width="2"/>
+
+  <!-- 履約垂直線 -->
+  <line x1="100" y1="20" x2="100" y2="140" stroke="#86efac" stroke-width="0.5" stroke-dasharray="3 3"/>
+  <text x="100" y="155" font-size="9" text-anchor="middle" fill="#86efac">Put 履約</text>
+
+  <line x1="380" y1="20" x2="380" y2="140" stroke="#fca5a5" stroke-width="0.5" stroke-dasharray="3 3"/>
+  <text x="380" y="155" font-size="9" text-anchor="middle" fill="#fca5a5">Call 履約</text>
+
+  <!-- 現價 -->
+  <line x1="240" y1="20" x2="240" y2="140" stroke="#fbbf24" stroke-width="1.5"/>
+  <text x="240" y="155" font-size="9" text-anchor="middle" fill="#fbbf24" font-weight="700">現價</text>
+
+  <text x="200" y="50" font-size="9" fill="#22c55e" font-weight="700">最大利潤平台</text>
+  <text x="60" y="120" font-size="9" fill="#ef4444">下跌虧損區</text>
+  <text x="395" y="120" font-size="9" fill="#ef4444">上漲虧損區</text>
+</svg>
+<div class="caption">典型 collar 結構到期損益圖（put 防守 + call 封頂 = 中間平台）</div>
+
+<table class="field-table">
+  <tr><th>視覺元素</th><th>意義</th></tr>
+  <tr><td><span class="legend" style="background:#22c55e30; border-radius:0; height:8px"></span> 綠色填充</td><td>到期 P&L &gt; 0 區域（淨賺）</td></tr>
+  <tr><td><span class="legend" style="background:#ef444430; border-radius:0; height:8px"></span> 紅色填充</td><td>到期 P&L &lt; 0 區域（淨賠）</td></tr>
+  <tr><td>白線曲折</td><td>到期 P&L 曲線</td></tr>
+  <tr><td>黃色直線</td><td>當下 TX 現價（時間 = 0 時的位置）</td></tr>
+  <tr><td>綠虛線</td><td>Put 履約 — 跌過此點開始啟動保護</td></tr>
+  <tr><td>紅虛線</td><td>Call 履約 — 漲過此點開始觸頂</td></tr>
+  <tr><td>0 水平虛線</td><td>損益平衡 (P&L = 0)</td></tr>
+</table>
+
+<div class="box tip">
+<strong>怎麼用：</strong>
+<ul>
+<li>5 張 Payoff 圖橫向比較，曲線形狀直觀看出哪個「跌也虧得有限、漲也賺得有限」（最對稱）vs 「跌很多但漲不限」（protective_put）</li>
+<li>看「綠色填充比例」估贏面，紅色比例估虧面</li>
+<li>跟你對未來 TX 走勢的預判對齊：覺得會跌 → 找下跌區紅色少的；覺得會盤整 → 找中間綠色平台寬的</li>
+</ul>
+</div>
+
+<div class="page-break"></div>
+
+<h3>4.3 SimTable — 損益模擬表（預設折疊）</h3>
+
+<p>顯示 5 個情境（-5% / Put 履約 / 現價 / Call 履約 / +5%）下的 P&L 萬元數字。</p>
+
+<table class="field-table">
+  <tr><th>欄位</th><th>意義</th></tr>
+  <tr><td>到期點位</td><td>5 個情境的 TX 結算點位 + 距現價 %</td></tr>
+  <tr><td>Call N 口</td><td>賣 call 的 P&L（萬元，正 = 賺）</td></tr>
+  <tr><td>Put N 口</td><td>買 put 的 P&L（萬元，正 = 賺）</td></tr>
+  <tr><td>選擇權淨</td><td>整個結構的 P&L</td></tr>
+  <tr><td>狀態</td><td>有保護（在 put 履約以下）/ 緩衝中（中間）/ 觸頂限（在 call 履約以上）</td></tr>
+</table>
+
+<h3>4.4 RollPanel — 換倉建議</h3>
+
+<p>系統會根據 DTE / delta 偏離 / IV 變化，主動建議哪個 leg 該換倉，標示優先級（high / medium）。</p>
+
+<h3>4.5 WheelPanel — 整月策略檢核</h3>
+
+<p>對該月選擇權的整體狀況做健檢：權利金是否便宜、保護厚度是否合理、IV percentile 是否合適進場。</p>
+
+<h3>4.6 HuiDistCheck（輝距檢查）</h3>
+
+<p>檢查目前的 buy/sell strike 距離是否符合「輝哥比例式」的 5–8% 區間。</p>
+
+<table class="field-table">
+  <tr><th>SP 區</th><th>說明</th></tr>
+  <tr><td>之內 (5–8%)</td><td>距離合理，符合輝哥操作建議</td></tr>
+  <tr><td>之外</td><td>距離過寬或過窄，可能 credit 不划算</td></tr>
+</table>
+
+<h3>4.7 StrikeAlert — 履約警示</h3>
+
+<p>當 TX 現價接近 / 跌破 put 或漲破 call 履約 ±N% 時觸發紅黃燈警示。</p>
+
+<table class="field-table">
+  <tr><th>警示等級</th><th>觸發條件</th><th>動作</th></tr>
+  <tr><td>🟢 安全</td><td>離 strike &gt; 3%</td><td>無動作</td></tr>
+  <tr><td>🟡 留意</td><td>離 strike 1–3%</td><td>觀察、考慮 roll</td></tr>
+  <tr><td>🔴 緊急</td><td>離 strike &lt; 1%</td><td>立即 roll 或加倉</td></tr>
+</table>
+
+<h3>4.8 SpreadCard — 4 種 spread 結構</h3>
+
+<table class="field-table">
+  <tr><th>名稱</th><th>組合</th><th>特性</th></tr>
+  <tr><td>Bear Call Spread</td><td>賣低 Call + 買高 Call</td><td>看不漲，credit 收</td></tr>
+  <tr><td>Bull Put Spread</td><td>賣高 Put + 買低 Put</td><td>看不跌，credit 收</td></tr>
+  <tr><td>Bear Put Spread</td><td>買高 Put + 賣低 Put</td><td>看跌方向性，限成本</td></tr>
+  <tr><td>Bull Call Spread</td><td>買低 Call + 賣高 Call</td><td>看漲方向性，限成本</td></tr>
+</table>
+
+<div class="page-break"></div>
+
+<!-- ── 5. 0050 領口 ────────────────────────────── -->
+<h2>5. 0050 領口區段</h2>
+
+<p>專為「持有 0050 ETF 股期 5 口」量身計算的對應 TXO 領口建議。</p>
+
+<table class="field-table">
+  <tr><th>欄位</th><th>意義</th></tr>
+  <tr><td>0050 現價</td><td>ETF 現價（NT$/股）</td></tr>
+  <tr><td>名目</td><td>5 口 × 10,000 單位 × 現價 = 約 4–5 百萬 NT</td></tr>
+  <tr><td>beta</td><td>0050 對 TAIEX 的敏感度（≈0.97）</td></tr>
+  <tr><td>beta 調整名目</td><td>名目 × beta = 真實 TAIEX 曝險</td></tr>
+  <tr><td>建議 N 口 TXO</td><td>beta 名目 ÷ (TX 點 × 50)，typically 1–2 口</td></tr>
+  <tr><td>5 種結構</td><td>同近月，但 strike 跟著 0050 個股的 ATR/BB 動態調整</td></tr>
+</table>
+
+<!-- ── 6. 持倉明細 ────────────────────────────── -->
+<h2>6. 持倉明細</h2>
+
+<h3>BrokerPositions（券商持倉同步）</h3>
+
+<p>從永豐 API 抓出當前所有期貨 / 選擇權部位，顯示：合約代碼、買賣方向、口數、進場價、目前市價、未實現損益。</p>
+
+<h3>PortfolioBreakdown（投組分解）</h3>
+
+<table class="field-table">
+  <tr><th>欄位</th><th>意義</th></tr>
+  <tr><td>項目</td><td>0050 股期 / 大台股期 / TXO 各 leg</td></tr>
+  <tr><td>角色</td><td>core_long（核心多單）/ hedge_long（保護倉）/ premium_short（賣方收益）</td></tr>
+  <tr><td>名目</td><td>每個 leg 的名目曝險</td></tr>
+  <tr><td>beta 調整</td><td>用 beta 換算成 TAIEX 等價曝險</td></tr>
+</table>
+
+<!-- ── 7. 績效追蹤 ────────────────────────────── -->
+<h2>7. 績效追蹤</h2>
+
+<table class="field-table">
+  <tr><th>區塊</th><th>意義</th></tr>
+  <tr><td>PerformanceMetrics</td><td>Sharpe / Sortino / Calmar / Max DD / 年化報酬</td></tr>
+  <tr><td>EquityChart</td><td>淨值曲線 + Buy & Hold 對照</td></tr>
+  <tr><td>RollingMetricsChart</td><td>滾動 30 / 60 / 90 日的 Sharpe / 波動度</td></tr>
+  <tr><td>TradeJournalPanel</td><td>歷史交易記錄（thesis / 進場 / 出場 / P&L）</td></tr>
+  <tr><td>TrendStrip</td><td>TX 與 IV 過去 N 天走勢小條</td></tr>
+  <tr><td>TradingLedger</td><td>實際下單帳本</td></tr>
+</table>
+
+<div class="page-break"></div>
+
+<!-- ── 8. 每日操作流程 ────────────────────────── -->
+<h2>8. 每日操作流程（建議）</h2>
+
+<h3>09:00 開盤前 — 早安檢查</h3>
+<ol>
+<li>看 Telegram morning report：TX、IV、未平倉、今日事件、推薦動作</li>
+<li>打開 dashboard，確認 PutRefsBar 現價位置（接近 30M 下軌？跌破 10MA？）</li>
+<li>檢查 StrikeAlert 是否有 🔴 緊急警示</li>
+</ol>
+
+<h3>13:30 收盤後 — 收盤回顧</h3>
+<ol>
+<li>看 Telegram evening report：今日 P&L、Greeks 變化、明日重點</li>
+<li>有觸發換倉 RollPanel high 提示？決定明天動作</li>
+<li>本週 EquityChart 趨勢還是健康嗎？</li>
+</ol>
+
+<h3>盤中 — 何時該動手</h3>
+<ul>
+<li><strong>buy put 加碼時機</strong>：PutRefsBar 顯示現價跌破 10MA 或 60M 下軌，且 IV percentile &lt; 50 → 進場</li>
+<li><strong>roll 換倉時機</strong>：DTE &lt; 14 天，或 RollPanel 出現 high 優先 → 換到下個月</li>
+<li><strong>關閉 put 時機</strong>：put delta 降到 -0.05 以下（保護價值已遠離）→ 平倉收回殘值</li>
+</ul>
+
+<!-- ── 9. 策略推薦邏輯 ────────────────────────── -->
+<h2>9. 策略推薦邏輯（regime advisor）</h2>
+
+<p>系統依「過去 30 天 TX 漲跌幅」自動分類市場情境，給 primary + fallback 兩種策略建議。</p>
+
+<table class="field-table">
+  <tr><th>情境</th><th>30d TX %</th><th>主推</th><th>備援</th></tr>
+  <tr><td>🐂 強勢牛市</td><td>&gt; +10%</td><td>collar</td><td>hui-full</td></tr>
+  <tr><td>🐃 中等牛市</td><td>+5 ~ +10%</td><td>collar</td><td>hui-full</td></tr>
+  <tr><td>😴 盤整</td><td>-5 ~ +5%</td><td><strong>hui-full</strong></td><td>cal-std</td></tr>
+  <tr><td>🐃↓ 中等熊市</td><td>-5 ~ -10%</td><td><strong>hui-full</strong></td><td>put_only</td></tr>
+  <tr><td>🐻 強勢熊市</td><td>&lt; -10%</td><td>put_only</td><td>hui-full</td></tr>
+</table>
+
+<h3>策略總覽（含回測 4 季結果）</h3>
+
+<table class="field-table">
+  <tr><th>策略名</th><th>結構</th><th>奪冠次數</th><th>進前 3</th></tr>
+  <tr><td>cal-std</td><td>買近月 + 賣遠月（calendar 標準）</td><td>2/4</td><td>2/4</td></tr>
+  <tr><td><strong>hui-full</strong></td><td>持倉 + 賣 1 口 OTM call + 買 2 口更遠 OTM put</td><td>1/4</td><td><strong>3/4 ⭐ 最穩</strong></td></tr>
+  <tr><td>collar</td><td>傳統領式：買 put + 賣 call</td><td>1/4</td><td>2/4</td></tr>
+  <tr><td>hui-ratio</td><td>輝哥比例式 1:2</td><td>0</td><td>2/4</td></tr>
+  <tr><td>cal-reverse</td><td>輝哥版 calendar：買近月 long put + 賣遠月 put</td><td>0</td><td>2/4</td></tr>
+  <tr><td>put_only</td><td>純買 put 保護</td><td>0</td><td>0</td></tr>
+</table>
+
+<div class="box tip">
+<strong>實戰建議：</strong>hui-full 是 4 季中唯一在<strong>中熊 + 盤整</strong>都進前 3 的策略 → 最穩定。看回測 sweep 別只看冠軍次數，要看「不會掉隊」的次數。
+</div>
+
+<div class="page-break"></div>
+
+<!-- ── 10. 常見情境決策流程 ────────────────────── -->
+<h2>10. 常見情境決策流程</h2>
+
+<h3>情境 A：TX 突然急跌 -3%</h3>
+<ol>
+<li>看 PutRefsBar：現價是否跌破 60M 下軌？</li>
+<li>看 StrikeAlert：是否觸發 🔴？</li>
+<li>看 IV percentile：&gt; 70 已經貴了，等回穩；&lt; 50 還能加 put</li>
+<li>看 Payoff 圖：當前 protective_put 結構是否還有保護厚度？</li>
+<li>動作：<ul>
+  <li>跌破 60M 下軌 + IV &lt; 50 → 加買 1 口 put（30 DTE，Δ -0.10）</li>
+  <li>跌破 60M 下軌 + IV &gt; 70 → 不追，等反彈再進</li>
+</ul></li>
+</ol>
+
+<h3>情境 B：盤整一週，IV 偏低</h3>
+<ol>
+<li>regime 顯示「😴 盤整」+ 主推 hui-full</li>
+<li>看 0050 領口建議結構：選 hui-full（賣 1 call + 買 2 put）</li>
+<li>用 SpreadCard 找最划算的 strike 組合</li>
+<li>用 PayoffMini 確認到期損益曲線形狀</li>
+<li>下單前用 SimTable 跑 5 個情境模擬</li>
+</ol>
+
+<h3>情境 C：DTE 剩 10 天，put delta 變很小</h3>
+<ol>
+<li>RollPanel 應該已顯示 high 換倉警示</li>
+<li>看遠月 (SectionFarMonth) 推薦履約是哪個</li>
+<li>用 RollPanel 估算淨成本（平倉收 - 開倉付）</li>
+<li>確認新倉 IV 不要太貴（&lt; 70 percentile）</li>
+<li>動作：賣掉舊月 put + 買進新月 put（同一口）</li>
+</ol>
+
+<!-- ── 11. 名詞對照表 ────────────────────────── -->
+<h2>11. 名詞對照表</h2>
+
+<table class="field-table">
+  <tr><th>名詞</th><th>對照</th><th>說明</th></tr>
+  <tr><td>TXO</td><td>台指選擇權</td><td>標的為 TAIEX，每點 50 NT</td></tr>
+  <tr><td>TX / TXF</td><td>台指期</td><td>每點 200 NT（大台），50 NT（小台）</td></tr>
+  <tr><td>DTE</td><td>Days to Expiration</td><td>距結算天數（含週末）</td></tr>
+  <tr><td>ATM</td><td>At-the-Money</td><td>履約價接近現價</td></tr>
+  <tr><td>OTM</td><td>Out-of-the-Money</td><td>價外（put = 履約 &lt; 現價、call = 履約 &gt; 現價）</td></tr>
+  <tr><td>ITM</td><td>In-the-Money</td><td>價內</td></tr>
+  <tr><td>Δ delta</td><td>價格敏感度</td><td>標的漲 1 點，選擇權變動多少</td></tr>
+  <tr><td>θ theta</td><td>時間衰減</td><td>過 1 天選擇權貶值多少</td></tr>
+  <tr><td>ν vega</td><td>波動敏感度</td><td>IV 升 1% 選擇權變多少</td></tr>
+  <tr><td>γ gamma</td><td>delta 加速度</td><td>標的變動時 delta 變化率</td></tr>
+  <tr><td>BB</td><td>Bollinger Bands</td><td>布林通道，預設 (20, 2)</td></tr>
+  <tr><td>ATR</td><td>Average True Range</td><td>真實波幅，14 日</td></tr>
+  <tr><td>HV</td><td>Historical Volatility</td><td>歷史波動率（年化）</td></tr>
+  <tr><td>IV</td><td>Implied Volatility</td><td>隱含波動率，由選擇權價反推</td></tr>
+  <tr><td>ADX</td><td>趨勢強度指標</td><td>&gt;25 表示有趨勢</td></tr>
+  <tr><td>credit</td><td>信用</td><td>淨收權利金</td></tr>
+  <tr><td>debit</td><td>借記</td><td>淨付權利金</td></tr>
+  <tr><td>BE</td><td>Break-Even</td><td>損益平衡點</td></tr>
+  <tr><td>roll</td><td>換倉</td><td>平倉舊月 + 開倉新月</td></tr>
+  <tr><td>collar</td><td>領口策略</td><td>持倉 + 買 put + 賣 call</td></tr>
+  <tr><td>hui-full</td><td>輝哥完整版</td><td>持倉 + 賣 1 OTM call + 買 2 更遠 OTM put（1:2 比例）</td></tr>
+  <tr><td>cal-std</td><td>標準 calendar</td><td>買遠月 + 賣近月 same strike</td></tr>
+  <tr><td>cal-reverse</td><td>反向 calendar</td><td>買近月 + 賣遠月（輝哥版）</td></tr>
+</table>
+
+<!-- ── 結尾 ────────────────────────────────────── -->
+<h2 style="border-color:#94a3b8;">⚠ 風險提醒</h2>
+
+<div class="box danger">
+<ul>
+<li>TXO 領式對沖的是<strong>加權指數系統性風險</strong>，無法涵蓋台積電或 0050 的個股特定風險。當標的因個別消息劇烈波動而大盤未同步下跌時，Put 保護效果有限。</li>
+<li>夜盤流動性低，選擇權報價可能與真實成交差距大，建議重要決策在日盤完成。</li>
+<li>本系統僅輔助決策，最終下單請自行判斷並承擔風險。</li>
+<li>回測樣本只有 9 個月（4 季），統計顯著性不足，請當作參考而非保證。</li>
+</ul>
+</div>
+
+<p style="text-align:center; color:#94a3b8; font-size:9pt; margin-top:30px;">
+— 本文件由 OpenClaw Options 自動生成 —
+</p>
+
+</body>
+</html>
