@@ -695,6 +695,7 @@ def recommend_short_put_strike(
     iv_percentile: Optional[float] = None,   # 近月 ATM IV 在過去 252 天的百分位
     min_iv_percentile: float = 30.0,
     spread_width: float = 100.0,             # 賣腳 → 買腳的距離（點），預設 100
+    min_credit_pts: float = 3.0,             # 最小 net credit 門檻（< 此值的組合視為廢）
 ) -> Dict[str, Any]:
     """為 BPS / put credit spread 推薦 short put 履約。
 
@@ -775,51 +776,134 @@ def recommend_short_put_strike(
             'all_pass': len(failed) == 0,
         })
 
-    # 分級降階：先試全通過，再嘗試放寬「past_20d_low」(最容易爆的 filter)
-    def _level(req):
-        for c in candidates:
-            ok = True
-            for f in c['failed']:
-                if f.startswith(req): continue   # 允許這類 filter 失敗
-                ok = False; break
-            if ok and req == '__all__':
-                ok = c['all_pass']
-            elif ok and req != '__all__':
-                # 重新檢查除允許項外其他都過
-                ok = all(not (f.startswith('Δ') or f.startswith('OTM') or
-                              f.startswith('< 30M') or f.startswith('≥ 30M') or
-                              f.startswith('< 60M') or f.startswith('≥ 60M') or
-                              f.startswith('prob ITM'))
-                         or f.startswith(req)
-                         for f in c['failed'])
-            if ok: return c
-        return None
+    # ── 分級判斷每個 candidate 通過哪個 level ──
+    def _relax_for(c):
+        if c['all_pass']:
+            return 'strict'
+        non_p20 = [f for f in c['failed'] if not f.startswith('≥ 20日 low')]
+        if not non_p20:
+            return 'no_20d_low'
+        # min_safety: 只要 delta + 兩個 BB 過
+        req_failed = [f for f in c['failed']
+                      if f.startswith('Δ') or f.startswith('< 30M') or f.startswith('≥ 30M')
+                      or f.startswith('< 60M') or f.startswith('≥ 60M')]
+        if not req_failed:
+            return 'min_safety'
+        return 'fail'
 
-    # Level 1: 全通過
-    chosen = next((c for c in candidates if c['all_pass']), None)
-    relax_level = 'strict'
-    # Level 2: 放寬 past_20d_low（最近大跌時這個 filter 會吃掉所有候選）
-    if chosen is None:
-        for c in candidates:
-            non_p20_failed = [f for f in c['failed'] if not f.startswith('≥ 20日 low')]
-            if not non_p20_failed:
-                chosen = c
-                relax_level = 'no_20d_low'
-                break
-    # Level 3: 只要求 delta + 兩個 BB（最低門檻）
-    if chosen is None:
-        for c in candidates:
-            req_failed = [f for f in c['failed']
-                          if f.startswith('Δ') or f.startswith('< 30M') or f.startswith('≥ 30M')
-                          or f.startswith('< 60M') or f.startswith('≥ 60M')]
-            if not req_failed:
-                chosen = c
-                relax_level = 'min_safety'
-                break
+    for c in candidates:
+        c['relax'] = _relax_for(c)
 
+    # 篩出至少通過 min_safety 的 viable strikes（用 relax 對應分數）
+    LEVEL_PRIORITY = {'strict': 3, 'no_20d_low': 2, 'min_safety': 1, 'fail': 0}
+    viable_strikes = [c for c in candidates if LEVEL_PRIORITY[c['relax']] >= 1]
+
+    # ── 2D Grid Sweep（strike × width） ──
+    WIDTH_CANDIDATES = [50, 100, 150, 200, 300, 500, 800]
+    grid: List[Dict[str, Any]] = []
+    short_prem_cache: Dict[float, float] = {}
+
+    for cand in viable_strikes:
+        K_short = cand['strike']
+        try:
+            short_prem = bs_price(tx_futures, K_short, T, iv, is_put=True, r=r)
+        except Exception:
+            continue
+        short_prem_cache[K_short] = short_prem
+        prob_itm_v = cand.get('prob_itm') or 0.0
+
+        seen_widths = set()
+        for target_w in WIDTH_CANDIDATES:
+            target_long_K = K_short - target_w
+            long_c = min(
+                [c for c in chain
+                 if str(getattr(c, 'option_right', '')).split('.')[-1].lower() == 'put'
+                 and getattr(c, 'strike_price', 0) < K_short
+                 and getattr(c, 'strike_price', 0) >= K_short - target_w * 1.5],
+                key=lambda c: abs(c.strike_price - target_long_K),
+                default=None,
+            )
+            if not long_c:
+                continue
+            actual_width = K_short - long_c.strike_price
+            if any(abs(actual_width - w) < 1 for w in seen_widths):
+                continue
+            seen_widths.add(actual_width)
+            try:
+                long_prem      = bs_price(tx_futures, long_c.strike_price, T, iv, is_put=True, r=r)
+                net_credit_pts = short_prem - long_prem
+                max_profit_ntd = round(net_credit_pts * 50)
+                max_loss_ntd   = round(max(0, actual_width - net_credit_pts) * 50)
+                rr_ratio       = (max_profit_ntd / max_loss_ntd) if max_loss_ntd > 0 else None
+                ev_ntd         = round((1 - prob_itm_v) * max_profit_ntd - prob_itm_v * max_loss_ntd)
+                grid.append({
+                    'short_strike':    K_short,
+                    'long_strike':     long_c.strike_price,
+                    'spread_width':    actual_width,
+                    'short_premium':   round(short_prem, 2),
+                    'long_premium':    round(long_prem, 2),
+                    'net_credit_pts':  round(net_credit_pts, 2),
+                    'max_profit_ntd':  max_profit_ntd,
+                    'max_loss_ntd':    max_loss_ntd,
+                    'rr_ratio':        round(rr_ratio, 2) if rr_ratio else None,
+                    'breakeven':       round(K_short - net_credit_pts, 1),
+                    'ev_ntd':          ev_ntd,
+                    'prob_itm':        prob_itm_v,
+                    'short_relax':     cand['relax'],
+                    'symbol_short':    getattr(_find_chain_contract(chain, K_short, True), 'symbol', None),
+                    'symbol_long':     long_c.symbol,
+                })
+            except Exception:
+                continue
+
+    # 過濾：credit 太薄（< min_credit_pts）的組合算廢
+    grid_viable = [g for g in grid if g['net_credit_pts'] >= min_credit_pts]
+    grid_thin   = [g for g in grid if g['net_credit_pts'] < min_credit_pts]
+
+    # 挑最佳：先用「filter level」分組（strict > no_20d > min_safety），
+    # 再每組看 EV 最大；最終跨組比 EV，但同 EV 時偏好 strict
+    grid_viable.sort(
+        key=lambda g: (LEVEL_PRIORITY.get(g['short_relax'], 0),
+                       g['ev_ntd'], g['rr_ratio'] or 0),
+        reverse=True,
+    )
+    best_combo = grid_viable[0] if grid_viable else None
+
+    chosen = None
+    relax_level = 'none'
+    spread = None
+    spread_widths = []
+
+    if best_combo:
+        # 找對應 strike 的 candidate（補回 passed/failed/delta 等資訊）
+        chosen = next((c for c in candidates if abs(c['strike'] - best_combo['short_strike']) < 1), None)
+        relax_level = best_combo['short_relax']
+        spread = {
+            'short_strike':    best_combo['short_strike'],
+            'long_strike':     best_combo['long_strike'],
+            'spread_width':    best_combo['spread_width'],
+            'short_premium':   best_combo['short_premium'],
+            'long_premium':    best_combo['long_premium'],
+            'net_credit_pts':  best_combo['net_credit_pts'],
+            'max_profit_ntd':  best_combo['max_profit_ntd'],
+            'max_loss_ntd':    best_combo['max_loss_ntd'],
+            'breakeven':       best_combo['breakeven'],
+            'rr_ratio':        best_combo['rr_ratio'],
+            'ev_ntd':          best_combo['ev_ntd'],
+            'symbol_short':    best_combo['symbol_short'],
+            'symbol_long':     best_combo['symbol_long'],
+            'note_premium':    'BS 估算（無 mid 資料）',
+            'optimization':    f'{len(grid)} (strike × width) 組合 sweep；max EV',
+        }
+        # 同 short_strike 的所有寬度（給比較表用）
+        spread_widths = sorted(
+            [g for g in grid if abs(g['short_strike'] - best_combo['short_strike']) < 1],
+            key=lambda g: g['spread_width'],
+        )
+
+    # 被拒絕的 strikes（更高 strike，credit 更大但 filter 沒過）— 給 UI 解釋
     nearby_rejected = []
     if chosen:
-        # 比 chosen 更高的 strike（credit 更大但被刷掉的，告訴用戶為什麼不選）
         for c in candidates:
             if c['strike'] > chosen['strike'] and not c['all_pass']:
                 nearby_rejected.append(c)
@@ -828,80 +912,8 @@ def recommend_short_put_strike(
         candidates.sort(key=lambda c: abs(c['otm_pct'] - (min_otm_pct + max_otm_pct) / 2))
         nearby_rejected = candidates[:3]
 
-    # ── 配對 long leg + 自動最佳化寬度 ──
-    spread = None
-    spread_widths = []
-    if chosen:
-        WIDTH_CANDIDATES = [50, 100, 150, 200, 300, 500, 800]
-        prob_itm_v = chosen.get('prob_itm') or 0.0
-        try:
-            short_prem = bs_price(tx_futures, chosen['strike'], T, iv, is_put=True, r=r)
-            short_sym  = getattr(_find_chain_contract(chain, chosen['strike'], True), 'symbol', None)
-        except Exception:
-            short_prem = 0.0
-            short_sym = None
-
-        for target_w in WIDTH_CANDIDATES:
-            target_long_K = chosen['strike'] - target_w
-            long_c = min(
-                [c for c in chain
-                 if str(getattr(c, 'option_right', '')).split('.')[-1].lower() == 'put'
-                 and getattr(c, 'strike_price', 0) < chosen['strike']
-                 and getattr(c, 'strike_price', 0) >= chosen['strike'] - target_w * 1.5],
-                key=lambda c: abs(c.strike_price - target_long_K),
-                default=None,
-            )
-            if not long_c:
-                continue
-            actual_width = chosen['strike'] - long_c.strike_price
-            # 避免重複寬度（不同 target 可能落到同一支 long leg）
-            if any(abs(s['spread_width'] - actual_width) < 1 for s in spread_widths):
-                continue
-            try:
-                long_prem      = bs_price(tx_futures, long_c.strike_price, T, iv, is_put=True, r=r)
-                net_credit_pts = short_prem - long_prem
-                max_profit_ntd = round(net_credit_pts * 50)
-                max_loss_ntd   = round(max(0, actual_width - net_credit_pts) * 50)
-                rr_ratio       = (max_profit_ntd / max_loss_ntd) if max_loss_ntd > 0 else None
-                ev_ntd         = round((1 - prob_itm_v) * max_profit_ntd - prob_itm_v * max_loss_ntd)
-                spread_widths.append({
-                    'spread_width':    actual_width,
-                    'long_strike':     long_c.strike_price,
-                    'long_premium':    round(long_prem, 2),
-                    'net_credit_pts':  round(net_credit_pts, 2),
-                    'max_profit_ntd':  max_profit_ntd,
-                    'max_loss_ntd':    max_loss_ntd,
-                    'rr_ratio':        round(rr_ratio, 2) if rr_ratio else None,
-                    'breakeven':       round(chosen['strike'] - net_credit_pts, 1),
-                    'ev_ntd':          ev_ntd,
-                    'symbol_long':     long_c.symbol,
-                })
-            except Exception:
-                continue
-
-        if spread_widths:
-            # 排序：EV 最大 > RR 最大（破平局）
-            spread_widths.sort(key=lambda s: (s['ev_ntd'], s['rr_ratio'] or 0), reverse=True)
-            best = spread_widths[0]
-            spread = {
-                'short_strike':    chosen['strike'],
-                'long_strike':     best['long_strike'],
-                'spread_width':    best['spread_width'],
-                'short_premium':   round(short_prem, 2),
-                'long_premium':    best['long_premium'],
-                'net_credit_pts':  best['net_credit_pts'],
-                'max_profit_ntd':  best['max_profit_ntd'],
-                'max_loss_ntd':    best['max_loss_ntd'],
-                'breakeven':       best['breakeven'],
-                'rr_ratio':        best['rr_ratio'],
-                'ev_ntd':          best['ev_ntd'],
-                'symbol_short':    short_sym,
-                'symbol_long':     best['symbol_long'],
-                'note_premium':    'BS 估算（無 mid 資料）',
-                'optimization':    f'{len(spread_widths)} widths swept; max EV',
-            }
-            # 寬度排回升序方便 UI 表格
-            spread_widths.sort(key=lambda s: s['spread_width'])
+    # 全 grid Top 5（從可行組合 grid_viable 取，否則退回 grid）
+    top_grid = (grid_viable or grid)[:5]
 
     notes = []
     if has_event: notes.append('事件週已自動收緊 delta 至 0.10')
@@ -917,6 +929,8 @@ def recommend_short_put_strike(
         'recommended':       chosen,
         'spread':            spread,
         'spread_widths':     spread_widths,
+        'top_grid':          top_grid,
+        'grid_size':         len(grid),
         'relax_level':       relax_level if chosen else 'none',
         'rejected_nearby':   nearby_rejected,
         'has_event_in_dte':  has_event,

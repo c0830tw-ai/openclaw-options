@@ -1888,40 +1888,46 @@ function ShortPutRecommender({ data, recommender, tx }) {
                   <div>EV (BS) <b style={{color:evColor}}>NT$ {(ev>=0?'+':'')}{fmt(ev)}</b></div>
                   {ev < 0 && <span style={{fontSize:10, color:'#fca5a5'}}>⚠ EV 為負 → credit/risk 比例不划算</span>}
                 </div>
-                {widths.length > 1 && (
+                {(spr.top_grid?.length > 0 || widths.length > 1) && (
                   <details style={{marginTop:6}}>
                     <summary style={{fontSize:10, color:'#94a3b8', cursor:'pointer', userSelect:'none'}}>
-                      ▶ 展開寬度比較表（{widths.length} 種）
+                      ▶ Top {spr.top_grid?.length || widths.length} 組合（從 {spr.grid_size || widths.length} 個 (strike × width) 中選）
                     </summary>
                     <table style={{width:'100%', fontSize:10, marginTop:4, borderCollapse:'collapse'}}>
                       <thead>
                         <tr style={{color:'#64748b', borderBottom:'1px solid #1e293b'}}>
-                          <th style={{textAlign:'left', padding:'2px 4px'}}>寬</th>
+                          <th style={{textAlign:'right', padding:'2px 4px'}}>short</th>
                           <th style={{textAlign:'right'}}>long</th>
-                          <th style={{textAlign:'right'}}>淨收 pt</th>
+                          <th style={{textAlign:'right'}}>寬</th>
+                          <th style={{textAlign:'right'}}>淨收</th>
                           <th style={{textAlign:'right'}}>最大賺</th>
                           <th style={{textAlign:'right'}}>最大賠</th>
                           <th style={{textAlign:'right'}}>RR</th>
                           <th style={{textAlign:'right'}}>EV</th>
+                          <th style={{textAlign:'right'}}>level</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {widths.map((w, i) => {
-                          const isBest = w.spread_width === sp.spread_width;
-                          const evC = w.ev_ntd > 0 ? '#86efac' : '#fca5a5';
+                        {(spr.top_grid || widths).map((g, i) => {
+                          const isBest = (g.short_strike === sp.short_strike) && (g.spread_width === sp.spread_width);
+                          const evC = g.ev_ntd > 0 ? '#86efac' : '#fca5a5';
+                          const lvl = g.short_relax || 'strict';
+                          const lvlC = { strict:'#86efac', no_20d_low:'#fbbf24', min_safety:'#fb923c' }[lvl] || '#94a3b8';
                           return (
                             <tr key={i} style={{
                               background: isBest ? 'rgba(251,191,36,0.08)' : undefined,
                               color: isBest ? '#fde68a' : '#cbd5e1',
                               fontWeight: isBest ? 700 : 400,
                             }}>
-                              <td style={{padding:'2px 4px'}}>{isBest && '★ '}{fmt(w.spread_width)}</td>
-                              <td style={{textAlign:'right'}}>{fmt(w.long_strike)}</td>
-                              <td style={{textAlign:'right'}}>{w.net_credit_pts.toFixed(1)}</td>
-                              <td style={{textAlign:'right', color:'#86efac'}}>{fmt(w.max_profit_ntd)}</td>
-                              <td style={{textAlign:'right', color:'#fca5a5'}}>{fmt(w.max_loss_ntd)}</td>
-                              <td style={{textAlign:'right'}}>{w.rr_ratio?.toFixed(2)}</td>
-                              <td style={{textAlign:'right', color:evC}}>{w.ev_ntd >= 0 ? '+' : ''}{fmt(w.ev_ntd)}</td>
+                              <td style={{textAlign:'right', padding:'2px 4px'}}>{isBest && '★ '}{fmt(g.short_strike)}</td>
+                              <td style={{textAlign:'right'}}>{fmt(g.long_strike)}</td>
+                              <td style={{textAlign:'right'}}>{fmt(g.spread_width)}</td>
+                              <td style={{textAlign:'right'}}>{g.net_credit_pts?.toFixed(1)}</td>
+                              <td style={{textAlign:'right', color:'#86efac'}}>{fmt(g.max_profit_ntd)}</td>
+                              <td style={{textAlign:'right', color:'#fca5a5'}}>{fmt(g.max_loss_ntd)}</td>
+                              <td style={{textAlign:'right'}}>{g.rr_ratio?.toFixed(2)}</td>
+                              <td style={{textAlign:'right', color:evC}}>{g.ev_ntd >= 0 ? '+' : ''}{fmt(g.ev_ntd)}</td>
+                              <td style={{textAlign:'right', color:lvlC, fontSize:9}}>{lvl}</td>
                             </tr>
                           );
                         })}
