@@ -828,45 +828,80 @@ def recommend_short_put_strike(
         candidates.sort(key=lambda c: abs(c['otm_pct'] - (min_otm_pct + max_otm_pct) / 2))
         nearby_rejected = candidates[:3]
 
-    # ── 配對 long leg（更低履約的買腳）以組成 BPS ──
+    # ── 配對 long leg + 自動最佳化寬度 ──
     spread = None
+    spread_widths = []
     if chosen:
-        target_long_K = chosen['strike'] - spread_width
-        # 找鏈上最接近目標的 put 履約
-        long_c = min(
-            [c for c in chain
-             if str(getattr(c, 'option_right', '')).split('.')[-1].lower() == 'put'
-             and getattr(c, 'strike_price', 0) < chosen['strike']],
-            key=lambda c: abs(c.strike_price - target_long_K),
-            default=None,
-        )
-        if long_c:
+        WIDTH_CANDIDATES = [50, 100, 150, 200, 300, 500, 800]
+        prob_itm_v = chosen.get('prob_itm') or 0.0
+        try:
+            short_prem = bs_price(tx_futures, chosen['strike'], T, iv, is_put=True, r=r)
+            short_sym  = getattr(_find_chain_contract(chain, chosen['strike'], True), 'symbol', None)
+        except Exception:
+            short_prem = 0.0
+            short_sym = None
+
+        for target_w in WIDTH_CANDIDATES:
+            target_long_K = chosen['strike'] - target_w
+            long_c = min(
+                [c for c in chain
+                 if str(getattr(c, 'option_right', '')).split('.')[-1].lower() == 'put'
+                 and getattr(c, 'strike_price', 0) < chosen['strike']
+                 and getattr(c, 'strike_price', 0) >= chosen['strike'] - target_w * 1.5],
+                key=lambda c: abs(c.strike_price - target_long_K),
+                default=None,
+            )
+            if not long_c:
+                continue
             actual_width = chosen['strike'] - long_c.strike_price
+            # 避免重複寬度（不同 target 可能落到同一支 long leg）
+            if any(abs(s['spread_width'] - actual_width) < 1 for s in spread_widths):
+                continue
             try:
-                short_prem = bs_price(tx_futures, chosen['strike'],   T, iv, is_put=True, r=r)
-                long_prem  = bs_price(tx_futures, long_c.strike_price, T, iv, is_put=True, r=r)
+                long_prem      = bs_price(tx_futures, long_c.strike_price, T, iv, is_put=True, r=r)
                 net_credit_pts = short_prem - long_prem
                 max_profit_ntd = round(net_credit_pts * 50)
                 max_loss_ntd   = round(max(0, actual_width - net_credit_pts) * 50)
-                breakeven      = chosen['strike'] - net_credit_pts
                 rr_ratio       = (max_profit_ntd / max_loss_ntd) if max_loss_ntd > 0 else None
-                spread = {
-                    'short_strike':    chosen['strike'],
-                    'long_strike':     long_c.strike_price,
+                ev_ntd         = round((1 - prob_itm_v) * max_profit_ntd - prob_itm_v * max_loss_ntd)
+                spread_widths.append({
                     'spread_width':    actual_width,
-                    'short_premium':   round(short_prem, 2),
-                    'long_premium':    round(long_prem,  2),
+                    'long_strike':     long_c.strike_price,
+                    'long_premium':    round(long_prem, 2),
                     'net_credit_pts':  round(net_credit_pts, 2),
                     'max_profit_ntd':  max_profit_ntd,
                     'max_loss_ntd':    max_loss_ntd,
-                    'breakeven':       round(breakeven, 1),
                     'rr_ratio':        round(rr_ratio, 2) if rr_ratio else None,
-                    'symbol_short':    getattr(_find_chain_contract(chain, chosen['strike'], True), 'symbol', None),
+                    'breakeven':       round(chosen['strike'] - net_credit_pts, 1),
+                    'ev_ntd':          ev_ntd,
                     'symbol_long':     long_c.symbol,
-                    'note_premium':    'BS 估算（無 mid 資料）',
-                }
-            except Exception as _e:
-                spread = {'error': str(_e)}
+                })
+            except Exception:
+                continue
+
+        if spread_widths:
+            # 排序：EV 最大 > RR 最大（破平局）
+            spread_widths.sort(key=lambda s: (s['ev_ntd'], s['rr_ratio'] or 0), reverse=True)
+            best = spread_widths[0]
+            spread = {
+                'short_strike':    chosen['strike'],
+                'long_strike':     best['long_strike'],
+                'spread_width':    best['spread_width'],
+                'short_premium':   round(short_prem, 2),
+                'long_premium':    best['long_premium'],
+                'net_credit_pts':  best['net_credit_pts'],
+                'max_profit_ntd':  best['max_profit_ntd'],
+                'max_loss_ntd':    best['max_loss_ntd'],
+                'breakeven':       best['breakeven'],
+                'rr_ratio':        best['rr_ratio'],
+                'ev_ntd':          best['ev_ntd'],
+                'symbol_short':    short_sym,
+                'symbol_long':     best['symbol_long'],
+                'note_premium':    'BS 估算（無 mid 資料）',
+                'optimization':    f'{len(spread_widths)} widths swept; max EV',
+            }
+            # 寬度排回升序方便 UI 表格
+            spread_widths.sort(key=lambda s: s['spread_width'])
 
     notes = []
     if has_event: notes.append('事件週已自動收緊 delta 至 0.10')
@@ -881,6 +916,7 @@ def recommend_short_put_strike(
     return {
         'recommended':       chosen,
         'spread':            spread,
+        'spread_widths':     spread_widths,
         'relax_level':       relax_level if chosen else 'none',
         'rejected_nearby':   nearby_rejected,
         'has_event_in_dte':  has_event,

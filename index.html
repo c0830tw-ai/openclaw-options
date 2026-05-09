@@ -1861,18 +1861,21 @@ function ShortPutRecommender({ data, recommender, tx }) {
             )}
             {spr.has_event_in_dte && <span style={{fontSize:10, color:'#fca5a5'}}>⚠ 事件週</span>}
           </div>
-          {/* BPS spread 配對腳 */}
+          {/* BPS spread 配對腳 + 寬度最佳化 */}
           {spr.spread && !spr.spread.error && (() => {
             const sp = spr.spread;
-            const ev = (1 - r.prob_itm) * sp.max_profit_ntd - r.prob_itm * sp.max_loss_ntd;
+            const ev = sp.ev_ntd ?? ((1 - r.prob_itm) * sp.max_profit_ntd - r.prob_itm * sp.max_loss_ntd);
             const evColor = ev > 0 ? '#86efac' : '#fca5a5';
+            const widths = spr.spread_widths || [];
             return (
               <div style={{marginTop:8, padding:'8px 10px', background:'#0f172a', border:'1px dashed #334155', borderRadius:4, fontSize:11}}>
-                <div style={{color:'#fbbf24', fontWeight:700, marginBottom:4}}>📦 完整 BPS 組合（賣 short + 買 long 配對）</div>
+                <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:4}}>
+                  <div style={{color:'#fbbf24', fontWeight:700}}>📦 BPS 組合（最佳寬度 {fmt(sp.spread_width)}pt）</div>
+                  {sp.optimization && <div style={{fontSize:9, color:'#475569'}}>{sp.optimization}</div>}
+                </div>
                 <div style={{display:'flex', gap:10, flexWrap:'wrap'}}>
                   <div>賣 <b style={{color:'#86efac'}}>{fmt(sp.short_strike)}P</b> @ {sp.short_premium}</div>
                   <div>買 <b style={{color:'#fca5a5'}}>{fmt(sp.long_strike)}P</b> @ {sp.long_premium}</div>
-                  <div>寬 {fmt(sp.spread_width)}pt</div>
                 </div>
                 <div style={{display:'flex', gap:10, flexWrap:'wrap', marginTop:3}}>
                   <div>淨收 <b style={{color:'#86efac'}}>{sp.net_credit_pts}pt</b></div>
@@ -1885,6 +1888,47 @@ function ShortPutRecommender({ data, recommender, tx }) {
                   <div>EV (BS) <b style={{color:evColor}}>NT$ {(ev>=0?'+':'')}{fmt(ev)}</b></div>
                   {ev < 0 && <span style={{fontSize:10, color:'#fca5a5'}}>⚠ EV 為負 → credit/risk 比例不划算</span>}
                 </div>
+                {widths.length > 1 && (
+                  <details style={{marginTop:6}}>
+                    <summary style={{fontSize:10, color:'#94a3b8', cursor:'pointer', userSelect:'none'}}>
+                      ▶ 展開寬度比較表（{widths.length} 種）
+                    </summary>
+                    <table style={{width:'100%', fontSize:10, marginTop:4, borderCollapse:'collapse'}}>
+                      <thead>
+                        <tr style={{color:'#64748b', borderBottom:'1px solid #1e293b'}}>
+                          <th style={{textAlign:'left', padding:'2px 4px'}}>寬</th>
+                          <th style={{textAlign:'right'}}>long</th>
+                          <th style={{textAlign:'right'}}>淨收 pt</th>
+                          <th style={{textAlign:'right'}}>最大賺</th>
+                          <th style={{textAlign:'right'}}>最大賠</th>
+                          <th style={{textAlign:'right'}}>RR</th>
+                          <th style={{textAlign:'right'}}>EV</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {widths.map((w, i) => {
+                          const isBest = w.spread_width === sp.spread_width;
+                          const evC = w.ev_ntd > 0 ? '#86efac' : '#fca5a5';
+                          return (
+                            <tr key={i} style={{
+                              background: isBest ? 'rgba(251,191,36,0.08)' : undefined,
+                              color: isBest ? '#fde68a' : '#cbd5e1',
+                              fontWeight: isBest ? 700 : 400,
+                            }}>
+                              <td style={{padding:'2px 4px'}}>{isBest && '★ '}{fmt(w.spread_width)}</td>
+                              <td style={{textAlign:'right'}}>{fmt(w.long_strike)}</td>
+                              <td style={{textAlign:'right'}}>{w.net_credit_pts.toFixed(1)}</td>
+                              <td style={{textAlign:'right', color:'#86efac'}}>{fmt(w.max_profit_ntd)}</td>
+                              <td style={{textAlign:'right', color:'#fca5a5'}}>{fmt(w.max_loss_ntd)}</td>
+                              <td style={{textAlign:'right'}}>{w.rr_ratio?.toFixed(2)}</td>
+                              <td style={{textAlign:'right', color:evC}}>{w.ev_ntd >= 0 ? '+' : ''}{fmt(w.ev_ntd)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </details>
+                )}
                 <div style={{fontSize:9, color:'#475569', marginTop:3}}>
                   {sp.symbol_short} / {sp.symbol_long} · {sp.note_premium}
                 </div>
