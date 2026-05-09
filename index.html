@@ -1829,16 +1829,16 @@ function WheelPanel({ selectedOptions, taiex, price2330, price0050, hvVal }) {
   );
 }
 
-function ShortPutRecommender({ data }) {
+function ShortPutRecommender({ data, recommender, tx }) {
   const [open, setOpen] = React.useState(false);
-  const spr = data?.short_put_recommender;
+  const spr = recommender || data?.short_put_recommender;
   if (!spr) return null;
   const r = spr.recommended;
   const fmt = n => n == null ? '—' : Math.round(n).toLocaleString();
   const fu = spr.filters_used || {};
   const lvlColor = { strict:'#22c55e', no_20d_low:'#fbbf24', min_safety:'#fb923c', none:'#ef4444' }[spr.relax_level] || '#94a3b8';
   const lvlLabel = { strict:'全通過', no_20d_low:'放寬 20d', min_safety:'最低安全', none:'無候選' }[spr.relax_level] || spr.relax_level;
-  const txStrike = data?.market?.tx_futures;
+  const txStrike = tx ?? data?.market?.tx_futures;
   const credit_pts = r ? Math.max(0, txStrike ? Math.round((txStrike - r.strike) * 0.05) / 100 : 0) : 0;
 
   return (
@@ -5694,6 +5694,7 @@ function SectionWeekly({ weekly, label, taiex, taiexHigh, taiexLow, price2330, p
         <SectionMeta dte={dte} dteTrading={dte_trading} iv={iv_used} ivSource={iv_source} />
       </div>
       <StrikeAlert selectedOptions={selected_options} taiex={taiex} dte={dte} />
+      <ShortPutRecommender recommender={weekly.short_put_recommender} tx={taiex} />
       <HuiDistCheck selectedOptions={selected_options} taiex={taiex} />
       <div className="options-row">
         <OptionCard type="put"  data={selected_options?.put}  taiex={taiex} taiexHigh={taiexHigh} taiexLow={taiexLow} price2330={price2330} price0050={price0050} />
@@ -5721,6 +5722,7 @@ function SectionFarMonth({ farMonth, taiex, taiexHigh, taiexLow, price2330, pric
         <SectionMeta dte={dte} dteTrading={dte_trading} iv={iv_used} ivSource={iv_source} />
       </div>
       <StrikeAlert selectedOptions={selected_options} taiex={taiex} dte={dte} />
+      <ShortPutRecommender recommender={farMonth.short_put_recommender} tx={taiex} />
       <HuiDistCheck selectedOptions={selected_options} taiex={taiex} />
       <div className="options-row">
         <OptionCard type="put"  data={selected_options?.put}  taiex={taiex} taiexHigh={taiexHigh} taiexLow={taiexLow} price2330={price2330} price0050={price0050} />

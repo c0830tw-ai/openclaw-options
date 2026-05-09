@@ -2387,30 +2387,35 @@ def main():
                 log.warning(f'build_spreads 失敗: {e}')
 
         # 10c. Short put 推薦器（multi-filter）
-        short_put_rec = None
+        # 提早抓 upcoming events 以便 event filter（近月/週選/遠月共用）
         try:
-            # 提早抓 upcoming events 以便 event filter
+            import events as _EV_early
+            _events_for_filter = _EV_early.upcoming(window_days=45)
+        except Exception:
+            _events_for_filter = []
+
+        def _safe_short_put_rec(_chain, _tx, _T, _iv, _dte, _put_refs, _r):
             try:
-                import events as _EV_early
-                _events_for_filter = _EV_early.upcoming(window_days=max(dte, 7))
-            except Exception:
-                _events_for_filter = []
-            short_put_rec = recommend_short_put_strike(
-                chain,
-                tx_futures=tx_futures, T=T, iv=near_iv, dte=dte,
-                put_refs=(indicators or {}).get('put_refs') or {},
-                upcoming_events=_events_for_filter,
-                r=bs_r or 0.0,
-            )
+                return recommend_short_put_strike(
+                    _chain, tx_futures=_tx, T=_T, iv=_iv, dte=_dte,
+                    put_refs=_put_refs, upcoming_events=_events_for_filter, r=_r,
+                )
+            except Exception as _e:
+                log.warning(f'recommend_short_put_strike 失敗（{_dte}d): {_e}')
+                return None
+
+        short_put_rec = _safe_short_put_rec(
+            chain, tx_futures, T, near_iv, dte,
+            (indicators or {}).get('put_refs') or {}, bs_r or 0.0,
+        )
+        if short_put_rec:
             r_pick = short_put_rec.get('recommended')
             if r_pick:
-                log.info(f'Short put 推薦: {r_pick["strike"]:.0f}P  Δ={r_pick["delta"]:.3f}  '
+                log.info(f'Short put 推薦（近月）: {r_pick["strike"]:.0f}P  Δ={r_pick["delta"]:.3f}  '
                          f'OTM {r_pick["otm_pct"]:.1f}%  prob_ITM={r_pick["prob_itm"]*100 if r_pick["prob_itm"] else 0:.1f}%'
                          f'{"  ⚠ event 週" if short_put_rec.get("has_event_in_dte") else ""}')
             else:
-                log.info('Short put 推薦: 無候選通過 multi-filter（市場不利或現價太靠近支撐）')
-        except Exception as e:
-            log.warning(f'recommend_short_put_strike 失敗: {e}')
+                log.info('Short put 推薦（近月）: 無候選通過 multi-filter')
 
         # 10b. 遠月建議（結算日換倉目標）
         far_month_data = None
@@ -2485,6 +2490,11 @@ def main():
                     },
                 },
                 'structures': [asdict(s) for s in far_structures],
+                'short_put_recommender': _safe_short_put_rec(
+                    far_chain, tx_futures, far_T, far_iv, far_dte,
+                    (indicators or {}).get('put_refs') or {},
+                    bs_r or 0.0,
+                ),
             }
         except Exception as e:
             log.warning(f'遠月計算失敗（{e}），略過')
@@ -2633,6 +2643,11 @@ def main():
                 'structures': [asdict(s) for s in w_structs],
                 'spread_legs': w_spread_legs,
                 'skew': [{'strike': K, 'iv': round(iv, 4)} for K, iv in w_skew],
+                'short_put_recommender': _safe_short_put_rec(
+                    w_chain, tx_futures, w_T, w_iv, w_dte,
+                    (indicators or {}).get('put_refs') or {},
+                    bs_r or 0.0,
+                ),
             }
 
         # 10c. 週三週選
