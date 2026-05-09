@@ -1829,6 +1829,71 @@ function WheelPanel({ selectedOptions, taiex, price2330, price0050, hvVal }) {
   );
 }
 
+function ShortPutRecommender({ data }) {
+  const [open, setOpen] = React.useState(false);
+  const spr = data?.short_put_recommender;
+  if (!spr) return null;
+  const r = spr.recommended;
+  const fmt = n => n == null ? '—' : Math.round(n).toLocaleString();
+  const fu = spr.filters_used || {};
+  const lvlColor = { strict:'#22c55e', no_20d_low:'#fbbf24', min_safety:'#fb923c', none:'#ef4444' }[spr.relax_level] || '#94a3b8';
+  const lvlLabel = { strict:'全通過', no_20d_low:'放寬 20d', min_safety:'最低安全', none:'無候選' }[spr.relax_level] || spr.relax_level;
+  const txStrike = data?.market?.tx_futures;
+  const credit_pts = r ? Math.max(0, txStrike ? Math.round((txStrike - r.strike) * 0.05) / 100 : 0) : 0;
+
+  return (
+    <div style={{margin:'8px 0', padding:'10px 14px', background:'#0a0e1c', border:`1px solid ${lvlColor}`, borderRadius:6}}>
+      <div style={{display:'flex', alignItems:'baseline', justifyContent:'space-between', marginBottom:6}}>
+        <span style={{fontWeight:700, color:'#60a5fa', fontSize:13}}>📍 Short Put 推薦（multi-filter）</span>
+        <span style={{fontSize:9, padding:'2px 6px', borderRadius:3, background:`${lvlColor}20`, color:lvlColor, border:`1px solid ${lvlColor}`}}>{lvlLabel}</span>
+      </div>
+      {r ? (
+        <>
+          <div style={{display:'flex', gap:14, alignItems:'baseline', flexWrap:'wrap', fontSize:12}}>
+            <div><span style={{color:'#94a3b8'}}>賣出</span> <b style={{color:'#86efac', fontSize:14}}>{fmt(r.strike)} P</b></div>
+            <div><span style={{color:'#94a3b8'}}>Δ</span> <b style={{color:Math.abs(r.delta) <= 0.10 ? '#86efac' : '#fbbf24'}}>{r.delta.toFixed(3)}</b></div>
+            <div><span style={{color:'#94a3b8'}}>OTM</span> <b>{r.otm_pct.toFixed(1)}%</b></div>
+            <div><span style={{color:'#94a3b8'}}>prob ITM</span> <b style={{color:r.prob_itm < 0.15 ? '#86efac' : r.prob_itm < 0.25 ? '#fbbf24' : '#fca5a5'}}>{(r.prob_itm*100).toFixed(1)}%</b></div>
+            {spr.has_event_in_dte && <span style={{fontSize:10, color:'#fca5a5'}}>⚠ 事件週</span>}
+          </div>
+          <div style={{fontSize:10, color:'#86efac', marginTop:4}}>
+            ✓ {(r.passed || []).join(' · ')}
+          </div>
+          {r.failed?.length > 0 && (
+            <div style={{fontSize:10, color:'#fca5a5', marginTop:2}}>
+              ✗ {r.failed.join(' · ')}
+            </div>
+          )}
+          {spr.note && (
+            <div style={{fontSize:10, color:'#94a3b8', marginTop:4, fontStyle:'italic'}}>{spr.note}</div>
+          )}
+          <div onClick={() => setOpen(o => !o)} style={{fontSize:10, color:'#64748b', marginTop:6, cursor:'pointer', userSelect:'none'}}>
+            {open ? '▲ 收起' : '▼'} 為什麼不選更高 credit 的 strike？
+          </div>
+          {open && (
+            <div style={{fontSize:10, color:'#94a3b8', marginTop:4, paddingLeft:12, borderLeft:'2px solid #1e293b'}}>
+              {(spr.rejected_nearby || []).map((c, i) => (
+                <div key={i} style={{marginBottom:4}}>
+                  <span style={{color:'#cbd5e1'}}>{fmt(c.strike)} P</span>
+                  <span style={{color:'#475569', marginLeft:6}}>(Δ {c.delta.toFixed(2)}, OTM {c.otm_pct.toFixed(1)}%)</span>
+                  <div style={{color:'#fca5a5', marginLeft:12}}>✗ {(c.failed || []).slice(0, 3).join(' · ')}</div>
+                </div>
+              ))}
+              <div style={{color:'#475569', fontSize:9, marginTop:4}}>
+                Filters: Δ≤{fu.max_delta}, OTM {fu.min_otm_pct}–{fu.max_otm_pct}%, 30M下{fu.bb_30m_low?.toFixed(0) || '—'}, 60M下{fu.bb_60m_low?.toFixed(0) || '—'}, prob_ITM&lt;{(fu.max_prob_itm*100).toFixed(0)}%
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <div style={{fontSize:11, color:'#fca5a5'}}>
+          目前無 strike 通過 filter。市場可能太靠近支撐 / 波動太低 / 事件密集 — 暫不建議賣 put。
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StrikeAlert({ selectedOptions, taiex, dte }) {
   if (!taiex || !selectedOptions) return null;
   const putStrike  = selectedOptions.put?.strike;
@@ -5595,6 +5660,7 @@ function SectionNear({ data, taiex, taiexHigh, taiexLow, price2330, price0050, h
         <SectionMeta dte={data.dte} dteTrading={data.dte_trading} iv={data.iv_used} ivSource={data.iv_source} />
       </div>
       <StrikeAlert selectedOptions={data.selected_options} taiex={taiex} dte={data.dte} />
+      <ShortPutRecommender data={data} />
       <HuiDistCheck selectedOptions={data.selected_options} taiex={taiex} />
       <div className="options-row">
         <OptionCard type="put"  data={data.selected_options?.put}  taiex={taiex} taiexHigh={taiexHigh} taiexLow={taiexLow} price2330={price2330} price0050={price0050} />

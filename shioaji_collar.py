@@ -669,6 +669,175 @@ def compute_target_strikes(
     }
 
 
+def recommend_short_put_strike(
+    chain: list,
+    *,
+    tx_futures: float,
+    T: float,
+    iv: float,
+    dte: int,
+    put_refs: dict,
+    upcoming_events: List[Dict[str, Any]],
+    r: float = 0.0,
+    max_delta: float = 0.15,
+    min_otm_pct: float = 4.0,
+    max_otm_pct: float = 8.0,
+    max_prob_itm: float = 0.25,
+) -> Dict[str, Any]:
+    """為 BPS / put credit spread 推薦 short put 履約。
+
+    多 filter 同時通過：
+      1. delta filter:   |Δ| ≤ max_delta（事件週自動收緊到 0.10）
+      2. otm_pct:        履約落在 min_otm_pct ~ max_otm_pct % OTM 區間
+      3. bb_30m_low:     履約 < 30M BB 下軌
+      4. bb_60m_low:     履約 < 60M BB 下軌
+      5. past_20d_low:   履約 < 近 20 日 low
+      6. prob_itm:       BS 估算到期 ITM 機率 < max_prob_itm
+
+    取「同時通過 1–6 的最高 strike」(credit 最大)。
+    回傳 {'recommended', 'rejected_nearby', 'filters_used', 'note'}.
+    """
+    if not chain or not tx_futures or T <= 0 or iv <= 0:
+        return {'recommended': None, 'rejected_nearby': [], 'filters_used': {}, 'note': '資料不足'}
+
+    # 事件週收緊 delta（DTE 內有 high/medium iv_risk 事件）
+    has_event = any(
+        (e.get('days_until') is not None) and 0 <= e['days_until'] <= dte
+        and e.get('iv_risk') in ('high', 'medium')
+        for e in (upcoming_events or [])
+    )
+    eff_max_delta = 0.10 if has_event else max_delta
+
+    bb_30m = put_refs.get('bb_30m_low') if put_refs else None
+    bb_60m = put_refs.get('bb_60m_low') if put_refs else None
+    p20    = put_refs.get('past_20d_low') if put_refs else None
+
+    # 收集 OTM put 候選（strike < tx）
+    puts = [c for c in chain
+            if str(getattr(c, 'option_right', '')).split('.')[-1].lower() == 'put'
+            and getattr(c, 'strike_price', 0) < tx_futures]
+    puts.sort(key=lambda c: c.strike_price, reverse=True)   # 高履約 → 低履約
+
+    candidates = []
+    for c in puts:
+        K = c.strike_price
+        delta_v = bs_delta(tx_futures, K, T, iv, is_put=True, r=r)
+        if delta_v == 0:
+            continue
+        d_abs = abs(delta_v)
+        otm_pct = (tx_futures - K) / tx_futures * 100
+        # BS 到期 ITM 機率（put = N(-d2)）
+        try:
+            d1 = (math.log(tx_futures / K) + (r + 0.5 * iv ** 2) * T) / (iv * math.sqrt(T))
+            d2 = d1 - iv * math.sqrt(T)
+            prob_itm = _norm_cdf(-d2)
+        except Exception:
+            prob_itm = None
+
+        passed, failed = [], []
+        if d_abs <= eff_max_delta: passed.append(f'Δ {d_abs:.2f}≤{eff_max_delta}')
+        else:                      failed.append(f'Δ {d_abs:.2f}>{eff_max_delta}')
+        if min_otm_pct <= otm_pct <= max_otm_pct: passed.append(f'OTM {otm_pct:.1f}%')
+        else:                                     failed.append(f'OTM {otm_pct:.1f}% 不在 {min_otm_pct}-{max_otm_pct}%')
+        if bb_30m is None or K < bb_30m: passed.append(f'< 30M下軌 {bb_30m:.0f}' if bb_30m else '無 30M 資料')
+        else:                            failed.append(f'≥ 30M下軌 {bb_30m:.0f}')
+        if bb_60m is None or K < bb_60m: passed.append(f'< 60M下軌 {bb_60m:.0f}' if bb_60m else '無 60M 資料')
+        else:                            failed.append(f'≥ 60M下軌 {bb_60m:.0f}')
+        if p20 is None or K < p20:       passed.append(f'< 20日 low {p20:.0f}' if p20 else '無 20日 low 資料')
+        else:                            failed.append(f'≥ 20日 low {p20:.0f}')
+        if prob_itm is None or prob_itm < max_prob_itm:
+            if prob_itm is not None: passed.append(f'prob ITM {prob_itm*100:.1f}%')
+        else:
+            failed.append(f'prob ITM {prob_itm*100:.1f}%>{max_prob_itm*100:.0f}%')
+
+        candidates.append({
+            'strike':   K,
+            'delta':    delta_v,
+            'otm_pct':  otm_pct,
+            'prob_itm': prob_itm,
+            'passed':   passed,
+            'failed':   failed,
+            'all_pass': len(failed) == 0,
+        })
+
+    # 分級降階：先試全通過，再嘗試放寬「past_20d_low」(最容易爆的 filter)
+    def _level(req):
+        for c in candidates:
+            ok = True
+            for f in c['failed']:
+                if f.startswith(req): continue   # 允許這類 filter 失敗
+                ok = False; break
+            if ok and req == '__all__':
+                ok = c['all_pass']
+            elif ok and req != '__all__':
+                # 重新檢查除允許項外其他都過
+                ok = all(not (f.startswith('Δ') or f.startswith('OTM') or
+                              f.startswith('< 30M') or f.startswith('≥ 30M') or
+                              f.startswith('< 60M') or f.startswith('≥ 60M') or
+                              f.startswith('prob ITM'))
+                         or f.startswith(req)
+                         for f in c['failed'])
+            if ok: return c
+        return None
+
+    # Level 1: 全通過
+    chosen = next((c for c in candidates if c['all_pass']), None)
+    relax_level = 'strict'
+    # Level 2: 放寬 past_20d_low（最近大跌時這個 filter 會吃掉所有候選）
+    if chosen is None:
+        for c in candidates:
+            non_p20_failed = [f for f in c['failed'] if not f.startswith('≥ 20日 low')]
+            if not non_p20_failed:
+                chosen = c
+                relax_level = 'no_20d_low'
+                break
+    # Level 3: 只要求 delta + 兩個 BB（最低門檻）
+    if chosen is None:
+        for c in candidates:
+            req_failed = [f for f in c['failed']
+                          if f.startswith('Δ') or f.startswith('< 30M') or f.startswith('≥ 30M')
+                          or f.startswith('< 60M') or f.startswith('≥ 60M')]
+            if not req_failed:
+                chosen = c
+                relax_level = 'min_safety'
+                break
+
+    nearby_rejected = []
+    if chosen:
+        # 比 chosen 更高的 strike（credit 更大但被刷掉的，告訴用戶為什麼不選）
+        for c in candidates:
+            if c['strike'] > chosen['strike'] and not c['all_pass']:
+                nearby_rejected.append(c)
+                if len(nearby_rejected) >= 3: break
+    else:
+        candidates.sort(key=lambda c: abs(c['otm_pct'] - (min_otm_pct + max_otm_pct) / 2))
+        nearby_rejected = candidates[:3]
+
+    notes = []
+    if has_event: notes.append('事件週已自動收緊 delta 至 0.10')
+    if relax_level == 'no_20d_low':
+        notes.append(f'近 20 日 low ({p20:.0f}) 太低（最近有大跌），已放寬此 filter')
+    elif relax_level == 'min_safety':
+        notes.append('多 filter 全失，僅保留 delta + 30M/60M BB 最低安全要求')
+
+    return {
+        'recommended':       chosen,
+        'relax_level':       relax_level if chosen else 'none',
+        'rejected_nearby':   nearby_rejected,
+        'has_event_in_dte':  has_event,
+        'filters_used': {
+            'max_delta':      eff_max_delta,
+            'min_otm_pct':    min_otm_pct,
+            'max_otm_pct':    max_otm_pct,
+            'bb_30m_low':     bb_30m,
+            'bb_60m_low':     bb_60m,
+            'past_20d_low':   p20,
+            'max_prob_itm':   max_prob_itm,
+        },
+        'note': ' · '.join(notes) if notes else None,
+    }
+
+
 def find_strike_with_delta(
     contracts: list,
     taiex: float,
@@ -1457,11 +1626,14 @@ def fetch_hv_tx(api, month: str) -> Optional[dict]:
         hv = _calc_hv(closes, CFG.bb_period)
         log.info(f'TX 日K {n_days} 根  HV_TAIEX={hv:.1%}（直接計算）')
 
-        # Put 進場參考線：10 日 MA + 30M / 60M BB
+        # Put 進場參考線：10 日 MA + 30M / 60M BB + 近 20 日 low
         put_refs: dict = {}
         try:
             if len(closes) >= 10:
                 put_refs['ma10'] = sum(closes[-10:]) / 10
+            lows = daily.get('Low', [])
+            if len(lows) >= 20:
+                put_refs['past_20d_low'] = min(lows[-20:])
             closes_30m = _resample_intraday(kbars, 30)
             closes_60m = _resample_intraday(kbars, 60)
             if len(closes_30m) >= CFG.bb_period:
@@ -1474,6 +1646,7 @@ def fetch_hv_tx(api, month: str) -> Optional[dict]:
                 put_refs['bb_60m_low'] = l60
             if put_refs:
                 log.info(f'TX put_refs: ma10={put_refs.get("ma10")} '
+                         f'20d_low={put_refs.get("past_20d_low")} '
                          f'30M({put_refs.get("bb_30m_mid")}/{put_refs.get("bb_30m_low")}) '
                          f'60M({put_refs.get("bb_60m_mid")}/{put_refs.get("bb_60m_low")})')
         except Exception as _e:
@@ -2213,6 +2386,32 @@ def main():
             except Exception as e:
                 log.warning(f'build_spreads 失敗: {e}')
 
+        # 10c. Short put 推薦器（multi-filter）
+        short_put_rec = None
+        try:
+            # 提早抓 upcoming events 以便 event filter
+            try:
+                import events as _EV_early
+                _events_for_filter = _EV_early.upcoming(window_days=max(dte, 7))
+            except Exception:
+                _events_for_filter = []
+            short_put_rec = recommend_short_put_strike(
+                chain,
+                tx_futures=tx_futures, T=T, iv=near_iv, dte=dte,
+                put_refs=(indicators or {}).get('put_refs') or {},
+                upcoming_events=_events_for_filter,
+                r=bs_r or 0.0,
+            )
+            r_pick = short_put_rec.get('recommended')
+            if r_pick:
+                log.info(f'Short put 推薦: {r_pick["strike"]:.0f}P  Δ={r_pick["delta"]:.3f}  '
+                         f'OTM {r_pick["otm_pct"]:.1f}%  prob_ITM={r_pick["prob_itm"]*100 if r_pick["prob_itm"] else 0:.1f}%'
+                         f'{"  ⚠ event 週" if short_put_rec.get("has_event_in_dte") else ""}')
+            else:
+                log.info('Short put 推薦: 無候選通過 multi-filter（市場不利或現價太靠近支撐）')
+        except Exception as e:
+            log.warning(f'recommend_short_put_strike 失敗: {e}')
+
         # 10b. 遠月建議（結算日換倉目標）
         far_month_data = None
         try:
@@ -2544,6 +2743,7 @@ def main():
             },
             'structures': [asdict(s) for s in structures],
             'spreads':    [asdict(s) for s in spreads],
+            'short_put_recommender': short_put_rec,
             'collar_0050': {
                 'price_0050':          price_0050,
                 'chg_0050':            chg_0050,
