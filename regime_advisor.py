@@ -18,45 +18,44 @@ REGIME_RECOMMENDATIONS = {
         'criteria': '30 天 TX 漲幅 > 10%',
         'dte':      30,
         'delta':    0.10,
-        'strategy': 'cal-reverse',
-        'fallback': 'put_only',
-        'why':      '【全策略 sweep】cal-reverse 牛市連 2 次奪冠（Calmar +4 ~ +5）。'
-                    '不熟 calendar 操作可 fallback put-only（穩定亞軍、DD 最小）。'
-                    '避免 collar/hui-full（call 被軋排第 7-8 名）',
-        'expected': 'cal-reverse +14 ~ +18%（小勝 naked 1-2%）',
+        'strategy': 'collar',
+        'fallback': 'hui-full',
+        'why':      '【4 季 sweep】牛市 Q3 +20% collar 奪冠（短 call 變廢紙、淨權利金正向）。'
+                    'hui-full 同季進前 3，2:1 put 在末段拉回時還能補一點',
+        'expected': 'collar 跟得上 +15~+18%；hui-full +12~+15% 但下跌保護更厚',
     },
     'bull_mild': {
         'label':    '🐃 中等牛市',
         'criteria': '30 天 TX 漲幅 5-10%',
         'dte':      30,
         'delta':    0.10,
-        'strategy': 'cal-reverse',
-        'fallback': 'put_only',
-        'why':      '【sweep 驗證】中牛 cal-reverse 仍領先（Calmar +4.13）。'
-                    'put-only 跟在後面（Calmar +3.63）',
-        'expected': 'cal-reverse +14% / put-only +12%（vs naked +13%）',
+        'strategy': 'collar',
+        'fallback': 'hui-full',
+        'why':      '中牛 collar 收 call 權利金壓低成本。怕被軋換 hui-full（賣 1 / 買 2 比例式，'
+                    '上漲被 short call 蓋住 1 點，但下跌有 2 口 put 翻倍保護）',
+        'expected': 'collar +10~+13% / hui-full +8~+11%',
     },
     'sideways': {
         'label':    '😴 盤整',
         'criteria': '30 天 TX 變動 -5% ~ +5%',
         'dte':      30,
         'delta':    0.10,
-        'strategy': 'iron-condor',
-        'fallback': 'put_only',
-        'why':      '【sweep 驗證】盤整 iron-condor (寶典 4 腳) 冠軍 Calmar +1.54，'
-                    '小贏 put-only。雙向收 credit 對中性市場最有效',
-        'expected': 'iron-condor +4.7%（小勝 naked +4.4%）',
+        'strategy': 'hui-full',
+        'fallback': 'cal-std',
+        'why':      '【4 季 sweep】hui-full 是 4 季中唯一在盤整 + 中熊都進前 3 的策略 → 最穩。'
+                    'cal-std (calendar 標準) 盤整奪冠但波動大，準備好換倉再用',
+        'expected': 'hui-full +3~+5%（穩定 theta 收）；cal-std +5~+8% 但震盪大',
     },
     'bear_mild': {
         'label':    '🐃↓ 中等熊市',
         'criteria': '30 天 TX 跌幅 5-10%',
         'dte':      21,
         'delta':    0.15,
-        'strategy': 'put_only',
-        'fallback': 'cal-reverse',
-        'why':      'put-only 是熊市保護導向首選（DD 最小）。'
-                    'cal-reverse 在跌市能收 long near put 的 gamma 增值，可作 alternative',
-        'expected': 'put-only DD 最小（vs naked 多保 5-7%）',
+        'strategy': 'hui-full',
+        'fallback': 'put_only',
+        'why':      '【4 季 sweep】Q2 中熊 -12% hui-full 奪冠：賣 1 口 OTM call 補貼 + 買 2 口更遠 put '
+                    '加倍保護，比單純 put-only 多吃 short call 收的 theta',
+        'expected': 'hui-full DD 比 naked 少 4-6%；put-only DD 略小但 theta 成本較高',
     },
     'bear_strong': {
         'label':    '🐻 強勢熊市',
@@ -64,10 +63,10 @@ REGIME_RECOMMENDATIONS = {
         'dte':      15,
         'delta':    0.20,
         'strategy': 'put_only',
-        'fallback': 'cal-reverse',
-        'why':      '崩跌期保命為主：put-only 緊跟現價（Δ 0.20）+ short DTE 快速 gamma'
-                    '。避免 hui-full（DD -28%）；cal-reverse 絕對虧損也少',
-        'expected': '崩跌情境保命，預期 -10 ~ -15% vs naked -20%+',
+        'fallback': 'hui-full',
+        'why':      '崩跌期保命為主：put-only 緊跟現價（Δ 0.20）+ short DTE 快速 gamma 反應。'
+                    'hui-full 的 short call 在崩盤中變廢紙也算 OK，可備援',
+        'expected': '崩跌情境保命，put-only 預期 -10 ~ -15% vs naked -20%+',
     },
 }
 

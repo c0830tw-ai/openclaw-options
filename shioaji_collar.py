@@ -1366,6 +1366,19 @@ def _resample_daily(kbars) -> dict:
     }
 
 
+def _resample_intraday(kbars, minutes: int) -> list:
+    """1 分 K 重採樣為 N 分鐘 K 的收盤價序列。"""
+    buckets: dict = {}
+    order:  list = []
+    for i, ts_ns in enumerate(kbars.ts):
+        dt   = datetime.fromtimestamp(ts_ns / 1e9)
+        slot = (dt.year, dt.month, dt.day, dt.hour, (dt.minute // minutes) * minutes)
+        if slot not in buckets:
+            order.append(slot)
+        buckets[slot] = kbars.Close[i]   # 最後一根 1 分 K 的收盤
+    return [buckets[s] for s in order]
+
+
 def fetch_kbars(api, stock_code: str) -> Optional[dict]:
     """抓個股日K，計算 ATR / BB / HV / ADX。失敗回傳 None。"""
     try:
@@ -1443,7 +1456,31 @@ def fetch_hv_tx(api, month: str) -> Optional[dict]:
 
         hv = _calc_hv(closes, CFG.bb_period)
         log.info(f'TX 日K {n_days} 根  HV_TAIEX={hv:.1%}（直接計算）')
-        return {'hv': hv, 'closes': closes, 'dates': daily['dates'], 'days': n_days}
+
+        # Put 進場參考線：10 日 MA + 30M / 60M BB
+        put_refs: dict = {}
+        try:
+            if len(closes) >= 10:
+                put_refs['ma10'] = sum(closes[-10:]) / 10
+            closes_30m = _resample_intraday(kbars, 30)
+            closes_60m = _resample_intraday(kbars, 60)
+            if len(closes_30m) >= CFG.bb_period:
+                m30, _, l30 = _calc_bollinger(closes_30m, CFG.bb_period)
+                put_refs['bb_30m_mid'] = m30
+                put_refs['bb_30m_low'] = l30
+            if len(closes_60m) >= CFG.bb_period:
+                m60, _, l60 = _calc_bollinger(closes_60m, CFG.bb_period)
+                put_refs['bb_60m_mid'] = m60
+                put_refs['bb_60m_low'] = l60
+            if put_refs:
+                log.info(f'TX put_refs: ma10={put_refs.get("ma10")} '
+                         f'30M({put_refs.get("bb_30m_mid")}/{put_refs.get("bb_30m_low")}) '
+                         f'60M({put_refs.get("bb_60m_mid")}/{put_refs.get("bb_60m_low")})')
+        except Exception as _e:
+            log.warning(f'put_refs 計算失敗（{_e}），略過')
+
+        return {'hv': hv, 'closes': closes, 'dates': daily['dates'], 'days': n_days,
+                'put_refs': put_refs}
     except Exception as e:
         log.warning(f'TX kbar 失敗（{e}），退回 2330/beta 代理')
         return None
@@ -1514,6 +1551,14 @@ def fetch_market_snapshot(api):
         s = smap.get(key)
         if s is None: return None
         v = getattr(s, field, None)
+        # 夜盤期貨 close 在結算前為 None / 0，退回 bid+ask 中價
+        if (v is None or v == 0) and field == 'close':
+            bid = getattr(s, 'buy_price', None)
+            ask = getattr(s, 'sell_price', None)
+            if bid and ask and bid > 0 and ask > 0:
+                v = (bid + ask) / 2
+            elif getattr(s, 'last_price', None):
+                v = s.last_price
         try:   return cast(v) if v is not None else None
         except (ValueError, TypeError): return None
 
@@ -1873,6 +1918,17 @@ def main():
         price_0050  = _fallback(market.get('price_0050'), 'price_0050') or 95.0
         chg_0050    = market.get('chg_0050')
         chgpct_0050 = market.get('chgpct_0050')
+
+        # 夜盤遠月、OTC、股期 close 常為 None，補快取
+        for _k in ('otc', 'chg_otc', 'chgpct_otc',
+                   'tx_far', 'chg_tx_far', 'chgpct_tx_far',
+                   'tf_near', 'chg_tf_near', 'chgpct_tf_near',
+                   'tf_far', 'chg_tf_far', 'chgpct_tf_far',
+                   'etf_near', 'chg_etf_near', 'chgpct_etf_near',
+                   'etf_far', 'chg_etf_far', 'chgpct_etf_far'):
+            if market.get(_k) in (None, 0, 0.0) and _cache.get(_k) not in (None, 0, 0.0):
+                market[_k] = _cache[_k]
+
         log.info(f'2330: {price_2330} | TAIEX現: {taiex} | TX期: {tx_futures} '
                  f'| 0050: {price_0050} | 櫃買: {market.get("otc")}')
 
@@ -1916,6 +1972,8 @@ def main():
             if indicators:
                 indicators['hv_taiex']  = hv_tx_data['hv']
                 indicators['hv_source'] = 'tx_direct'
+                if hv_tx_data.get('put_refs'):
+                    indicators['put_refs'] = hv_tx_data['put_refs']
         elif indicators:
             indicators['hv_source'] = 'proxy_2330/beta'
 
