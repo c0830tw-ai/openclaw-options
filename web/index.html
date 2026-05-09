@@ -1861,6 +1861,36 @@ function ShortPutRecommender({ data, recommender, tx }) {
             )}
             {spr.has_event_in_dte && <span style={{fontSize:10, color:'#fca5a5'}}>⚠ 事件週</span>}
           </div>
+          {/* BPS spread 配對腳 */}
+          {spr.spread && !spr.spread.error && (() => {
+            const sp = spr.spread;
+            const ev = (1 - r.prob_itm) * sp.max_profit_ntd - r.prob_itm * sp.max_loss_ntd;
+            const evColor = ev > 0 ? '#86efac' : '#fca5a5';
+            return (
+              <div style={{marginTop:8, padding:'8px 10px', background:'#0f172a', border:'1px dashed #334155', borderRadius:4, fontSize:11}}>
+                <div style={{color:'#fbbf24', fontWeight:700, marginBottom:4}}>📦 完整 BPS 組合（賣 short + 買 long 配對）</div>
+                <div style={{display:'flex', gap:10, flexWrap:'wrap'}}>
+                  <div>賣 <b style={{color:'#86efac'}}>{fmt(sp.short_strike)}P</b> @ {sp.short_premium}</div>
+                  <div>買 <b style={{color:'#fca5a5'}}>{fmt(sp.long_strike)}P</b> @ {sp.long_premium}</div>
+                  <div>寬 {fmt(sp.spread_width)}pt</div>
+                </div>
+                <div style={{display:'flex', gap:10, flexWrap:'wrap', marginTop:3}}>
+                  <div>淨收 <b style={{color:'#86efac'}}>{sp.net_credit_pts}pt</b></div>
+                  <div>最大賺 <b style={{color:'#86efac'}}>NT$ {fmt(sp.max_profit_ntd)}</b></div>
+                  <div>最大賠 <b style={{color:'#fca5a5'}}>NT$ {fmt(sp.max_loss_ntd)}</b></div>
+                  <div>RR <b style={{color: sp.rr_ratio >= 0.3 ? '#86efac' : sp.rr_ratio >= 0.15 ? '#fbbf24' : '#fca5a5'}}>{sp.rr_ratio?.toFixed(2)}</b></div>
+                </div>
+                <div style={{display:'flex', gap:10, flexWrap:'wrap', marginTop:3}}>
+                  <div>BE <b>{fmt(sp.breakeven)}</b></div>
+                  <div>EV (BS) <b style={{color:evColor}}>NT$ {(ev>=0?'+':'')}{fmt(ev)}</b></div>
+                  {ev < 0 && <span style={{fontSize:10, color:'#fca5a5'}}>⚠ EV 為負 → credit/risk 比例不划算</span>}
+                </div>
+                <div style={{fontSize:9, color:'#475569', marginTop:3}}>
+                  {sp.symbol_short} / {sp.symbol_long} · {sp.note_premium}
+                </div>
+              </div>
+            );
+          })()}
           <div style={{fontSize:10, color:'#86efac', marginTop:4}}>
             ✓ {(r.passed || []).join(' · ')}
           </div>

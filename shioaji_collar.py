@@ -669,6 +669,15 @@ def compute_target_strikes(
     }
 
 
+def _find_chain_contract(chain, strike, is_put):
+    right = 'put' if is_put else 'call'
+    for c in chain:
+        if (str(getattr(c, 'option_right', '')).split('.')[-1].lower() == right
+            and abs(getattr(c, 'strike_price', 0) - strike) < 1):
+            return c
+    return None
+
+
 def recommend_short_put_strike(
     chain: list,
     *,
@@ -685,6 +694,7 @@ def recommend_short_put_strike(
     max_prob_itm: float = 0.25,
     iv_percentile: Optional[float] = None,   # 近月 ATM IV 在過去 252 天的百分位
     min_iv_percentile: float = 30.0,
+    spread_width: float = 100.0,             # 賣腳 → 買腳的距離（點），預設 100
 ) -> Dict[str, Any]:
     """為 BPS / put credit spread 推薦 short put 履約。
 
@@ -818,6 +828,46 @@ def recommend_short_put_strike(
         candidates.sort(key=lambda c: abs(c['otm_pct'] - (min_otm_pct + max_otm_pct) / 2))
         nearby_rejected = candidates[:3]
 
+    # ── 配對 long leg（更低履約的買腳）以組成 BPS ──
+    spread = None
+    if chosen:
+        target_long_K = chosen['strike'] - spread_width
+        # 找鏈上最接近目標的 put 履約
+        long_c = min(
+            [c for c in chain
+             if str(getattr(c, 'option_right', '')).split('.')[-1].lower() == 'put'
+             and getattr(c, 'strike_price', 0) < chosen['strike']],
+            key=lambda c: abs(c.strike_price - target_long_K),
+            default=None,
+        )
+        if long_c:
+            actual_width = chosen['strike'] - long_c.strike_price
+            try:
+                short_prem = bs_price(tx_futures, chosen['strike'],   T, iv, is_put=True, r=r)
+                long_prem  = bs_price(tx_futures, long_c.strike_price, T, iv, is_put=True, r=r)
+                net_credit_pts = short_prem - long_prem
+                max_profit_ntd = round(net_credit_pts * 50)
+                max_loss_ntd   = round(max(0, actual_width - net_credit_pts) * 50)
+                breakeven      = chosen['strike'] - net_credit_pts
+                rr_ratio       = (max_profit_ntd / max_loss_ntd) if max_loss_ntd > 0 else None
+                spread = {
+                    'short_strike':    chosen['strike'],
+                    'long_strike':     long_c.strike_price,
+                    'spread_width':    actual_width,
+                    'short_premium':   round(short_prem, 2),
+                    'long_premium':    round(long_prem,  2),
+                    'net_credit_pts':  round(net_credit_pts, 2),
+                    'max_profit_ntd':  max_profit_ntd,
+                    'max_loss_ntd':    max_loss_ntd,
+                    'breakeven':       round(breakeven, 1),
+                    'rr_ratio':        round(rr_ratio, 2) if rr_ratio else None,
+                    'symbol_short':    getattr(_find_chain_contract(chain, chosen['strike'], True), 'symbol', None),
+                    'symbol_long':     long_c.symbol,
+                    'note_premium':    'BS 估算（無 mid 資料）',
+                }
+            except Exception as _e:
+                spread = {'error': str(_e)}
+
     notes = []
     if has_event: notes.append('事件週已自動收緊 delta 至 0.10')
     if relax_level == 'no_20d_low':
@@ -830,6 +880,7 @@ def recommend_short_put_strike(
 
     return {
         'recommended':       chosen,
+        'spread':            spread,
         'relax_level':       relax_level if chosen else 'none',
         'rejected_nearby':   nearby_rejected,
         'has_event_in_dte':  has_event,
