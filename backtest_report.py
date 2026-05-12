@@ -24,6 +24,10 @@ import backtest as B           # noqa: E402
 import backtest_all as BA      # noqa: E402
 import backtest_all_regime as BAR  # noqa: E402
 import backtest_regime as BR   # noqa: E402
+try:
+    import backtest_stockbond as BSB  # noqa: E402
+except Exception:
+    BSB = None
 
 
 def _load_env():
@@ -37,7 +41,8 @@ def _load_env():
         os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
-def build_markdown(prices, lots=5, quarters=4):
+def build_markdown(prices, lots=5, quarters=4, include_stockbond=True,
+                   stockbond_days=1095, stockbond_segments=6):
     """跑全策略多情境分析，組 markdown。"""
     md = []
     md.append(f'# 多策略回測月報 — {datetime.now().strftime("%Y-%m-%d")}')
@@ -115,6 +120,15 @@ def build_markdown(prices, lots=5, quarters=4):
     md.append(f'- 配合 RegimeAdvisor 動態切換對應冠軍策略')
     md.append('')
 
+    # 5. 股債組合對照（0050 + 00679B）
+    if include_stockbond and BSB is not None:
+        try:
+            sb_md = BSB.build_stockbond_markdown(days=stockbond_days,
+                                                 segments=stockbond_segments)
+            md.append(sb_md)
+        except Exception as e:
+            md.append(f'## 5. 股債組合對照\n\n> ⚠️ 跑失敗：{e}\n')
+
     return '\n'.join(md)
 
 
@@ -165,6 +179,10 @@ def main():
     ap.add_argument('--lots', type=int, default=5)
     ap.add_argument('--quarters', type=int, default=4)
     ap.add_argument('--no-push', action='store_true')
+    ap.add_argument('--no-stockbond', action='store_true',
+                    help='跳過第 5 節「股債組合對照」')
+    ap.add_argument('--stockbond-days', type=int, default=1095)
+    ap.add_argument('--stockbond-segments', type=int, default=6)
     args = ap.parse_args()
 
     if args.csv:        prices = B.load_csv(args.csv)
@@ -175,7 +193,10 @@ def main():
         print('資料不足', file=sys.stderr); return 1
 
     print(f'[backtest_report] {len(prices)} 天 · 跑 8 策略 × {args.quarters} 段', file=sys.stderr)
-    md = build_markdown(prices, lots=args.lots, quarters=args.quarters)
+    md = build_markdown(prices, lots=args.lots, quarters=args.quarters,
+                        include_stockbond=not args.no_stockbond,
+                        stockbond_days=args.stockbond_days,
+                        stockbond_segments=args.stockbond_segments)
 
     OUT_DIR.mkdir(exist_ok=True)
     fname = OUT_DIR / f'{datetime.now().strftime("%Y-%m")}.md'

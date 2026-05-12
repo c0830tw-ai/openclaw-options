@@ -1213,7 +1213,8 @@ function huiCapitalPct(dte) {
 
 function IndicatorBar({ indicators, targets, iv, ivSource, dec = 0 }) {
   if (!indicators) return null;
-  const { atr, bb_upper, bb_lower, ma20, hv, hv_2330, hv_taiex, hv_source, adx, hv_pct } = indicators;
+  const { atr, bb_upper, bb_lower, ma20, hv, hv_2330, hv_taiex, hv_source, adx, hv_pct,
+          macd, macd_signal, macd_hist } = indicators;
   const hvVal     = hv_taiex ?? hv ?? hv_2330;
   const hvSrc     = hv_source === 'tx_direct' ? 'TX' : hv_taiex ? '代理' : '';
   const hvColor   = hv_source === 'tx_direct' ? '' : hv_taiex ? 'lo' : '';
@@ -1306,9 +1307,16 @@ function IndicatorBar({ indicators, targets, iv, ivSource, dec = 0 }) {
         <span className="ind-key">Call 目標</span>
         <span className="ind-val hi">{callTarget?.toLocaleString()}</span>
       </div>
-      <div className="ind-cell">
-        <span className="ind-key">選法</span>
-        <span className="ind-val tag">{methodLabel}</span>
+      <div className="ind-cell" title={`MACD: ${macd?.toFixed(2) ?? '—'} / Signal: ${macd_signal?.toFixed(2) ?? '—'} / 選法 ${methodLabel}`}>
+        <span className="ind-key">MACD</span>
+        <span className="ind-val" style={{color: macd_hist == null ? '#94a3b8' : macd_hist >= 0 ? '#f87171' : '#4ade80'}}>
+          {macd_hist != null ? (macd_hist >= 0 ? '+' : '') + macd_hist.toFixed(1) : '—'}
+        </span>
+        {macd_hist != null && (
+          <span className="ind-badge" style={{color: macd_hist >= 0 ? '#f87171' : '#4ade80'}}>
+            {macd_hist >= 0 ? '多' : '空'}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -1335,7 +1343,7 @@ function fmtMonth(m) {
   return m.slice(0, 4) + '/' + m.slice(4, 6);
 }
 
-function MarketStrip({ market: m, txo_month, dte, indicators, targets, indicators0050, iv, ivSource }) {
+function MarketStrip({ market: m, txo_month, dte, indicators, targets, indicators0050, indicators00679b, holding00679b, iv, ivSource }) {
   if (!m) return null;
   const basis = m.tx_futures != null && m.taiex ? m.tx_futures - m.taiex : null;
   const basisStr = basis != null
@@ -1373,7 +1381,8 @@ function MarketStrip({ market: m, txo_month, dte, indicators, targets, indicator
         </div>
         <IndicatorBar indicators={indicators} targets={targets} iv={iv} ivSource={ivSource} />
         <RangeThermometer label="2330 台積電" accent="#fca5a5" price={m.price_2330} ind={indicators} tx={m.tx_futures}
-                          putStrike={targets?.target_put_strike} callStrike={targets?.target_call_strike} />
+                          putStrike={targets?.target_put_strike} callStrike={targets?.target_call_strike}
+                          futNear={m.tf_near} futNearMonth={m.tf_near_month} />
       </div>
 
       {/* ── 排3：0050 現貨 + 股期近遠 ──────── */}
@@ -1388,8 +1397,39 @@ function MarketStrip({ market: m, txo_month, dte, indicators, targets, indicator
         </div>
         <IndicatorBar indicators={indicators0050} dec={2} />
         <RangeThermometer label="0050 元大台灣" accent="#86efac" price={m.price_0050} ind={indicators0050} tx={m.tx_futures}
-                          putStrike={indicators0050?.target_put_strike} callStrike={indicators0050?.target_call_strike} />
+                          putStrike={indicators0050?.target_put_strike} callStrike={indicators0050?.target_call_strike}
+                          futNear={m.etf_near} futNearMonth={m.etf_near_month} />
       </div>
+
+      {/* ── 排4：00679B 元大美債 20 年（非 TXO 避險範疇）──── */}
+      {(m.price_00679b != null || holding00679b) && (
+        <div className="market-group">
+          <div className="group-header spot">
+            元大美債 20 年 00679B
+            <span style={{marginLeft:8, fontSize:10, color:'#64748b', fontWeight:400}}>
+              · 不計 TXO 避險
+              {holding00679b && (holding00679b.shares > 0
+                ? ` · 持股 ${holding00679b.shares?.toLocaleString()} 股`
+                + (holding00679b.unrealized_pnl != null
+                    ? ` · 未實現 ${holding00679b.unrealized_pnl >= 0 ? '+' : ''}${Math.round(holding00679b.unrealized_pnl).toLocaleString()}`
+                    : '')
+                : ' · 未建倉')}
+            </span>
+          </div>
+          <div className="market-strip cols-3">
+            <MCell label="現股" price={m.price_00679b} chg={m.chg_00679b} chgpct={m.chgpct_00679b} dec={2} />
+            <MCell label="股期 近" subLabel={fmtMonth(m.rzf_near_month)}
+                   price={m.rzf_near} chg={m.chg_rzf_near} chgpct={m.chgpct_rzf_near} dec={2} />
+            <MCell label="股期 遠" subLabel={fmtMonth(m.rzf_far_month)}
+                   price={m.rzf_far}  chg={m.chg_rzf_far}  chgpct={m.chgpct_rzf_far}  dec={2} />
+          </div>
+          {indicators00679b && <IndicatorBar indicators={indicators00679b} dec={2} />}
+          {indicators00679b && (
+            <RangeThermometer label="00679B 元大美債 20 年" accent="#a78bfa" price={m.price_00679b} ind={indicators00679b}
+                              futNear={m.rzf_near} futNearMonth={m.rzf_near_month} />
+          )}
+        </div>
+      )}
 
     </div>
   );
@@ -5531,11 +5571,13 @@ function TxoChainGrid({ data }) {
 function PutRefsBar({ price, refs }) {
   if (!price || !refs) return null;
   const items = [];
+  if (refs.bb_d_low   != null) items.push({ name:'日下',  v:refs.bb_d_low,   c:'#10b981' });
   if (refs.bb_60m_low != null) items.push({ name:'60M下', v:refs.bb_60m_low, c:'#22c55e' });
   if (refs.bb_30m_low != null) items.push({ name:'30M下', v:refs.bb_30m_low, c:'#86efac' });
   if (refs.ma10       != null) items.push({ name:'10日',  v:refs.ma10,        c:'#94a3b8' });
   if (refs.bb_30m_mid != null) items.push({ name:'30M中', v:refs.bb_30m_mid, c:'#fbbf24' });
   if (refs.bb_60m_mid != null) items.push({ name:'60M中', v:refs.bb_60m_mid, c:'#fb923c' });
+  if (refs.bb_d_mid   != null) items.push({ name:'日中',  v:refs.bb_d_mid,   c:'#f97316' });
   if (items.length === 0) return null;
   items.forEach(i => { i.pct = (i.v - price) / price * 100; });
   items.push({ name:'現價', v:price, pct:0, c:'#fde047', big:true });
@@ -5545,8 +5587,29 @@ function PutRefsBar({ price, refs }) {
   const pad = ((maxP - minP) || 2) * 0.2;
   const aMin = minP - pad, aMax = maxP + pad;
   const x = p => ((p - aMin) / (aMax - aMin)) * 100;
-  const sorted = [...items].sort((a,b) => a.pct - b.pct);
-  sorted.forEach((it, idx) => { it.above = idx % 2 === 0; });
+
+  // 標籤防撞：同 side+row 內若 x 距離 < LABEL_W 視為重疊，往下一個 row 推
+  const LABEL_W = 16; // 估每個標籤約佔容器 16%
+  const sorted = [...items].map(it => ({...it, xp: x(it.pct)})).sort((a,b) => a.xp - b.xp);
+  sorted.forEach((it, idx) => {
+    const preferred = idx % 2 === 0 ? ['above','below'] : ['below','above'];
+    let placed = false;
+    for (let row = 0; row < 6 && !placed; row++) {
+      for (const side of preferred) {
+        const overlap = sorted.some(o => o !== it && o.side != null
+          && o.side === side && o.row === row
+          && Math.abs(o.xp - it.xp) < LABEL_W);
+        if (!overlap) { it.side = side; it.row = row; placed = true; break; }
+      }
+    }
+    if (!placed) { it.side = 'above'; it.row = 0; }
+  });
+  const maxRow = Math.max(...sorted.map(it => it.row));
+  const ROW_H = 22;            // 每 row 高度（px）
+  const AXIS_GAP = 10;         // 中軸到第一個 row 的距離
+  const halfH = AXIS_GAP + (maxRow + 1) * ROW_H + 4;
+  const totalH = halfH * 2;
+
   const fmtV = v => Number.isInteger(v) ? v.toLocaleString() : Math.round(v).toLocaleString();
 
   return (
@@ -5555,38 +5618,49 @@ function PutRefsBar({ price, refs }) {
         <span style={{color:'#60a5fa', fontWeight:700, fontSize:12}}>📉 Put 進場參考線</span>
         <span style={{color:'#64748b', fontSize:10}}>TX {fmtV(price)} · 越近現價越偏空</span>
       </div>
-      <div style={{position:'relative', height:54, marginTop:16, marginBottom:14}}>
+      <div style={{position:'relative', height: totalH, marginTop:4, marginBottom:4}}>
         <div style={{position:'absolute', left:0, right:0, top:'50%', height:1, background:'#1e293b'}} />
-        <div style={{position:'absolute', left:`${x(0)}%`, top:'30%', bottom:'30%', width:1, background:'#475569'}} />
-        {sorted.map((it, idx) => (
-          <div key={idx} style={{position:'absolute', left:`${x(it.pct)}%`, top:0, bottom:0, transform:'translateX(-50%)'}}>
-            {it.above && (
-              <div style={{position:'absolute', bottom:'58%', textAlign:'center', whiteSpace:'nowrap', transform:'translateX(-50%)', left:'50%'}}>
-                <div style={{fontSize:9, color:it.c, fontWeight: it.big?700:500}}>{it.name}</div>
-                <div style={{fontSize:8, color:'#64748b'}}>
+        <div style={{position:'absolute', left:`${x(0)}%`, top:`calc(50% - 8px)`, height:'16px', width:1, background:'#475569'}} />
+        {sorted.map((it, idx) => {
+          const isAbove = it.side === 'above';
+          const offset = AXIS_GAP + it.row * ROW_H;
+          const labelStyle = {
+            position:'absolute',
+            [isAbove ? 'bottom' : 'top']: `calc(50% + ${offset}px)`,
+            textAlign:'center', whiteSpace:'nowrap',
+            transform:'translateX(-50%)', left:'50%'
+          };
+          // 連接線：從圓點延伸到 label，方便辨認屬於哪個點
+          const connectorStyle = {
+            position:'absolute',
+            left:'50%',
+            width:1,
+            background:`${it.c}55`,
+            [isAbove ? 'bottom' : 'top']: `calc(50% + ${it.big ? 5 : 4}px)`,
+            height: `${offset - (it.big ? 5 : 4)}px`,
+            transform:'translateX(-50%)'
+          };
+          return (
+            <div key={idx} style={{position:'absolute', left:`${it.xp}%`, top:0, bottom:0, transform:'translateX(-50%)'}}>
+              {it.row > 0 && <div style={connectorStyle} />}
+              <div style={labelStyle}>
+                <div style={{fontSize:9, color:it.c, fontWeight: it.big?700:500, lineHeight:1.2}}>{it.name}</div>
+                <div style={{fontSize:8, color:'#64748b', lineHeight:1.2}}>
                   {fmtV(it.v)}{!it.big && <span style={{color:it.pct>=0?'#fca5a5':'#86efac', marginLeft:2}}>({it.pct>=0?'+':''}{it.pct.toFixed(2)}%)</span>}
                 </div>
               </div>
-            )}
-            <div style={{width:it.big?10:7, height:it.big?10:7, borderRadius:'50%', background:it.c,
-                         boxShadow: it.big ? `0 0 0 2px ${it.c}40` : 'none',
-                         position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)'}}/>
-            {!it.above && (
-              <div style={{position:'absolute', top:'58%', textAlign:'center', whiteSpace:'nowrap', transform:'translateX(-50%)', left:'50%'}}>
-                <div style={{fontSize:9, color:it.c, fontWeight: it.big?700:500}}>{it.name}</div>
-                <div style={{fontSize:8, color:'#64748b'}}>
-                  {fmtV(it.v)}{!it.big && <span style={{color:it.pct>=0?'#fca5a5':'#86efac', marginLeft:2}}>({it.pct>=0?'+':''}{it.pct.toFixed(2)}%)</span>}
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
+              <div style={{width:it.big?10:7, height:it.big?10:7, borderRadius:'50%', background:it.c,
+                           boxShadow: it.big ? `0 0 0 2px ${it.c}40` : 'none',
+                           position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)'}}/>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function RangeThermometer({ label, accent, price, ind, tx, putStrike, callStrike, isStock = false }) {
+function RangeThermometer({ label, accent, price, ind, tx, putStrike, callStrike, futNear, futNearMonth, isStock = false }) {
   if (!price || !ind) return null;
   const items = [];
   if (ind.bb_lower != null) items.push({ name:'BB↓',  v:ind.bb_lower, pct:(ind.bb_lower-price)/price*100, c:'#22c55e' });
@@ -5595,6 +5669,11 @@ function RangeThermometer({ label, accent, price, ind, tx, putStrike, callStrike
   // strikes 是 TX 點位，用 tx 當基準
   if (putStrike  != null && tx) items.push({ name:'Put',  v:putStrike,  pct:(putStrike -tx)/tx*100, c:'#86efac' });
   if (callStrike != null && tx) items.push({ name:'Call', v:callStrike, pct:(callStrike-tx)/tx*100, c:'#fbbf24' });
+  // 期貨近月（跟現股同單位，直接拿 price 比）
+  if (futNear != null) {
+    const futLabel = futNearMonth ? `期${String(futNearMonth).slice(4,6)}` : '期近';
+    items.push({ name: futLabel, v: futNear, pct: (futNear - price) / price * 100, c: '#38bdf8' });
+  }
   items.push({ name:'現價', v:price, pct:0, c:'#fbbf24', big:true });
   if (items.length <= 1) return null;
 
@@ -5604,9 +5683,27 @@ function RangeThermometer({ label, accent, price, ind, tx, putStrike, callStrike
   const aMin = minP - pad, aMax = maxP + pad;
   const x = p => ((p - aMin) / (aMax - aMin)) * 100;
 
-  // 排序 → 奇偶交替 above / below
-  const sorted = [...items].sort((a,b) => a.pct - b.pct);
-  sorted.forEach((it, idx) => { it.above = idx % 2 === 0; });
+  // 標籤防撞：同 side+row 內若 x 距離 < LABEL_W 視為重疊，往下一個 row 推
+  const LABEL_W = 14;
+  const sorted = [...items].map(it => ({...it, xp: x(it.pct)})).sort((a,b) => a.xp - b.xp);
+  sorted.forEach((it, idx) => {
+    const preferred = idx % 2 === 0 ? ['above','below'] : ['below','above'];
+    let placed = false;
+    for (let row = 0; row < 6 && !placed; row++) {
+      for (const side of preferred) {
+        const overlap = sorted.some(o => o !== it && o.side != null
+          && o.side === side && o.row === row
+          && Math.abs(o.xp - it.xp) < LABEL_W);
+        if (!overlap) { it.side = side; it.row = row; placed = true; break; }
+      }
+    }
+    if (!placed) { it.side = 'above'; it.row = 0; }
+  });
+  const maxRow = Math.max(...sorted.map(it => it.row));
+  const ROW_H = 24;
+  const AXIS_GAP = 12;
+  const halfH = AXIS_GAP + (maxRow + 1) * ROW_H + 4;
+  const totalH = halfH * 2;
   const fmtV = v => Number.isInteger(v) ? v.toLocaleString() : v.toFixed(2);
 
   return (
@@ -5617,33 +5714,42 @@ function RangeThermometer({ label, accent, price, ind, tx, putStrike, callStrike
         {tx && !isStock && <span style={{color:'#475569', fontSize:10, marginLeft:'auto'}}>strike vs TX {Math.round(tx).toLocaleString()}</span>}
         {tx &&  isStock && <span style={{color:'#475569', fontSize:10, marginLeft:'auto'}}>strike vs TX {Math.round(tx).toLocaleString()}</span>}
       </div>
-      <div style={{position:'relative', height:62, marginTop:18, marginBottom:18}}>
+      <div style={{position:'relative', height: totalH, marginTop:6, marginBottom:6}}>
         <div style={{position:'absolute', left:0, right:0, top:'50%', height:2, background:'#1e293b', borderRadius:1}} />
-        <div style={{position:'absolute', left:`${x(0)}%`, top:'30%', bottom:'30%', width:1, background:'#475569'}} />
-        {sorted.map((it, idx) => (
-          <div key={idx} style={{position:'absolute', left:`${x(it.pct)}%`, top:0, bottom:0, transform:'translateX(-50%)'}}>
-            {it.above && (
-              <div style={{position:'absolute', bottom:'62%', textAlign:'center', whiteSpace:'nowrap', transform:'translateX(-50%)', left:'50%'}}>
-                <div style={{fontSize:10, color:it.c, fontWeight: it.big ? 700 : 500}}>{it.name}</div>
-                <div style={{fontSize:9, color:'#94a3b8'}}>
+        <div style={{position:'absolute', left:`${x(0)}%`, top:`calc(50% - 8px)`, height:'16px', width:1, background:'#475569'}} />
+        {sorted.map((it, idx) => {
+          const isAbove = it.side === 'above';
+          const offset = AXIS_GAP + it.row * ROW_H;
+          const labelStyle = {
+            position:'absolute',
+            [isAbove ? 'bottom' : 'top']: `calc(50% + ${offset}px)`,
+            textAlign:'center', whiteSpace:'nowrap',
+            transform:'translateX(-50%)', left:'50%'
+          };
+          const connectorStyle = {
+            position:'absolute',
+            left:'50%',
+            width:1,
+            background:`${it.c}55`,
+            [isAbove ? 'bottom' : 'top']: `calc(50% + ${it.big ? 6 : 5}px)`,
+            height: `${offset - (it.big ? 6 : 5)}px`,
+            transform:'translateX(-50%)'
+          };
+          return (
+            <div key={idx} style={{position:'absolute', left:`${it.xp}%`, top:0, bottom:0, transform:'translateX(-50%)'}}>
+              {it.row > 0 && <div style={connectorStyle} />}
+              <div style={labelStyle}>
+                <div style={{fontSize:10, color:it.c, fontWeight: it.big ? 700 : 500, lineHeight:1.2}}>{it.name}</div>
+                <div style={{fontSize:9, color:'#94a3b8', lineHeight:1.2}}>
                   {fmtV(it.v)}
                   {!it.big && <span style={{color:it.pct>=0?'#fca5a5':'#86efac', marginLeft:3}}>({it.pct>=0?'+':''}{it.pct.toFixed(1)}%)</span>}
                 </div>
               </div>
-            )}
-            <div style={{width: it.big?12:9, height: it.big?12:9, borderRadius:'50%', background:it.c,
-                         boxShadow: it.big ? `0 0 0 3px ${it.c}40` : 'none', position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)'}}/>
-            {!it.above && (
-              <div style={{position:'absolute', top:'62%', textAlign:'center', whiteSpace:'nowrap', transform:'translateX(-50%)', left:'50%'}}>
-                <div style={{fontSize:10, color:it.c, fontWeight: it.big ? 700 : 500}}>{it.name}</div>
-                <div style={{fontSize:9, color:'#94a3b8'}}>
-                  {fmtV(it.v)}
-                  {!it.big && <span style={{color:it.pct>=0?'#fca5a5':'#86efac', marginLeft:3}}>({it.pct>=0?'+':''}{it.pct.toFixed(1)}%)</span>}
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
+              <div style={{width: it.big?12:9, height: it.big?12:9, borderRadius:'50%', background:it.c,
+                           boxShadow: it.big ? `0 0 0 3px ${it.c}40` : 'none', position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)'}}/>
+            </div>
+          );
+        })}
       </div>
       {/* HV / ADX 摘要 */}
       <div style={{display:'flex', gap:14, fontSize:11, color:'#64748b', marginTop:4}}>
@@ -5667,9 +5773,11 @@ function IndicatorGrid({ data }) {
   return (
     <div style={{padding:'4px 0'}}>
       <RangeThermometer label="2330 台積電"  accent="#fca5a5" price={px2330} ind={ind2330} tx={tx}
-                        putStrike={tgt.target_put_strike}     callStrike={tgt.target_call_strike} />
+                        putStrike={tgt.target_put_strike}     callStrike={tgt.target_call_strike}
+                        futNear={data.market?.tf_near}  futNearMonth={data.market?.tf_near_month} />
       <RangeThermometer label="0050 元大台灣" accent="#86efac" price={px0050} ind={ind0050} tx={tx}
-                        putStrike={ind0050?.target_put_strike} callStrike={ind0050?.target_call_strike} />
+                        putStrike={ind0050?.target_put_strike} callStrike={ind0050?.target_call_strike}
+                        futNear={data.market?.etf_near} futNearMonth={data.market?.etf_near_month} />
     </div>
   );
 }
@@ -6050,6 +6158,8 @@ function App() {
           <MarketStrip market={data.market} txo_month={data.txo_month} dte={data.dte}
                        indicators={data.indicators} targets={data.targets}
                        indicators0050={data.indicators_0050}
+                       indicators00679b={data.indicators_00679b}
+                       holding00679b={data.holding_00679b}
                        iv={data.iv_used} ivSource={data.iv_source} />
           <DTEWarning dte={data.dte} />
           <MarketHoursNote />

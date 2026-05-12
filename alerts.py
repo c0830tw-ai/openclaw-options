@@ -59,6 +59,7 @@ DEFAULT_RULES = {
 
     'cooldown_minutes':          60,    # 同一規則最少間隔分鐘
     'telegram_enabled':          True,
+    'event_alerts_enabled':      False, # 事件提醒（CPI/FOMC 等），預設關閉避免每次 refresh 都發
 }
 
 
@@ -320,7 +321,7 @@ def evaluate(data: dict, rules: dict) -> list:
             })
 
     # 13. 高影響事件（events.json）— 事件前 5 天 IV spike 風險
-    upcoming = data.get('upcoming_events') or []
+    upcoming = data.get('upcoming_events') or [] if rules.get('event_alerts_enabled') else []
     for ev in upcoming:
         if ev.get('impact') != 'high':
             continue

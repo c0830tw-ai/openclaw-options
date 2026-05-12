@@ -69,6 +69,10 @@ class Config:
     lot_size_0050: int = 10000            # 每口受益憑證單位數
     cost_basis_0050: float = 0.0          # 進場均價（NT/單位）；0 = 未提供，用於計算 unrealized P&L
 
+    # 策略參數 — 00679B（元大美債 20 年；跟 TAIEX 低相關，不計入 TXO 避險）
+    shares_00679b: int = 0                # 持有股數（現股）
+    cost_basis_00679b: float = 0.0        # 進場均價（NT/股）
+
     # 動態履約價選擇
     delta_target: float = 0.10            # Put/Call delta 絕對值上限
     risk_free_rate: float = 0.0175        # 無風險利率（TWD 年化）
@@ -101,7 +105,8 @@ CFG = Config()
 
 # ============ Positions Override ============
 _POSITIONS_FILE = Path(__file__).parent / 'positions.json'
-_POSITIONS_OVERRIDABLE = {'large_futures_lots', 'lots_0050', 'lot_size_0050', 'cost_basis_0050'}
+_POSITIONS_OVERRIDABLE = {'large_futures_lots', 'lots_0050', 'lot_size_0050', 'cost_basis_0050',
+                           'shares_00679b', 'cost_basis_00679b'}
 POSITIONS_SOURCE = 'config_default'   # 'positions_file' 表示來自檔案
 POSITIONS_INSTRUMENTS: List[Dict[str, Any]] = []   # 多商品 schema (Phase 1+)
 
@@ -363,6 +368,28 @@ def _calc_bollinger(closes: list, period: int) -> Tuple[float, float, float]:
     ma = sum(window) / n
     std = math.sqrt(sum((x - ma) ** 2 for x in window) / n)
     return ma, ma + 2 * std, ma - 2 * std   # (ma, upper, lower)
+
+
+def _calc_ema_series(values: list, period: int) -> list:
+    if not values:
+        return []
+    k = 2 / (period + 1)
+    out = [values[0]]
+    for v in values[1:]:
+        out.append(v * k + out[-1] * (1 - k))
+    return out
+
+
+def _calc_macd(closes: list, fast: int = 12, slow: int = 26, signal: int = 9
+               ) -> Optional[Tuple[float, float, float]]:
+    """回傳 (macd, signal, histogram)。資料不足回傳 None。"""
+    if len(closes) < slow + signal:
+        return None
+    ema_fast = _calc_ema_series(closes, fast)
+    ema_slow = _calc_ema_series(closes, slow)
+    macd_line = [f - s for f, s in zip(ema_fast, ema_slow)]
+    sig_line  = _calc_ema_series(macd_line, signal)
+    return macd_line[-1], sig_line[-1], macd_line[-1] - sig_line[-1]
 
 
 def _calc_adx(highs: list, lows: list, closes: list, period: int = 14) -> float:
@@ -1661,11 +1688,16 @@ def _resample_intraday(kbars, minutes: int) -> list:
 
 
 def fetch_kbars(api, stock_code: str) -> Optional[dict]:
-    """抓個股日K，計算 ATR / BB / HV / ADX。失敗回傳 None。"""
+    """抓個股日K，計算 ATR / BB / HV / ADX / MACD。失敗回傳 None。"""
     try:
-        contract = api.Contracts.Stocks.TSE[stock_code]
+        contract = api.Contracts.Stocks.TSE[stock_code] or api.Contracts.Stocks.OTC[stock_code]
+        if contract is None:
+            log.warning(f'{stock_code} 合約找不到（TSE/OTC 皆 None）')
+            return None
         end_dt   = datetime.now()
-        start_dt = end_dt - timedelta(days=int(CFG.bb_period * 1.5 * 7 / 5) + 10)
+        # 至少抓 50 個交易日（MACD 26+9 warmup + 緩衝），約 70 個日曆日
+        lookback_days = max(int(CFG.bb_period * 1.5 * 7 / 5) + 10, 70)
+        start_dt = end_dt - timedelta(days=lookback_days)
         kbars = api.kbars(
             contract=contract,
             start=start_dt.strftime('%Y-%m-%d'),
@@ -1685,17 +1717,25 @@ def fetch_kbars(api, stock_code: str) -> Optional[dict]:
         ma, bb_u, bb_l = _calc_bollinger(closes, CFG.bb_period)
         hv             = _calc_hv(closes, CFG.bb_period)
         adx            = _calc_adx(highs, lows, closes, CFG.atr_period)
+        macd_tuple     = _calc_macd(closes)
 
         log.info(
             f'{stock_code} 日K {n_days}根  ATR({CFG.atr_period})={atr:.2f}  '
             f'BB上={bb_u:.2f} 中={ma:.2f} 下={bb_l:.2f}  HV={hv:.1%}  ADX={adx:.1f}'
+            + (f'  MACD={macd_tuple[0]:.2f}/{macd_tuple[1]:.2f}/{macd_tuple[2]:.2f}'
+               if macd_tuple else '')
         )
-        return {
+        result = {
             'atr': atr, 'bb_upper': bb_u, 'bb_lower': bb_l,
             'ma20': ma, 'hv': hv, 'adx': adx, 'days': n_days,
             'closes': closes,
             'dates':  daily['dates'],
         }
+        if macd_tuple:
+            result['macd']        = macd_tuple[0]
+            result['macd_signal'] = macd_tuple[1]
+            result['macd_hist']   = macd_tuple[2]
+        return result
     except Exception as e:
         log.warning(f'{stock_code} kbar 抓取失敗（{e}）')
         return None
@@ -1738,7 +1778,7 @@ def fetch_hv_tx(api, month: str) -> Optional[dict]:
         hv = _calc_hv(closes, CFG.bb_period)
         log.info(f'TX 日K {n_days} 根  HV_TAIEX={hv:.1%}（直接計算）')
 
-        # Put 進場參考線：10 日 MA + 30M / 60M BB + 近 20 日 low
+        # Put 進場參考線：10 日 MA + 日 BB + 30M / 60M BB + 近 20 日 low
         put_refs: dict = {}
         try:
             if len(closes) >= 10:
@@ -1746,6 +1786,10 @@ def fetch_hv_tx(api, month: str) -> Optional[dict]:
             lows = daily.get('Low', [])
             if len(lows) >= 20:
                 put_refs['past_20d_low'] = min(lows[-20:])
+            if len(closes) >= CFG.bb_period:
+                md, _, ld = _calc_bollinger(closes, CFG.bb_period)
+                put_refs['bb_d_mid'] = md
+                put_refs['bb_d_low'] = ld
             closes_30m = _resample_intraday(kbars, 30)
             closes_60m = _resample_intraday(kbars, 60)
             if len(closes_30m) >= CFG.bb_period:
@@ -1759,6 +1803,7 @@ def fetch_hv_tx(api, month: str) -> Optional[dict]:
             if put_refs:
                 log.info(f'TX put_refs: ma10={put_refs.get("ma10")} '
                          f'20d_low={put_refs.get("past_20d_low")} '
+                         f'日({put_refs.get("bb_d_mid")}/{put_refs.get("bb_d_low")}) '
                          f'30M({put_refs.get("bb_30m_mid")}/{put_refs.get("bb_30m_low")}) '
                          f'60M({put_refs.get("bb_60m_mid")}/{put_refs.get("bb_60m_low")})')
         except Exception as _e:
@@ -1780,6 +1825,15 @@ def fetch_market_snapshot(api):
     registry['2330']  = api.Contracts.Stocks.TSE['2330']
     registry['taiex'] = api.Contracts.Indexs.TSE['TSE001']
     registry['0050']  = api.Contracts.Stocks.TSE['0050']
+    # 00679B 在 Shioaji 分在 Stocks.OTC，不是 TSE
+    try:
+        c = api.Contracts.Stocks.OTC['00679B'] or api.Contracts.Stocks.TSE['00679B']
+        if c is not None:
+            registry['00679B'] = c
+        else:
+            log.warning('00679B 合約找不到（OTC/TSE 皆 None）')
+    except Exception as e:
+        log.warning(f'00679B 合約失敗：{e}')
     try:
         registry['otc'] = api.Contracts.Indexs.OTC['OTC101']
     except Exception as e:
@@ -1826,6 +1880,20 @@ def fetch_market_snapshot(api):
         log.info(f"0050股期 近={etf_sorted[0].delivery_month if etf_sorted else '—'}  遠={etf_sorted[1].delivery_month if len(etf_sorted)>=2 else '—'}")
     except Exception as e:
         log.warning(f'0050 ETF 股期（NYF）：{e}')
+
+    # ── 00679B 美債 20 年 ETF 股期 近/遠月（RZF）─────────────
+    try:
+        rzf_sorted = sorted(
+            [c for c in api.Contracts.Futures.RZF
+             if c.delivery_month >= today_month
+             and c.symbol == f'RZF{c.delivery_month}'],
+            key=lambda c: c.delivery_month,
+        )
+        if len(rzf_sorted) >= 1: registry['rzf_near'] = rzf_sorted[0]
+        if len(rzf_sorted) >= 2: registry['rzf_far']  = rzf_sorted[1]
+        log.info(f"00679B股期 近={rzf_sorted[0].delivery_month if rzf_sorted else '—'}  遠={rzf_sorted[1].delivery_month if len(rzf_sorted)>=2 else '—'}")
+    except Exception as e:
+        log.warning(f'00679B ETF 股期（RZF）：{e}')
 
     # ── 批次 snapshot ──────────────────────────────────────────
     keys      = list(registry.keys())
@@ -1874,6 +1942,9 @@ def fetch_market_snapshot(api):
         'price_0050':       sv('0050', 'close'),
         'chg_0050':         sv('0050', 'change_price'),
         'chgpct_0050':      sv('0050', 'change_rate'),
+        'price_00679b':     sv('00679B', 'close'),
+        'chg_00679b':       sv('00679B', 'change_price'),
+        'chgpct_00679b':    sv('00679B', 'change_rate'),
         'otc':              sv('otc',  'close'),
         'chg_otc':          sv('otc',  'change_price'),
         'chgpct_otc':       sv('otc',  'change_rate'),
@@ -1904,6 +1975,15 @@ def fetch_market_snapshot(api):
         'chg_etf_far':      sv('etf_far', 'change_price'),
         'chgpct_etf_far':   sv('etf_far', 'change_rate'),
         'etf_far_month':    mo('etf_far'),
+        # 00679B 股期
+        'rzf_near':         sv('rzf_near', 'close'),
+        'chg_rzf_near':     sv('rzf_near', 'change_price'),
+        'chgpct_rzf_near':  sv('rzf_near', 'change_rate'),
+        'rzf_near_month':   mo('rzf_near'),
+        'rzf_far':          sv('rzf_far', 'close'),
+        'chg_rzf_far':      sv('rzf_far', 'change_price'),
+        'chgpct_rzf_far':   sv('rzf_far', 'change_rate'),
+        'rzf_far_month':    mo('rzf_far'),
     }
 
 
@@ -2203,6 +2283,9 @@ def main():
         price_0050  = _fallback(market.get('price_0050'), 'price_0050') or 95.0
         chg_0050    = market.get('chg_0050')
         chgpct_0050 = market.get('chgpct_0050')
+        price_00679b  = _fallback(market.get('price_00679b'), 'price_00679b')
+        chg_00679b    = market.get('chg_00679b')
+        chgpct_00679b = market.get('chgpct_00679b')
 
         # 夜盤遠月、OTC、股期 close 常為 None，補快取
         for _k in ('otc', 'chg_otc', 'chgpct_otc',
@@ -2235,12 +2318,18 @@ def main():
         if indicators_0050:
             closes_0050 = indicators_0050.pop('closes', [])
             dates_0050  = indicators_0050.pop('dates',  [])
+        indicators_00679b = fetch_kbars(api, '00679B')
+        if indicators_00679b:
+            indicators_00679b.pop('closes', None)
+            indicators_00679b.pop('dates',  None)
 
         # 把補正後的價格寫回 market，確保快取有效
-        market['price_2330'] = price_2330
-        market['taiex']      = taiex
-        market['tx_futures'] = tx_futures
-        market['price_0050'] = price_0050
+        market['price_2330']   = price_2330
+        market['taiex']        = taiex
+        market['tx_futures']   = tx_futures
+        market['price_0050']   = price_0050
+        if price_00679b is not None:
+            market['price_00679b'] = price_00679b
 
         # 3. DTE（距結算天數）
         month, settlement_dt = get_txo_settlement()
@@ -2848,6 +2937,7 @@ def main():
             'dte_trading': dte_trading,
             'indicators': indicators,
             'indicators_0050': indicators_0050,
+            'indicators_00679b': indicators_00679b,
             'iv_used':    round(near_iv, 4),
             'iv_source':  near_iv_src,
             'targets': {
@@ -2893,6 +2983,17 @@ def main():
                 'beta_adj_ratio':      beta_ratio_0050,
                 'recommended_contracts': n_contracts_0050,
                 'structures':          [asdict(s) for s in structures_0050],
+            },
+            'holding_00679b': {
+                'price':            price_00679b,
+                'chg':              chg_00679b,
+                'chgpct':           chgpct_00679b,
+                'shares':           CFG.shares_00679b,
+                'cost_basis':       CFG.cost_basis_00679b,
+                'notional':         (price_00679b or 0) * CFG.shares_00679b,
+                'unrealized_pnl':   ((price_00679b or 0) - CFG.cost_basis_00679b) * CFG.shares_00679b
+                                     if CFG.cost_basis_00679b and CFG.shares_00679b else None,
+                'note': '元大美債 20 年 ETF；跟 TAIEX 低相關，不計入 TXO 避險口數',
             },
             'far_month':   far_month_data,
             'weekly_wed':  weekly_wed_data,
