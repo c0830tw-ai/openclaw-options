@@ -168,13 +168,15 @@ def _label_regime(ret_pct: float) -> str:
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument('--ticker', default='0050.TW',
+                    help='Yahoo ticker, e.g. 0050.TW, 2330.TW, 00679B.TWO')
     ap.add_argument('--days', type=int, default=1825)
     ap.add_argument('--segments', type=int, default=0)
     ap.add_argument('--save', help='CSV 輸出')
     args = ap.parse_args()
 
-    print(f'[trim+add] Yahoo 抓 0050.TW {args.days} 天...', file=sys.stderr)
-    series = fetch_yahoo_adj('0050.TW', args.days)
+    print(f'[trim+add] Yahoo 抓 {args.ticker} {args.days} 天...', file=sys.stderr)
+    series = fetch_yahoo_adj(args.ticker, args.days)
     dates = [d for d, _ in series]
     closes = [c for _, c in series]
     print(f'[trim+add] 共 {len(series)} 天: {dates[0]} → {dates[-1]}', file=sys.stderr)
@@ -183,7 +185,7 @@ def main():
 
     print()
     print('━' * 110)
-    print(f'0050 trim+add 回測（{dates[0]} → {dates[-1]}, '
+    print(f'{args.ticker} trim+add 回測（{dates[0]} → {dates[-1]}, '
           f'{closes[0]:.2f} → {closes[-1]:.2f}, {(closes[-1]/closes[0]-1)*100:+.2f}%）')
     print('━' * 110)
     print(f'  {"策略":<26} │ {"總報酬":>9} {"年化":>9} {"MaxDD":>8} {"Sharpe":>7} {"波動":>7} {"trim":>5} {"add":>4}')
