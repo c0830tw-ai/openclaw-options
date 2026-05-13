@@ -1885,8 +1885,8 @@ def fetch_kbars(api, stock_code: str) -> Optional[dict]:
             log.warning(f'{stock_code} 合約找不到（TSE/OTC 皆 None）')
             return None
         end_dt   = datetime.now()
-        # 至少抓 50 個交易日（MACD 26+9 warmup + 緩衝），約 70 個日曆日
-        lookback_days = max(int(CFG.bb_period * 1.5 * 7 / 5) + 10, 70)
+        # 至少抓 75 個交易日（MACD 26+9 + MA60 + 緩衝），約 105 個日曆日
+        lookback_days = max(int(CFG.bb_period * 1.5 * 7 / 5) + 10, 105)
         start_dt = end_dt - timedelta(days=lookback_days)
         kbars = api.kbars(
             contract=contract,
@@ -1930,6 +1930,21 @@ def fetch_kbars(api, stock_code: str) -> Optional[dict]:
         if bb_pat:
             result['bb_pattern'] = bb_pat
             log.info(f"{stock_code} BB 形態: {bb_pat['label']} ({bb_pat['detail']})")
+
+        # MA60 + recent_high（用於 trim & add-back 訊號）
+        if n_days >= 60:
+            ma60 = sum(closes[-60:]) / 60
+            result['ma60'] = ma60
+            # 站上 MA60 判定：今天收盤 > MA60 且昨天收盤 <= MA60_昨天
+            yesterday_ma60 = sum(closes[-61:-1]) / 60 if n_days >= 61 else None
+            result['cross_up_ma60'] = (closes[-1] > ma60 and
+                                       yesterday_ma60 is not None and
+                                       closes[-2] <= yesterday_ma60)
+            result['above_ma60'] = closes[-1] > ma60
+        if n_days >= 60:
+            recent_high = max(closes[-60:])
+            result['recent_high_60d'] = recent_high
+            result['dd_from_high_pct'] = (closes[-1] / recent_high - 1) * 100
         return result
     except Exception as e:
         log.warning(f'{stock_code} kbar 抓取失敗（{e}）')
@@ -3148,6 +3163,24 @@ def main():
             'indicators': indicators,
             'indicators_0050': indicators_0050,
             'indicators_00679b': indicators_00679b,
+            # 0050 動態管理 SOP 訊號（5 年回測冠軍：Trim -10% / +MA60）
+            'trim_add_0050': (
+                {
+                    'price':            price_0050,
+                    'recent_high':      indicators_0050.get('recent_high_60d'),
+                    'dd_from_high_pct': indicators_0050.get('dd_from_high_pct'),
+                    'trim_threshold':   (indicators_0050.get('recent_high_60d') or 0) * 0.9,
+                    'trim_triggered':   (indicators_0050.get('dd_from_high_pct') or 0) <= -10,
+                    'ma60':             indicators_0050.get('ma60'),
+                    'above_ma60':       indicators_0050.get('above_ma60'),
+                    'cross_up_ma60':    indicators_0050.get('cross_up_ma60'),
+                    'lots_held':        CFG.lots_0050,
+                    'cost_basis':       CFG.cost_basis_0050,
+                    'lot_size':         CFG.lot_size_0050,
+                    'trim_size_lots':   round(CFG.lots_0050 * 0.5),
+                    'note': '5 年回測：Trim -10%×50% + MA60 cross-up 加滿全面贏 Buy & Hold',
+                } if indicators_0050 else None
+            ),
             'iv_used':    round(near_iv, 4),
             'iv_source':  near_iv_src,
             'targets': {

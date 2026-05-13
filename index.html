@@ -5868,6 +5868,129 @@ function EngineStatus({ data }) {
   );
 }
 
+function TrimAddSOP({ data }) {
+  const s = data?.trim_add_0050;
+  if (!s || s.price == null) return <div style={{padding:'12px', color:'#94a3b8', fontSize:11}}>資料不足（需 60 日 K）</div>;
+
+  const trimDist     = s.recent_high ? ((s.trim_threshold - s.price) / s.price) * 100 : null;
+  const ma60Dist     = s.ma60 ? ((s.ma60 - s.price) / s.price) * 100 : null;
+  const trimReleased = s.lot_size * (s.lots_held * 0.5) * s.price;   // 砍 50% 釋出名目
+  const fullNotional = s.lot_size * s.lots_held * s.price;
+  const pnlPerLot    = s.cost_basis ? (s.price - s.cost_basis) * s.lot_size : null;
+  const totalPnl     = pnlPerLot != null ? pnlPerLot * s.lots_held : null;
+
+  // 動作判定
+  const action = s.trim_triggered ? 'TRIM' :
+                 s.cross_up_ma60   ? 'ADD'  :
+                 'HOLD';
+  const actionColor = action === 'TRIM' ? '#ef4444' :
+                      action === 'ADD'  ? '#22c55e' :
+                      '#475569';
+  const actionLabel = action === 'TRIM' ? '🔴 觸發 Trim — 砍 2-3 口' :
+                      action === 'ADD'  ? '🟢 觸發 Add-back — 加回滿倉' :
+                      '✓ 維持持倉、等訊號';
+
+  const Row = ({ label, value, hint, color }) => (
+    <div style={{display:'flex', justifyContent:'space-between', padding:'4px 0',
+                 borderBottom:'1px dashed #1e293b', fontSize:11}}>
+      <span style={{color:'#94a3b8'}}>{label}</span>
+      <span style={{color: color || '#e2e8f0', fontWeight: 600}}>
+        {value}
+        {hint && <span style={{color:'#64748b', fontSize:10, marginLeft:6}}>{hint}</span>}
+      </span>
+    </div>
+  );
+
+  return (
+    <div style={{padding:'4px 0'}}>
+      {/* 動作大字 */}
+      <div style={{
+        padding:'14px 16px', marginBottom:12, borderRadius:6,
+        background: s.trim_triggered ? '#2a0e0e' : s.cross_up_ma60 ? '#0e2010' : '#0a0f1a',
+        borderLeft: `4px solid ${actionColor}`,
+        display:'flex', justifyContent:'space-between', alignItems:'center'
+      }}>
+        <div>
+          <div style={{fontSize:11, color:'#64748b', marginBottom:2}}>當前訊號</div>
+          <div style={{fontSize:16, fontWeight:700, color: actionColor}}>{actionLabel}</div>
+        </div>
+        <div style={{textAlign:'right'}}>
+          <div style={{fontSize:11, color:'#64748b'}}>現價 → 60 日高</div>
+          <div style={{fontSize:14, color: '#e2e8f0', fontWeight:600}}>
+            {s.price?.toFixed(2)} → {s.recent_high?.toFixed(2)}
+          </div>
+          <div style={{fontSize:11, color: s.dd_from_high_pct < -5 ? '#fb923c' : '#86efac'}}>
+            DD {s.dd_from_high_pct?.toFixed(2)}%
+          </div>
+        </div>
+      </div>
+
+      {/* 進出觸發點 */}
+      <div style={{
+        padding:'10px 14px', marginBottom:10, background:'#070b15', borderRadius:4,
+        borderLeft:'3px solid #475569'
+      }}>
+        <div style={{fontSize:12, fontWeight:600, color:'#e2e8f0', marginBottom:6}}>📍 進出場觸發點</div>
+        <Row label="Trim 觸發 (-10% from high)"
+             value={s.trim_threshold?.toFixed(2)}
+             hint={trimDist != null ? `距現價 ${trimDist >= 0 ? '+' : ''}${trimDist.toFixed(2)}%` : ''}
+             color={s.trim_triggered ? '#ef4444' : '#94a3b8'} />
+        <Row label="Add-back (MA60 cross-up)"
+             value={s.ma60?.toFixed(2)}
+             hint={ma60Dist != null ? `距現價 ${ma60Dist >= 0 ? '+' : ''}${ma60Dist.toFixed(2)}%` : ''}
+             color={s.cross_up_ma60 ? '#22c55e' : (s.above_ma60 ? '#86efac' : '#fca5a5')} />
+      </div>
+
+      {/* 持倉與釋出 */}
+      <div style={{
+        padding:'10px 14px', marginBottom:10, background:'#070b15', borderRadius:4,
+        borderLeft:'3px solid #60a5fa'
+      }}>
+        <div style={{fontSize:12, fontWeight:600, color:'#e2e8f0', marginBottom:6}}>💼 目前持倉</div>
+        <Row label="NYF 0050 股期" value={`${s.lots_held} 口`}
+             hint={`每口 ${s.lot_size?.toLocaleString()} 受益憑證`} />
+        <Row label="進場均價"
+             value={s.cost_basis?.toFixed(2)} />
+        <Row label="目前 notional"
+             value={`${(fullNotional / 10000).toFixed(0)} 萬`} />
+        {totalPnl != null && (
+          <Row label="未實現 P&L"
+               value={`${totalPnl >= 0 ? '+' : ''}${Math.round(totalPnl).toLocaleString()}`}
+               color={totalPnl >= 0 ? '#86efac' : '#fca5a5'} />
+        )}
+      </div>
+
+      {/* 觸發後動作模擬 */}
+      <div style={{
+        padding:'10px 14px', marginBottom:10, background:'#070b15', borderRadius:4,
+        borderLeft:'3px solid #fbbf24'
+      }}>
+        <div style={{fontSize:12, fontWeight:600, color:'#e2e8f0', marginBottom:6}}>🎯 觸發時動作</div>
+        <Row label="Trim 動作"
+             value={`砍 ${Math.round(s.lots_held * 0.5)}-${Math.ceil(s.lots_held * 0.5)} 口 NYF`}
+             hint={`釋出 ~${(trimReleased / 10000).toFixed(0)} 萬`} />
+        <Row label="Add-back 動作"
+             value={`加回到 ${s.lots_held} 口滿倉`}
+             hint="當 0050 收盤站上 MA60" />
+      </div>
+
+      {/* 規則說明 */}
+      <div style={{
+        marginTop:12, padding:'8px 12px', background:'#070b15',
+        borderLeft:'3px solid #475569', borderRadius:4,
+        fontSize:10, color:'#64748b', lineHeight:1.5
+      }}>
+        💡 <b>5 年回測（2021-05→2026-05）冠軍策略</b><br />
+        Trim -10% × 50% + MA60 cross-up 加滿 →
+        報酬 +254.6% / DD -26.6% / Sharpe 1.51
+        <span style={{color:'#475569'}}> (Buy & Hold: +245.2% / -33.8% / 1.28)</span>
+        <br />
+        ⚠ Sample 偏多頭，極端長熊（如 -50%）下未驗證
+      </div>
+    </div>
+  );
+}
+
 function MonthlyStrategySOP({ data }) {
   const dte    = data?.dte;
   const dteT   = data?.dte_trading;
@@ -6322,6 +6445,20 @@ function App() {
       <Section title="💡 市場機會" defaultOpen={false} accent="blue"
                badge={data?.weekly_opportunities?.length ? `${data.weekly_opportunities.length} 週` : null}>
         <WeeklyOpportunities data={data} />
+      </Section>
+
+      {/* 📉 0050 動態管理 SOP — trim & add-back */}
+      <Section title="📉 0050 動態管理 SOP" defaultOpen={false} accent="green"
+               badge={(() => {
+                 const s = data?.trim_add_0050;
+                 if (!s) return null;
+                 if (s.trim_triggered)  return '🔴 觸發 Trim';
+                 if (s.cross_up_ma60)   return '🟢 觸發 Add';
+                 if (s.dd_from_high_pct != null && s.dd_from_high_pct < -5)
+                   return `DD ${s.dd_from_high_pct.toFixed(1)}%`;
+                 return null;
+               })()}>
+        <TrimAddSOP data={data} />
       </Section>
 
       {/* 📘 月選策略 SOP — 每月固定 4-leg 結構執行流程 */}
