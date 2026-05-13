@@ -5829,6 +5829,155 @@ function EngineStatus({ data }) {
   );
 }
 
+function MonthlyStrategySOP({ data }) {
+  const dte    = data?.dte;
+  const dteT   = data?.dte_trading;
+  const tx     = data?.market?.tx_futures;
+  const ivPctile = data?.iv_percentile?.current_pct;   // 當前 IV percentile 0-100
+  const ivVal    = data?.iv_used;
+  const iv       = ivVal != null ? (ivVal * 100).toFixed(1) : null;
+
+  // Step 1：判斷今天是不是「結算翌日」可建倉時機
+  const isBuildDay = dte != null && dte >= 25 && dte <= 32;  // 月選結算後 ~30 天
+  // Step 2：IV PR 分支判斷
+  const ivBranch = ivPctile == null ? null
+    : ivPctile > 60 ? 'high'
+    : ivPctile >= 30 ? 'mid'
+    : 'low';
+  // Step 4：護欄狀態
+  const callGuard = tx != null && tx >= 43500;
+  const putGuard  = tx != null && tx <= 38500;
+  const ivAlert   = ivVal != null && ivVal > 0.35;
+  // Step 5：結算前 1 天平倉
+  const isCloseoutDay = dte != null && dte <= 1;
+
+  const StepBox = ({ num, title, status, children }) => (
+    <div style={{
+      background: '#0a0f1a', border: '1px solid #1e293b', borderLeft: `3px solid ${
+        status === 'now' ? '#22c55e' :
+        status === 'warn' ? '#f97316' :
+        status === 'alert' ? '#ef4444' : '#475569'}`,
+      padding: '10px 14px', marginBottom: '8px', borderRadius: 4
+    }}>
+      <div style={{display:'flex', alignItems:'baseline', marginBottom:6}}>
+        <span style={{
+          background: status === 'now' ? '#22c55e' :
+                      status === 'warn' ? '#f97316' :
+                      status === 'alert' ? '#ef4444' : '#1e293b',
+          color: status ? '#0a0f1a' : '#94a3b8',
+          width: 20, height: 20, borderRadius: 4,
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 11, fontWeight: 700, marginRight: 8
+        }}>{num}</span>
+        <span style={{fontWeight:600, fontSize:13, color:'#e2e8f0'}}>{title}</span>
+        {status === 'now'   && <span style={{marginLeft:'auto', fontSize:10, color:'#22c55e'}}>● 現在符合</span>}
+        {status === 'warn'  && <span style={{marginLeft:'auto', fontSize:10, color:'#f97316'}}>⚠ 觸發護欄</span>}
+        {status === 'alert' && <span style={{marginLeft:'auto', fontSize:10, color:'#ef4444'}}>🔴 立即執行</span>}
+      </div>
+      <div style={{fontSize:11, color:'#94a3b8', lineHeight:1.6}}>{children}</div>
+    </div>
+  );
+
+  return (
+    <div style={{padding:'4px 0'}}>
+      {/* 當前狀態快速摘要 */}
+      <div style={{
+        display:'flex', gap:12, padding:'10px 14px', marginBottom:12,
+        background:'#070b15', borderRadius:4, fontSize:11, color:'#94a3b8',
+        borderLeft: '3px solid #60a5fa'
+      }}>
+        <span>📅 DTE <b style={{color:'#e2e8f0'}}>{dte ?? '—'}</b>{dteT != null ? `（${dteT} 交易日）` : ''}</span>
+        <span>📊 IV <b style={{color:iv ? '#fbbf24' : '#94a3b8'}}>{iv ?? '—'}%</b></span>
+        {ivPctile != null && (
+          <span>IV PR <b style={{color:
+            ivPctile > 60 ? '#ef4444' :
+            ivPctile >= 30 ? '#fbbf24' : '#22c55e'}}>{ivPctile.toFixed(0)}</b></span>
+        )}
+        <span>📈 TX <b style={{color:'#e2e8f0'}}>{tx?.toFixed(0) ?? '—'}</b></span>
+      </div>
+
+      <StepBox num="1" title="建倉時機：結算翌日（週四）10:30-12:00"
+               status={isBuildDay ? 'now' : null}>
+        每月 TXO 結算（第三週三）翌日 10:30-12:00 開始建倉。
+        {dte != null && (
+          <div style={{marginTop:4, color: isBuildDay ? '#86efac' : '#64748b'}}>
+            目前 DTE = {dte} 天 {isBuildDay ? '→ ✓ 在建倉視窗內' : `→ ${dte < 25 ? '太接近結算' : '太早'}，等下次結算翌日`}
+          </div>
+        )}
+      </StepBox>
+
+      <StepBox num="2" title="IV Percentile 過濾"
+               status={ivBranch === 'high' ? 'warn' : ivBranch ? 'now' : null}>
+        <ul style={{margin:'4px 0', paddingLeft:18}}>
+          <li><b style={{color: ivBranch === 'low'  ? '#22c55e' : '#64748b'}}>PR &lt; 30%</b>：照表執行 5C+3P+6P+5P</li>
+          <li><b style={{color: ivBranch === 'mid'  ? '#22c55e' : '#64748b'}}>PR 30-60%</b>：照表執行</li>
+          <li><b style={{color: ivBranch === 'high' ? '#ef4444' : '#64748b'}}>PR &gt; 60%</b>：⚠️ 暫緩 short call，只建 put 端（避免在高位賣 vol）</li>
+        </ul>
+        {ivPctile != null && (
+          <div style={{marginTop:4, color: ivBranch === 'high' ? '#fb923c' : '#86efac'}}>
+            當前 IV PR = {ivPctile.toFixed(0)} → {
+              ivBranch === 'high' ? '⚠ 暫緩 short call' :
+              ivBranch === 'mid'  ? '✓ 照表執行' :
+              '✓ 照表執行'
+            }
+          </div>
+        )}
+      </StepBox>
+
+      <StepBox num="3" title="下單順序（流動性最差先掛）" status={null}>
+        <ol style={{margin:'4px 0', paddingLeft:20}}>
+          <li>買深 OTM 災難 put @ 36,500（delta -0.02）— 流動性最差，最先掛限價</li>
+          <li>賣 OTM short put @ 39,000（delta -0.05）</li>
+          <li>買 OTM long put @ 41,500（delta -0.20）</li>
+          <li>賣 OTM short call @ 43,800（delta +0.10）— 最後賣</li>
+        </ol>
+        <div style={{marginTop:4, fontSize:10, color:'#64748b'}}>
+          履約價會隨 TX 現價調整：call +3.6%、long put -1.9%、short put -7.8%、disaster put -13.7%
+        </div>
+      </StepBox>
+
+      <StepBox num="4" title="月內護欄"
+               status={callGuard || putGuard || ivAlert ? 'warn' : null}>
+        <ul style={{margin:'4px 0', paddingLeft:18}}>
+          <li style={{color: callGuard ? '#fb923c' : 'inherit'}}>
+            <b>TX 突破 43,500</b> → 買回 1-2 口 short call、roll up
+            {callGuard && <span style={{color:'#fb923c', marginLeft:4}}>← 現在觸發！</span>}
+          </li>
+          <li style={{color: putGuard ? '#fb923c' : 'inherit'}}>
+            <b>TX 跌破 38,500</b> → 買回 1-2 口 short put @ 39,000
+            {putGuard && <span style={{color:'#fb923c', marginLeft:4}}>← 現在觸發！</span>}
+          </li>
+          <li style={{color: ivAlert ? '#fb923c' : 'inherit'}}>
+            <b>IV 飆 &gt; 35%</b> → 平倉所有 short 腳，only long 留著
+            {ivAlert && <span style={{color:'#fb923c', marginLeft:4}}>← 現在觸發！</span>}
+          </li>
+        </ul>
+      </StepBox>
+
+      <StepBox num="5" title="結算前 1 天 100% 平倉"
+               status={isCloseoutDay ? 'alert' : null}>
+        T-1 收盤前主動平倉所有 4 leg，不留結算交割。
+        {dte != null && (
+          <div style={{marginTop:4, color: isCloseoutDay ? '#fca5a5' : '#64748b'}}>
+            {isCloseoutDay ? `🔴 結算剩 ${dte} 天 → 今天 / 明天前平倉` :
+             dte <= 5 ? `⚠ 剩 ${dte} 天，準備平倉` : `剩 ${dte} 天，無需動作`}
+          </div>
+        )}
+      </StepBox>
+
+      <div style={{
+        marginTop:12, padding:'8px 12px', background:'#070b15',
+        borderLeft:'3px solid #475569', borderRadius:4,
+        fontSize:10, color:'#64748b', lineHeight:1.5
+      }}>
+        💡 <b>口數對照（按你 long 部位）</b>：200萬 1-1-1-1 · 400萬 2-1-2-2 · 600萬 3-2-4-3 · 700萬 4-2-4-3 · 800萬 4-2-5-4 · 1000萬 5-3-6-5（C-P-P-P）
+        <br />
+        ⚠ <b>注意</b>：履約價以 TX 42,292 為基準；TX 變動 &gt; 5% 時整組要平移
+      </div>
+    </div>
+  );
+}
+
 function SectionMeta({ dte, dteTrading, iv, ivSource }) {
   const parts = [];
   if (dte != null) {
@@ -6134,6 +6283,23 @@ function App() {
       <Section title="💡 市場機會" defaultOpen={false} accent="blue"
                badge={data?.weekly_opportunities?.length ? `${data.weekly_opportunities.length} 週` : null}>
         <WeeklyOpportunities data={data} />
+      </Section>
+
+      {/* 📘 月選策略 SOP — 每月固定 4-leg 結構執行流程 */}
+      <Section title="📘 月選策略 SOP" defaultOpen={false} accent="blue"
+               badge={(() => {
+                 const dte = data?.dte;
+                 const ivPR = data?.iv_percentile?.current_pct;
+                 const tx = data?.market?.tx_futures;
+                 const alerts = [];
+                 if (dte != null && dte >= 25 && dte <= 32) alerts.push('建倉時機');
+                 if (ivPR != null && ivPR > 60) alerts.push('IV 高 ⚠');
+                 if (tx != null && tx >= 43500) alerts.push('TX↑ 護欄');
+                 if (tx != null && tx <= 38500) alerts.push('TX↓ 護欄');
+                 if (dte != null && dte <= 1) alerts.push('平倉日 🔴');
+                 return alerts.length ? alerts.join(' · ') : null;
+               })()}>
+        <MonthlyStrategySOP data={data} />
       </Section>
 
       {error && <div className="error-box">⚠ 載入失敗：{error}</div>}
