@@ -392,6 +392,196 @@ def _calc_macd(closes: list, fast: int = 12, slow: int = 26, signal: int = 9
     return macd_line[-1], sig_line[-1], macd_line[-1] - sig_line[-1]
 
 
+def _detect_bb_pattern(opens: list, highs: list, lows: list, closes: list,
+                       period: int = 20) -> Optional[dict]:
+    """偵測布林通道形態（方向慣性訊號）。回傳:
+      {
+        'pattern': 'squeeze' / 'ride_up' / 'ride_down' / 'leave_up_bear' /
+                   'leave_down_bull' / 'expand' / 'parallel',
+        'label': 中文標籤,
+        'severity': 'info' / 'warn' / 'alert',
+        'momentum': 'up' / 'down' / 'neutral' / 'reversing_down' / 'reversing_up',
+        'band_width_pct': 當前帶寬 / 中軌 ratio,
+        'band_width_pct_rank': 過去 100 天百分位 (0-100),
+        'detail': 詳細說明,
+      }
+    """
+    n = len(closes)
+    if n < period + 1 or len(opens) < n or len(highs) < n or len(lows) < n:
+        return None
+
+    # 計算過去每天的 BB
+    bb_widths: list = []
+    bb_upper_series: list = []
+    bb_lower_series: list = []
+    bb_mid_series:   list = []
+    for i in range(n):
+        if i < period - 1:
+            bb_widths.append(None)
+            bb_upper_series.append(None)
+            bb_lower_series.append(None)
+            bb_mid_series.append(None)
+            continue
+        window = closes[i - period + 1:i + 1]
+        m = sum(window) / period
+        std = math.sqrt(sum((x - m) ** 2 for x in window) / period)
+        up = m + 2 * std
+        lo = m - 2 * std
+        bb_upper_series.append(up)
+        bb_lower_series.append(lo)
+        bb_mid_series.append(m)
+        bb_widths.append((up - lo) / m if m else 0)
+
+    cur_w     = bb_widths[-1]
+    cur_up    = bb_upper_series[-1]
+    cur_lo    = bb_lower_series[-1]
+    cur_mid   = bb_mid_series[-1]
+    cur_close = closes[-1]
+    cur_open  = opens[-1]
+    cur_high  = highs[-1]
+    cur_low   = lows[-1]
+    prev_close = closes[-2]
+    prev_up    = bb_upper_series[-2]
+    prev_lo    = bb_lower_series[-2]
+
+    if cur_w is None or cur_up is None:
+        return None
+
+    # 帶寬百分位（過去 100 天）
+    lookback = min(100, n - 1)
+    widths_recent = [w for w in bb_widths[-lookback:] if w is not None]
+    if widths_recent:
+        rank = sum(1 for w in widths_recent if w <= cur_w) / len(widths_recent) * 100
+    else:
+        rank = 50
+
+    # 判斷形態（按優先順序）
+    # 1. 離開上軌黑 K：前 1-3 天有觸 BB↑，今天收黑且收盤離開上軌
+    leave_up_bear = False
+    if cur_close < cur_open:   # 黑 K
+        # 過去 3 天內有觸過上軌（含本日 high）
+        for i in range(max(0, n - 4), n):
+            if highs[i] >= bb_upper_series[i] * 0.995:
+                # 今天收盤明顯離開上軌
+                if cur_close < cur_up * 0.99 and cur_close < prev_close:
+                    leave_up_bear = True
+                    break
+
+    # 2. 離開下軌紅 K：前 1-3 天有觸 BB↓，今天收紅且收盤離開下軌
+    leave_down_bull = False
+    if cur_close > cur_open:   # 紅 K
+        for i in range(max(0, n - 4), n):
+            if lows[i] <= bb_lower_series[i] * 1.005:
+                if cur_close > cur_lo * 1.01 and cur_close > prev_close:
+                    leave_down_bull = True
+                    break
+
+    # 3. 延上軌 / 延下軌：連續 3 天收盤接近邊界
+    ride_up = all(
+        bb_upper_series[i] is not None and closes[i] >= bb_upper_series[i] * 0.985
+        for i in range(n - 3, n)
+    )
+    ride_down = all(
+        bb_lower_series[i] is not None and closes[i] <= bb_lower_series[i] * 1.015
+        for i in range(n - 3, n)
+    )
+
+    # 4. 縮口 / 擴張：基於帶寬百分位
+    squeeze = rank < 25
+    expand  = rank > 75
+
+    # 優先序決定形態
+    if leave_up_bear:
+        return {
+            'pattern': 'leave_up_bear',
+            'label': '離開上軌黑K',
+            'severity': 'warn',
+            'momentum': 'reversing_down',
+            'band_width_pct': cur_w * 100,
+            'band_width_pct_rank': rank,
+            'detail': '加速度反向（早於破線的警訊）→ 鎖部分利、警戒',
+        }
+    if leave_down_bull:
+        return {
+            'pattern': 'leave_down_bull',
+            'label': '離開下軌紅K',
+            'severity': 'warn',
+            'momentum': 'reversing_up',
+            'band_width_pct': cur_w * 100,
+            'band_width_pct_rank': rank,
+            'detail': '止跌反彈訊號 → 試小倉、留觀察',
+        }
+    if ride_up and expand:
+        return {
+            'pattern': 'ride_up_expand',
+            'label': 'BB 開口延上軌',
+            'severity': 'info',
+            'momentum': 'up',
+            'band_width_pct': cur_w * 100,
+            'band_width_pct_rank': rank,
+            'detail': '強多頭趨勢 → 順勢做多、別逆勢空',
+        }
+    if ride_down and expand:
+        return {
+            'pattern': 'ride_down_expand',
+            'label': 'BB 開口延下軌',
+            'severity': 'alert',
+            'momentum': 'down',
+            'band_width_pct': cur_w * 100,
+            'band_width_pct_rank': rank,
+            'detail': '強空頭趨勢 → 順勢做空、別逆勢多',
+        }
+    if ride_up:
+        return {
+            'pattern': 'ride_up',
+            'label': '延上軌',
+            'severity': 'info',
+            'momentum': 'up',
+            'band_width_pct': cur_w * 100,
+            'band_width_pct_rank': rank,
+            'detail': '價格沿上軌走，多頭動能未衰',
+        }
+    if ride_down:
+        return {
+            'pattern': 'ride_down',
+            'label': '延下軌',
+            'severity': 'info',
+            'momentum': 'down',
+            'band_width_pct': cur_w * 100,
+            'band_width_pct_rank': rank,
+            'detail': '價格沿下軌走，空頭動能未衰',
+        }
+    if squeeze:
+        return {
+            'pattern': 'squeeze',
+            'label': 'BB 縮口',
+            'severity': 'info',
+            'momentum': 'neutral',
+            'band_width_pct': cur_w * 100,
+            'band_width_pct_rank': rank,
+            'detail': '波動率壓縮、蓄勢 → 下一波會選方向爆發',
+        }
+    if expand:
+        return {
+            'pattern': 'expand',
+            'label': 'BB 開口',
+            'severity': 'info',
+            'momentum': 'neutral',
+            'band_width_pct': cur_w * 100,
+            'band_width_pct_rank': rank,
+            'detail': '波動率擴張中，方向未明',
+        }
+    return {
+        'pattern': 'parallel',
+        'label': '平行走勢',
+        'severity': 'info',
+        'momentum': 'neutral',
+        'band_width_pct': cur_w * 100,
+        'band_width_pct_rank': rank,
+        'detail': '盤整中、無明顯方向',
+    }
+
+
 def _calc_adx(highs: list, lows: list, closes: list, period: int = 14) -> float:
     """Wilder 平滑法 ADX（平均趨向指數）。"""
     n = len(closes)
@@ -1718,6 +1908,8 @@ def fetch_kbars(api, stock_code: str) -> Optional[dict]:
         hv             = _calc_hv(closes, CFG.bb_period)
         adx            = _calc_adx(highs, lows, closes, CFG.atr_period)
         macd_tuple     = _calc_macd(closes)
+        opens          = daily.get('Open', [])
+        bb_pat         = _detect_bb_pattern(opens, highs, lows, closes, CFG.bb_period) if opens else None
 
         log.info(
             f'{stock_code} 日K {n_days}根  ATR({CFG.atr_period})={atr:.2f}  '
@@ -1735,6 +1927,9 @@ def fetch_kbars(api, stock_code: str) -> Optional[dict]:
             result['macd']        = macd_tuple[0]
             result['macd_signal'] = macd_tuple[1]
             result['macd_hist']   = macd_tuple[2]
+        if bb_pat:
+            result['bb_pattern'] = bb_pat
+            log.info(f"{stock_code} BB 形態: {bb_pat['label']} ({bb_pat['detail']})")
         return result
     except Exception as e:
         log.warning(f'{stock_code} kbar 抓取失敗（{e}）')
@@ -1809,8 +2004,21 @@ def fetch_hv_tx(api, month: str) -> Optional[dict]:
         except Exception as _e:
             log.warning(f'put_refs 計算失敗（{_e}），略過')
 
+        # TX 日 K BB 形態（方向慣性訊號）
+        tx_bb_pat = None
+        try:
+            opens = daily.get('Open', [])
+            highs = daily.get('High', [])
+            lows  = daily.get('Low',  [])
+            if opens and highs and lows:
+                tx_bb_pat = _detect_bb_pattern(opens, highs, lows, closes, CFG.bb_period)
+                if tx_bb_pat:
+                    log.info(f"TX BB 形態: {tx_bb_pat['label']} ({tx_bb_pat['detail']})")
+        except Exception as _e:
+            log.warning(f'TX bb_pattern 計算失敗（{_e}），略過')
+
         return {'hv': hv, 'closes': closes, 'dates': daily['dates'], 'days': n_days,
-                'put_refs': put_refs}
+                'put_refs': put_refs, 'bb_pattern': tx_bb_pat}
     except Exception as e:
         log.warning(f'TX kbar 失敗（{e}），退回 2330/beta 代理')
         return None
@@ -2348,6 +2556,8 @@ def main():
                 indicators['hv_source'] = 'tx_direct'
                 if hv_tx_data.get('put_refs'):
                     indicators['put_refs'] = hv_tx_data['put_refs']
+                if hv_tx_data.get('bb_pattern'):
+                    indicators['bb_pattern_tx'] = hv_tx_data['bb_pattern']
         elif indicators:
             indicators['hv_source'] = 'proxy_2330/beta'
 

@@ -1343,6 +1343,35 @@ function fmtMonth(m) {
   return m.slice(0, 4) + '/' + m.slice(4, 6);
 }
 
+function BBPatternBadge({ pattern }) {
+  if (!pattern) return null;
+  const colorMap = {
+    leave_up_bear:    { bg:'#2a1408', fg:'#fb923c', icon:'⚠️' },
+    leave_down_bull:  { bg:'#0e2010', fg:'#86efac', icon:'✨' },
+    ride_up_expand:   { bg:'#0a1f0e', fg:'#22c55e', icon:'🚀' },
+    ride_down_expand: { bg:'#2a0e0e', fg:'#ef4444', icon:'💀' },
+    ride_up:          { bg:'#0e1a0e', fg:'#86efac', icon:'⬆️' },
+    ride_down:        { bg:'#1a0e0e', fg:'#fca5a5', icon:'⬇️' },
+    squeeze:          { bg:'#0e1420', fg:'#60a5fa', icon:'🔻' },
+    expand:           { bg:'#1a1a0e', fg:'#fbbf24', icon:'↔️' },
+    parallel:         { bg:'#101620', fg:'#94a3b8', icon:'➡️' },
+  };
+  const s = colorMap[pattern.pattern] || colorMap.parallel;
+  return (
+    <span
+      title={`${pattern.detail}  ·  帶寬 ${pattern.band_width_pct?.toFixed(1)}% (PR ${pattern.band_width_pct_rank?.toFixed(0)})`}
+      style={{
+        display:'inline-flex', alignItems:'center', gap:4,
+        marginLeft:8, padding:'1px 8px', borderRadius:8,
+        fontSize:10, fontWeight:600,
+        background: s.bg, color: s.fg,
+        border:`1px solid ${s.fg}66`
+      }}>
+      {s.icon} {pattern.label}
+    </span>
+  );
+}
+
 function MarketStrip({ market: m, txo_month, dte, indicators, targets, indicators0050, indicators00679b, holding00679b, iv, ivSource }) {
   if (!m) return null;
   const basis = m.tx_futures != null && m.taiex ? m.tx_futures - m.taiex : null;
@@ -1357,7 +1386,10 @@ function MarketStrip({ market: m, txo_month, dte, indicators, targets, indicator
 
       {/* ── 排1：大盤指數 + 台指期 ──────────── */}
       <div className="market-group">
-        <div className="group-header futures">大盤 · 台指期 TXF</div>
+        <div className="group-header futures">
+          大盤 · 台指期 TXF
+          <BBPatternBadge pattern={indicators?.bb_pattern_tx} />
+        </div>
         <div className="market-strip">
           <MCell label="加權指數 TAIEX" price={m.taiex}       chg={m.chg_taiex}   chgpct={m.chgpct_taiex}   dec={2} />
           <MCell label="櫃買指數 OTC"   price={m.otc}         chg={m.chg_otc}     chgpct={m.chgpct_otc}     dec={2} />
@@ -1371,7 +1403,10 @@ function MarketStrip({ market: m, txo_month, dte, indicators, targets, indicator
 
       {/* ── 排2：台積電現貨 + 股期近遠 ─────── */}
       <div className="market-group">
-        <div className="group-header stock-f">台積電 2330</div>
+        <div className="group-header stock-f">
+          台積電 2330
+          <BBPatternBadge pattern={indicators?.bb_pattern} />
+        </div>
         <div className="market-strip cols-3">
           <MCell label="現股" price={m.price_2330} chg={m.chg_2330} chgpct={m.chgpct_2330} />
           <MCell label="股期 近" subLabel={fmtMonth(m.tf_near_month)}
@@ -1387,7 +1422,10 @@ function MarketStrip({ market: m, txo_month, dte, indicators, targets, indicator
 
       {/* ── 排3：0050 現貨 + 股期近遠 ──────── */}
       <div className="market-group">
-        <div className="group-header spot">元大台灣 0050</div>
+        <div className="group-header spot">
+          元大台灣 0050
+          <BBPatternBadge pattern={indicators0050?.bb_pattern} />
+        </div>
         <div className="market-strip cols-3">
           <MCell label="現股" price={m.price_0050} chg={m.chg_0050} chgpct={m.chgpct_0050} dec={2} />
           <MCell label="股期 近" subLabel={fmtMonth(m.etf_near_month)}
@@ -1406,6 +1444,7 @@ function MarketStrip({ market: m, txo_month, dte, indicators, targets, indicator
         <div className="market-group">
           <div className="group-header spot">
             元大美債 20 年 00679B
+            <BBPatternBadge pattern={indicators00679b?.bb_pattern} />
             <span style={{marginLeft:8, fontSize:10, color:'#64748b', fontWeight:400}}>
               · 不計 TXO 避險
               {holding00679b && (holding00679b.shares > 0
