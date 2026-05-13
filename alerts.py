@@ -60,6 +60,7 @@ DEFAULT_RULES = {
     'cooldown_minutes':          60,    # 同一規則最少間隔分鐘
     'telegram_enabled':          True,
     'event_alerts_enabled':      False, # 事件提醒（CPI/FOMC 等），預設關閉避免每次 refresh 都發
+    'risk_alerts_skip_metrics':  ['Theta 成本'],  # 略過這些風險指標的 Telegram 推播
 }
 
 
@@ -292,7 +293,10 @@ def evaluate(data: dict, rules: dict) -> list:
 
     # 12b. 風險限額使用率（read-only — risk_limits 模組已算好）
     rl = data.get('risk_limits') or {}
+    skip_metrics = set(rules.get('risk_alerts_skip_metrics') or [])
     for m in (rl.get('metrics') or []):
+        if m.get('label') in skip_metrics:
+            continue   # 使用者要求略過此項指標的 Telegram 推播
         if m.get('status') == 'over':
             alerts.append({
                 'key':   f"risk_over_{m['label']}",
