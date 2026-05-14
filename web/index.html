@@ -6115,13 +6115,31 @@ function MonthlyStrategySOP({ data, mode = 'near' }) {
       <StepBox num="3" title={isHighIV ? '下單順序（高 IV 分段版）' : '下單順序（流動性最差先掛）'}
                status={isHighIV ? 'warn' : null}>
         {(() => {
-          // 依當前 TX 現價即時計算履約價（取最接近 100 整數倍）
+          // ── BS-derived 履約價（依當前 IV / DTE 計算 target delta 對應 strike）──
+          // 比寫死百分比準確得多（尤其長 DTE / 高 IV 時差距大）
           const roundStrike = (v) => v != null ? Math.round(v / 100) * 100 : null;
-          const kCall    = tx != null ? roundStrike(tx * 1.036) : null;
-          const kLongP   = tx != null ? roundStrike(tx * 0.981) : null;
-          const kShortP  = tx != null ? roundStrike(tx * 0.922) : null;
-          const kDisP    = tx != null ? roundStrike(tx * 0.863) : null;
-          const kSpreadShort = tx != null ? roundStrike(tx * 0.945) : null;   // bear put spread 的買回腳
+          // z = Φ⁻¹(1-δ) for puts; z = Φ⁻¹(1-δ) for calls (deep OTM)
+          // 對 OTM call: K = S × exp(z × σ√T + σ²T/2)
+          // 對 OTM put : K = S × exp(-z × σ√T + σ²T/2)
+          const Z_CALL_010 = 1.282;   // delta +0.10 call
+          const Z_PUT_020  = 0.842;   // delta -0.20 put (long put)
+          const Z_PUT_005  = 1.645;   // delta -0.05 put (short put)
+          const Z_PUT_002  = 2.054;   // delta -0.02 put (disaster)
+          const Z_PUT_010_SPREAD = 1.282;   // delta -0.10 put (bear put spread 的買回腳)
+          const sigma = ivVal != null ? ivVal : 0.25;            // 用該月 IV
+          const T     = dte != null ? Math.max(dte, 1) / 252 : 30 / 252;
+          const sigT  = sigma * Math.sqrt(T);
+          const drift = sigma * sigma * T / 2;
+          const callK = (z) => tx != null ? roundStrike(tx * Math.exp(z * sigT + drift)) : null;
+          const putK  = (z) => tx != null ? roundStrike(tx * Math.exp(-z * sigT + drift)) : null;
+          const kCall   = callK(Z_CALL_010);
+          const kLongP  = putK(Z_PUT_020);
+          const kShortP = putK(Z_PUT_005);
+          const kDisP   = putK(Z_PUT_002);
+          const kSpreadShort = putK(Z_PUT_010_SPREAD);
+          // 計算實際距現價%（顯示用）
+          const pct = (k) => (k != null && tx != null) ? ((k - tx) / tx * 100) : null;
+          const fmtPct = (v) => v == null ? '' : ` (${v >= 0 ? '+' : ''}${v.toFixed(1)}%)`;
           const Strike = ({ v }) => (
             <b style={{color: v != null ? '#fde047' : '#64748b'}}>
               {v != null ? v.toLocaleString() : '—'}
@@ -6137,24 +6155,24 @@ function MonthlyStrategySOP({ data, mode = 'near' }) {
                   <li>
                     <b style={{color:'#86efac'}}>立即建（賣 vol 划算）：</b>
                     <ul style={{paddingLeft:18, marginTop:2}}>
-                      <li>賣 short call @ <Strike v={kCall} />（delta +0.10）</li>
-                      <li>賣 short put @ <Strike v={kShortP} />（delta -0.05）</li>
+                      <li>賣 short call @ <Strike v={kCall} />{fmtPct(pct(kCall))}（delta +0.10）</li>
+                      <li>賣 short put @ <Strike v={kShortP} />{fmtPct(pct(kShortP))}（delta -0.05）</li>
                     </ul>
                   </li>
                   <li style={{marginTop:6}}>
                     <b style={{color:'#fca5a5'}}>暫緩（買 vol 太貴）：</b>
                     <ul style={{paddingLeft:18, marginTop:2}}>
-                      <li>long put @ <Strike v={kLongP} /> — 等 IV PR &lt; 50% 或 IV &lt; 25% 再買</li>
-                      <li>災難 put @ <Strike v={kDisP} /> — 同上</li>
+                      <li>long put @ <Strike v={kLongP} />{fmtPct(pct(kLongP))} — 等 IV PR &lt; 50% 或 IV &lt; 25% 再買</li>
+                      <li>災難 put @ <Strike v={kDisP} />{fmtPct(pct(kDisP))} — 同上</li>
                     </ul>
                   </li>
                   <li style={{marginTop:6}}>
                     <b style={{color:'#fbbf24'}}>替代方案（不想等）：</b>
-                    用 bear put spread 取代純 long put：買 <Strike v={kLongP} /> + 賣 <Strike v={kSpreadShort} />（淨成本砍半）
+                    用 bear put spread：買 <Strike v={kLongP} /> + 賣 <Strike v={kSpreadShort} />{fmtPct(pct(kSpreadShort))}（淨成本砍半）
                   </li>
                 </ol>
                 <div style={{marginTop:4, fontSize:10, color:'#64748b'}}>
-                  履約價以 TX <b style={{color:'#94a3b8'}}>{tx?.toFixed(0) ?? '—'}</b> 即時計算
+                  履約價以 <b style={{color:'#94a3b8'}}>Black-Scholes target delta</b> 算（IV {(sigma*100).toFixed(1)}%, DTE {dte}） → 取最接近 100 整數倍
                 </div>
               </>
             );
@@ -6162,13 +6180,13 @@ function MonthlyStrategySOP({ data, mode = 'near' }) {
           return (
             <>
               <ol style={{margin:'4px 0', paddingLeft:20}}>
-                <li>買深 OTM 災難 put @ <Strike v={kDisP} />（delta -0.02）— 流動性最差，最先掛限價</li>
-                <li>賣 OTM short put @ <Strike v={kShortP} />（delta -0.05）</li>
-                <li>買 OTM long put @ <Strike v={kLongP} />（delta -0.20）</li>
-                <li>賣 OTM short call @ <Strike v={kCall} />（delta +0.10）— 最後賣</li>
+                <li>買深 OTM 災難 put @ <Strike v={kDisP} />{fmtPct(pct(kDisP))}（delta -0.02）— 流動性最差，最先掛限價</li>
+                <li>賣 OTM short put @ <Strike v={kShortP} />{fmtPct(pct(kShortP))}（delta -0.05）</li>
+                <li>買 OTM long put @ <Strike v={kLongP} />{fmtPct(pct(kLongP))}（delta -0.20）</li>
+                <li>賣 OTM short call @ <Strike v={kCall} />{fmtPct(pct(kCall))}（delta +0.10）— 最後賣</li>
               </ol>
               <div style={{marginTop:4, fontSize:10, color:'#64748b'}}>
-                履約價以 TX <b style={{color:'#94a3b8'}}>{tx?.toFixed(0) ?? '—'}</b> 即時計算（call +3.6%、long put -1.9%、short put -7.8%、disaster put -13.7%）取最接近 100 整數倍
+                履約價以 <b style={{color:'#94a3b8'}}>Black-Scholes target delta</b> 算（TX {tx?.toFixed(0) ?? '—'}, IV {(sigma*100).toFixed(1)}%, DTE {dte}）→ 取最接近 100 整數倍。距現價% 隨 IV/DTE 自動調整。
               </div>
             </>
           );
