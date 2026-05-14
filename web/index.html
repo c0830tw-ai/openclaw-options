@@ -6007,11 +6007,15 @@ function MonthlyStrategySOP({ data, mode = 'near' }) {
 
   // Step 1：判斷今天是不是「結算翌日」可建倉時機
   const isBuildDay = dte != null && dte >= 25 && dte <= 32;  // 月選結算後 ~30 天
-  // Step 2：IV PR 分支判斷
-  const ivBranch = ivPctile == null ? null
-    : ivPctile > 60 ? 'high'
-    : ivPctile >= 30 ? 'mid'
-    : 'low';
+  // Step 2：IV PR 分支判斷（PR 為主、絕對 IV 為 fallback for 次月）
+  // 高 IV 時 short legs 收得多（賣 vol 划算）、long legs 付得多（買 vol 不划算）
+  const ivHighByPR  = ivPctile != null && ivPctile > 60;
+  const ivHighByAbs = ivPctile == null && ivVal != null && ivVal > 0.30;  // 次月 fallback
+  const isHighIV    = ivHighByPR || ivHighByAbs;
+  const ivBranch    = isHighIV ? 'high'
+                    : ivPctile == null ? 'mid'   // 沒 PR 時預設照表
+                    : ivPctile >= 30 ? 'mid'
+                    : 'low';
   // Step 4：護欄狀態（依當前 TX 即時計算）
   const roundStrike = (v) => v != null ? Math.round(v / 100) * 100 : null;
   const callGuardLevel = roundStrike(tx != null ? tx * 1.029 : null);    // +2.9% from TX（短 call strike - 300）
@@ -6084,25 +6088,32 @@ function MonthlyStrategySOP({ data, mode = 'near' }) {
         )}
       </StepBox>
 
-      <StepBox num="2" title="IV Percentile 過濾"
+      <StepBox num="2" title="IV 過濾（高低 IV 結構不同）"
                status={ivBranch === 'high' ? 'warn' : ivBranch ? 'now' : null}>
         <ul style={{margin:'4px 0', paddingLeft:18}}>
-          <li><b style={{color: ivBranch === 'low'  ? '#22c55e' : '#64748b'}}>PR &lt; 30%</b>：照表執行 5C+3P+6P+5P</li>
-          <li><b style={{color: ivBranch === 'mid'  ? '#22c55e' : '#64748b'}}>PR 30-60%</b>：照表執行</li>
-          <li><b style={{color: ivBranch === 'high' ? '#ef4444' : '#64748b'}}>PR &gt; 60%</b>：⚠️ 暫緩 short call，只建 put 端（避免在高位賣 vol）</li>
+          <li><b style={{color: ivBranch === 'low'  ? '#22c55e' : '#64748b'}}>低 IV (PR &lt; 30%)</b>：照表執行 4-leg（買 vol 便宜）</li>
+          <li><b style={{color: ivBranch === 'mid'  ? '#22c55e' : '#64748b'}}>中 IV (PR 30-60%)</b>：照表執行</li>
+          <li>
+            <b style={{color: ivBranch === 'high' ? '#ef4444' : '#64748b'}}>高 IV (PR &gt; 60% 或 IV &gt; 30%)</b>：
+            ⚠️ <b>暫緩 long put（買 vol 太貴）</b>，採以下任一：
+            <ul style={{paddingLeft:18, marginTop:2, color:'#94a3b8'}}>
+              <li>分段建：先賣 short call + short put（收高 IV 權利金），等 IV crush 再補 long put</li>
+              <li>用 bear put spread 替代純 long put（買 + 賣低履約，淨成本砍半）</li>
+              <li>或乾脆等 IV PR &lt; 50% 再建單</li>
+            </ul>
+          </li>
         </ul>
-        {ivPctile != null && (
-          <div style={{marginTop:4, color: ivBranch === 'high' ? '#fb923c' : '#86efac'}}>
-            當前 IV PR = {ivPctile.toFixed(0)} → {
-              ivBranch === 'high' ? '⚠ 暫緩 short call' :
-              ivBranch === 'mid'  ? '✓ 照表執行' :
-              '✓ 照表執行'
-            }
-          </div>
-        )}
+        <div style={{marginTop:4, color: ivBranch === 'high' ? '#fb923c' : '#86efac'}}>
+          當前 IV = {iv ?? '—'}%{ivPctile != null ? ` (PR ${ivPctile.toFixed(0)})` : ''} → {
+            ivBranch === 'high' ? '⚠ 高 IV：暫緩 long put、優先賣短腳' :
+            ivBranch === 'low'  ? '✓ 低 IV：照表執行（買 vol 便宜）' :
+            '✓ 中 IV：照表執行'
+          }
+        </div>
       </StepBox>
 
-      <StepBox num="3" title="下單順序（流動性最差先掛）" status={null}>
+      <StepBox num="3" title={isHighIV ? '下單順序（高 IV 分段版）' : '下單順序（流動性最差先掛）'}
+               status={isHighIV ? 'warn' : null}>
         {(() => {
           // 依當前 TX 現價即時計算履約價（取最接近 100 整數倍）
           const roundStrike = (v) => v != null ? Math.round(v / 100) * 100 : null;
@@ -6110,11 +6121,44 @@ function MonthlyStrategySOP({ data, mode = 'near' }) {
           const kLongP   = tx != null ? roundStrike(tx * 0.981) : null;
           const kShortP  = tx != null ? roundStrike(tx * 0.922) : null;
           const kDisP    = tx != null ? roundStrike(tx * 0.863) : null;
+          const kSpreadShort = tx != null ? roundStrike(tx * 0.945) : null;   // bear put spread 的買回腳
           const Strike = ({ v }) => (
             <b style={{color: v != null ? '#fde047' : '#64748b'}}>
               {v != null ? v.toLocaleString() : '—'}
             </b>
           );
+          if (isHighIV) {
+            return (
+              <>
+                <div style={{marginBottom:6, color:'#fb923c', fontSize:11}}>
+                  ⚠ 高 IV 環境：賣方腳權利金高（划算）、買方腳成本高（不划算）→ 分段建
+                </div>
+                <ol style={{margin:'4px 0', paddingLeft:20}}>
+                  <li>
+                    <b style={{color:'#86efac'}}>立即建（賣 vol 划算）：</b>
+                    <ul style={{paddingLeft:18, marginTop:2}}>
+                      <li>賣 short call @ <Strike v={kCall} />（delta +0.10）</li>
+                      <li>賣 short put @ <Strike v={kShortP} />（delta -0.05）</li>
+                    </ul>
+                  </li>
+                  <li style={{marginTop:6}}>
+                    <b style={{color:'#fca5a5'}}>暫緩（買 vol 太貴）：</b>
+                    <ul style={{paddingLeft:18, marginTop:2}}>
+                      <li>long put @ <Strike v={kLongP} /> — 等 IV PR &lt; 50% 或 IV &lt; 25% 再買</li>
+                      <li>災難 put @ <Strike v={kDisP} /> — 同上</li>
+                    </ul>
+                  </li>
+                  <li style={{marginTop:6}}>
+                    <b style={{color:'#fbbf24'}}>替代方案（不想等）：</b>
+                    用 bear put spread 取代純 long put：買 <Strike v={kLongP} /> + 賣 <Strike v={kSpreadShort} />（淨成本砍半）
+                  </li>
+                </ol>
+                <div style={{marginTop:4, fontSize:10, color:'#64748b'}}>
+                  履約價以 TX <b style={{color:'#94a3b8'}}>{tx?.toFixed(0) ?? '—'}</b> 即時計算
+                </div>
+              </>
+            );
+          }
           return (
             <>
               <ol style={{margin:'4px 0', paddingLeft:20}}>
