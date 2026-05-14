@@ -6006,9 +6006,12 @@ function MonthlyStrategySOP({ data }) {
     : ivPctile > 60 ? 'high'
     : ivPctile >= 30 ? 'mid'
     : 'low';
-  // Step 4：護欄狀態
-  const callGuard = tx != null && tx >= 43500;
-  const putGuard  = tx != null && tx <= 38500;
+  // Step 4：護欄狀態（依當前 TX 即時計算）
+  const roundStrike = (v) => v != null ? Math.round(v / 100) * 100 : null;
+  const callGuardLevel = roundStrike(tx != null ? tx * 1.029 : null);    // +2.9% from TX（短 call strike - 300）
+  const putGuardLevel  = roundStrike(tx != null ? tx * 0.910 : null);    // -9.0% from TX（短 put strike - 500）
+  const callGuard = tx != null && callGuardLevel != null && tx >= callGuardLevel;
+  const putGuard  = tx != null && putGuardLevel  != null && tx <= putGuardLevel;
   const ivAlert   = ivVal != null && ivVal > 0.35;
   // Step 5：結算前 1 天平倉
   const isCloseoutDay = dte != null && dte <= 1;
@@ -6087,26 +6090,43 @@ function MonthlyStrategySOP({ data }) {
       </StepBox>
 
       <StepBox num="3" title="下單順序（流動性最差先掛）" status={null}>
-        <ol style={{margin:'4px 0', paddingLeft:20}}>
-          <li>買深 OTM 災難 put @ 36,500（delta -0.02）— 流動性最差，最先掛限價</li>
-          <li>賣 OTM short put @ 39,000（delta -0.05）</li>
-          <li>買 OTM long put @ 41,500（delta -0.20）</li>
-          <li>賣 OTM short call @ 43,800（delta +0.10）— 最後賣</li>
-        </ol>
-        <div style={{marginTop:4, fontSize:10, color:'#64748b'}}>
-          履約價會隨 TX 現價調整：call +3.6%、long put -1.9%、short put -7.8%、disaster put -13.7%
-        </div>
+        {(() => {
+          // 依當前 TX 現價即時計算履約價（取最接近 100 整數倍）
+          const roundStrike = (v) => v != null ? Math.round(v / 100) * 100 : null;
+          const kCall    = tx != null ? roundStrike(tx * 1.036) : null;
+          const kLongP   = tx != null ? roundStrike(tx * 0.981) : null;
+          const kShortP  = tx != null ? roundStrike(tx * 0.922) : null;
+          const kDisP    = tx != null ? roundStrike(tx * 0.863) : null;
+          const Strike = ({ v }) => (
+            <b style={{color: v != null ? '#fde047' : '#64748b'}}>
+              {v != null ? v.toLocaleString() : '—'}
+            </b>
+          );
+          return (
+            <>
+              <ol style={{margin:'4px 0', paddingLeft:20}}>
+                <li>買深 OTM 災難 put @ <Strike v={kDisP} />（delta -0.02）— 流動性最差，最先掛限價</li>
+                <li>賣 OTM short put @ <Strike v={kShortP} />（delta -0.05）</li>
+                <li>買 OTM long put @ <Strike v={kLongP} />（delta -0.20）</li>
+                <li>賣 OTM short call @ <Strike v={kCall} />（delta +0.10）— 最後賣</li>
+              </ol>
+              <div style={{marginTop:4, fontSize:10, color:'#64748b'}}>
+                履約價以 TX <b style={{color:'#94a3b8'}}>{tx?.toFixed(0) ?? '—'}</b> 即時計算（call +3.6%、long put -1.9%、short put -7.8%、disaster put -13.7%）取最接近 100 整數倍
+              </div>
+            </>
+          );
+        })()}
       </StepBox>
 
       <StepBox num="4" title="月內護欄"
                status={callGuard || putGuard || ivAlert ? 'warn' : null}>
         <ul style={{margin:'4px 0', paddingLeft:18}}>
           <li style={{color: callGuard ? '#fb923c' : 'inherit'}}>
-            <b>TX 突破 43,500</b> → 買回 1-2 口 short call、roll up
+            <b>TX 突破 <span style={{color: callGuard ? '#fb923c' : '#fde047'}}>{callGuardLevel?.toLocaleString() ?? '—'}</span></b> → 買回 1-2 口 short call、roll up
             {callGuard && <span style={{color:'#fb923c', marginLeft:4}}>← 現在觸發！</span>}
           </li>
           <li style={{color: putGuard ? '#fb923c' : 'inherit'}}>
-            <b>TX 跌破 38,500</b> → 買回 1-2 口 short put @ 39,000
+            <b>TX 跌破 <span style={{color: putGuard ? '#fb923c' : '#fde047'}}>{putGuardLevel?.toLocaleString() ?? '—'}</span></b> → 買回 1-2 口 short put
             {putGuard && <span style={{color:'#fb923c', marginLeft:4}}>← 現在觸發！</span>}
           </li>
           <li style={{color: ivAlert ? '#fb923c' : 'inherit'}}>
@@ -6114,6 +6134,9 @@ function MonthlyStrategySOP({ data }) {
             {ivAlert && <span style={{color:'#fb923c', marginLeft:4}}>← 現在觸發！</span>}
           </li>
         </ul>
+        <div style={{marginTop:4, fontSize:10, color:'#64748b'}}>
+          護欄價隨 TX <b style={{color:'#94a3b8'}}>{tx?.toFixed(0) ?? '—'}</b> 即時計算（call 護欄 +2.9%、put 護欄 -9.0%）
+        </div>
       </StepBox>
 
       <StepBox num="5" title="結算前 1 天 100% 平倉"
