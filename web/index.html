@@ -5995,7 +5995,9 @@ function MonthlyStrategySOP({ data, mode = 'near' }) {
   // mode: 'near' = 近月（預設） / 'far' = 次月
   const isFar  = mode === 'far';
   const src    = isFar ? (data?.far_month || {}) : data;
-  const tx     = data?.market?.tx_futures;
+  // 履約價要用該月對應的 TX 期貨價（近月用 tx_futures、次月用 tx_far）
+  const tx     = isFar ? (data?.market?.tx_far ?? data?.market?.tx_futures)
+                       : data?.market?.tx_futures;
   const dte    = isFar ? src.dte         : data?.dte;
   const dteT   = isFar ? src.dte_trading : data?.dte_trading;
   const ivPctile = isFar ? null : data?.iv_percentile?.current_pct;
