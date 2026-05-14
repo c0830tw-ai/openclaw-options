@@ -5991,12 +5991,16 @@ function TrimAddSOP({ s }) {
   );
 }
 
-function MonthlyStrategySOP({ data }) {
-  const dte    = data?.dte;
-  const dteT   = data?.dte_trading;
+function MonthlyStrategySOP({ data, mode = 'near' }) {
+  // mode: 'near' = 近月（預設） / 'far' = 次月
+  const isFar  = mode === 'far';
+  const src    = isFar ? (data?.far_month || {}) : data;
   const tx     = data?.market?.tx_futures;
-  const ivPctile = data?.iv_percentile?.current_pct;   // 當前 IV percentile 0-100
-  const ivVal    = data?.iv_used;
+  const dte    = isFar ? src.dte         : data?.dte;
+  const dteT   = isFar ? src.dte_trading : data?.dte_trading;
+  const ivPctile = isFar ? null : data?.iv_percentile?.current_pct;
+  const ivVal    = isFar ? src.iv_used   : data?.iv_used;
+  const monthLabel = isFar ? src.txo_month : data?.txo_month;
   const iv       = ivVal != null ? (ivVal * 100).toFixed(1) : null;
 
   // Step 1：判斷今天是不是「結算翌日」可建倉時機
@@ -6045,11 +6049,18 @@ function MonthlyStrategySOP({ data }) {
 
   return (
     <div style={{padding:'4px 0'}}>
+      {/* 月份標籤 */}
+      <div style={{fontSize:11, color:'#94a3b8', marginBottom:8, paddingLeft:4}}>
+        <b style={{color:'#e2e8f0'}}>{isFar ? '次月' : '近月'} {monthLabel ? `(${String(monthLabel).slice(0,4)}/${String(monthLabel).slice(4,6)})` : ''}</b>
+        <span style={{marginLeft:8, color:'#64748b'}}>
+          {isFar ? '提前佈局：近月結算後直接接手' : '當前主要操作月份'}
+        </span>
+      </div>
       {/* 當前狀態快速摘要 */}
       <div style={{
         display:'flex', gap:12, padding:'10px 14px', marginBottom:12,
         background:'#070b15', borderRadius:4, fontSize:11, color:'#94a3b8',
-        borderLeft: '3px solid #60a5fa'
+        borderLeft: `3px solid ${isFar ? '#a78bfa' : '#60a5fa'}`
       }}>
         <span>📅 DTE <b style={{color:'#e2e8f0'}}>{dte ?? '—'}</b>{dteT != null ? `（${dteT} 交易日）` : ''}</span>
         <span>📊 IV <b style={{color:iv ? '#fbbf24' : '#94a3b8'}}>{iv ?? '—'}%</b></span>
@@ -6494,21 +6505,32 @@ function App() {
         <TrimAddSOP s={data?.trim_add_00679b} />
       </Section>
 
-      {/* 📘 月選策略 SOP — 每月固定 4-leg 結構執行流程 */}
+      {/* 📘 月選策略 SOP — 近月 + 次月 4-leg 結構執行流程 */}
       <Section title="📘 月選策略 SOP" defaultOpen={false} accent="blue"
                badge={(() => {
                  const dte = data?.dte;
-                 const ivPR = data?.iv_percentile?.current_pct;
                  const tx = data?.market?.tx_futures;
+                 const farDte = data?.far_month?.dte;
                  const alerts = [];
                  if (dte != null && dte >= 25 && dte <= 32) alerts.push('建倉時機');
-                 if (ivPR != null && ivPR > 60) alerts.push('IV 高 ⚠');
-                 if (tx != null && tx >= 43500) alerts.push('TX↑ 護欄');
-                 if (tx != null && tx <= 38500) alerts.push('TX↓ 護欄');
+                 if (farDte != null && farDte >= 25 && farDte <= 35) alerts.push('次月可建');
+                 if (tx != null) {
+                   const callG = Math.round(tx * 1.029 / 100) * 100;
+                   const putG  = Math.round(tx * 0.910 / 100) * 100;
+                   if (tx >= callG) alerts.push('TX↑ 護欄');
+                   if (tx <= putG)  alerts.push('TX↓ 護欄');
+                 }
                  if (dte != null && dte <= 1) alerts.push('平倉日 🔴');
                  return alerts.length ? alerts.join(' · ') : null;
                })()}>
-        <MonthlyStrategySOP data={data} />
+        <MonthlyStrategySOP data={data} mode="near" />
+        <div style={{
+          margin:'16px 0 12px 0', borderTop:'1px dashed #334155',
+          paddingTop:12, fontSize:10, color:'#64748b', textAlign:'center'
+        }}>
+          ── 次月預覽 ──
+        </div>
+        <MonthlyStrategySOP data={data} mode="far" />
       </Section>
 
       {error && <div className="error-box">⚠ 載入失敗：{error}</div>}
