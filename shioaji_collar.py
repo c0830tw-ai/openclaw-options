@@ -1931,6 +1931,27 @@ def fetch_kbars(api, stock_code: str) -> Optional[dict]:
             result['bb_pattern'] = bb_pat
             log.info(f"{stock_code} BB 形態: {bb_pat['label']} ({bb_pat['detail']})")
 
+        # MA20 cross-up（trim & add-back 用）
+        if n_days >= 21:
+            ma20_today = ma
+            yesterday_ma20 = sum(closes[-21:-1]) / 20
+            result['above_ma20']    = closes[-1] > ma20_today
+            result['cross_up_ma20'] = (closes[-1] > ma20_today and closes[-2] <= yesterday_ma20)
+        # EMA23（trim 出場訊號用，2026-05-15 加入）
+        if n_days >= 23:
+            def _ema(series, p):
+                k = 2 / (p + 1)
+                e = series[0]
+                for x in series[1:]:
+                    e = x * k + e * (1 - k)
+                return e
+            ema23_today = _ema(closes, 23)
+            ema23_yesterday = _ema(closes[:-1], 23) if n_days > 23 else None
+            result['ema23'] = ema23_today
+            result['below_ema23'] = closes[-1] < ema23_today
+            result['cross_down_ema23'] = (ema23_yesterday is not None
+                                          and closes[-1] < ema23_today
+                                          and closes[-2] >= ema23_yesterday)
         # MA60 + recent_high（用於 trim & add-back 訊號）
         if n_days >= 60:
             ma60 = sum(closes[-60:]) / 60
@@ -3164,83 +3185,95 @@ def main():
             'indicators_0050': indicators_0050,
             'indicators_00679b': indicators_00679b,
             # 0050 動態管理 SOP 訊號（5 年回測冠軍：Trim -10% / +MA60）
+            # 0050 SOP（5 年回測冠軍 2026-05-15 修正：Tiered -5%×50% + -10%×100% / +MA20）
             'trim_add_0050': (
                 {
                     'ticker':           '0050',
                     'name':             '元大台灣 50',
-                    'rule':             'Trim -10% / +MA60',
-                    'trim_pct':         10,
-                    'add_signal':       'MA60 cross-up',
+                    'rule':             'Trim 5%/50% + 10%/100% / +MA20',
+                    'trim_mode':        'tiered',
+                    'trim_pct':         5,           # 第一階觸發 -5%
+                    'trim_size_pct':    50,
+                    'trim_pct_2':       10,          # 第二階觸發 -10%（全出）
+                    'trim_size_pct_2':  100,         # 100% of 剩餘
+                    'add_signal':       'MA20 cross-up',
                     'price':            price_0050,
                     'recent_high':      indicators_0050.get('recent_high_60d'),
                     'dd_from_high_pct': indicators_0050.get('dd_from_high_pct'),
-                    'trim_threshold':   (indicators_0050.get('recent_high_60d') or 0) * 0.9,
-                    'trim_triggered':   (indicators_0050.get('dd_from_high_pct') or 0) <= -10,
-                    'add_level':        indicators_0050.get('ma60'),
-                    'above_add_level':  indicators_0050.get('above_ma60'),
-                    'cross_up':         indicators_0050.get('cross_up_ma60'),
-                    'add_level_label':  'MA60',
+                    'trim_threshold':   (indicators_0050.get('recent_high_60d') or 0) * 0.95,
+                    'trim_threshold_2': (indicators_0050.get('recent_high_60d') or 0) * 0.90,
+                    'trim_triggered':   (indicators_0050.get('dd_from_high_pct') or 0) <= -5,
+                    'trim_triggered_2': (indicators_0050.get('dd_from_high_pct') or 0) <= -10,
+                    'add_level':        indicators_0050.get('ma20'),
+                    'above_add_level':  indicators_0050.get('above_ma20'),
+                    'cross_up':         indicators_0050.get('cross_up_ma20'),
+                    'add_level_label':  'MA20',
                     'lots_held':        CFG.lots_0050,
                     'cost_basis':       CFG.cost_basis_0050,
                     'lot_size':         CFG.lot_size_0050,
                     'lot_unit_label':   '受益憑證',
                     'trim_size_lots':   round(CFG.lots_0050 * 0.5),
                     'futures_name':     'NYF 0050 股期',
-                    'note': '5 年回測冠軍：報酬 +254.6% / DD -26.6% / Sharpe 1.51（贏 B&H 全部維度）',
+                    'note': '5 年回測冠軍（已修 bug）：報酬 +275.9% / DD -20.1% / Sharpe 1.72（贏 B&H 全部維度）',
                 } if indicators_0050 else None
             ),
-            # 2330 動態管理 SOP（5 年回測冠軍：Trim -15% / +MA20）
+            # 2330 SOP（5 年回測冠軍 2026-05-15 修正：-10%×100% / +MA20）
             'trim_add_2330': (
                 {
                     'ticker':           '2330',
                     'name':             '台積電',
-                    'rule':             'Trim -15% / +MA20',
-                    'trim_pct':         15,
+                    'rule':             'Trim -10%×100% / +MA20',
+                    'trim_mode':        'single_full',
+                    'trim_pct':         10,
+                    'trim_size_pct':    100,         # 全出
                     'add_signal':       'MA20 cross-up',
                     'price':            price_2330,
                     'recent_high':      indicators.get('recent_high_60d'),
                     'dd_from_high_pct': indicators.get('dd_from_high_pct'),
-                    'trim_threshold':   (indicators.get('recent_high_60d') or 0) * 0.85,
-                    'trim_triggered':   (indicators.get('dd_from_high_pct') or 0) <= -15,
+                    'trim_threshold':   (indicators.get('recent_high_60d') or 0) * 0.90,
+                    'trim_triggered':   (indicators.get('dd_from_high_pct') or 0) <= -10,
                     'add_level':        indicators.get('ma20'),
-                    'above_add_level':  price_2330 is not None and indicators.get('ma20') is not None
-                                         and price_2330 > indicators.get('ma20'),
-                    'cross_up':         False,   # MA20 cross_up 未在 fetch_kbars 計算；由前端依需要近似
+                    'above_add_level':  indicators.get('above_ma20'),
+                    'cross_up':         indicators.get('cross_up_ma20'),
                     'add_level_label':  'MA20',
-                    'lots_held':        14,       # 用戶目前 QFF 14 口（4 May + 10 June）
-                    'cost_basis':       2148,     # 加權平均（4×2056.88 + 10×2185.68）/ 14
-                    'lot_size':         100,      # 小台積電期 = 100 股
+                    'lots_held':        14,
+                    'cost_basis':       2148,
+                    'lot_size':         100,
                     'lot_unit_label':   '股',
-                    'trim_size_lots':   7,        # 14 × 50%
+                    'trim_size_lots':   14,          # 全出
                     'futures_name':     'QFF 小台積電期',
-                    'note': '5 年回測冠軍：報酬 +384.9% / DD -39.2% / Sharpe 1.34（Buy & Hold +352% Sharpe 1.19）',
+                    'note': '5 年回測冠軍（已修 bug）：報酬 +424.5% / DD -26.6% / Sharpe 1.49（B&H +358.4% / -44.8% / 1.20）',
                 } if indicators else None
             ),
-            # 00679B 動態管理 SOP（5 年回測冠軍：Trim -5% / +MA20）
+            # 00679B SOP（5 年回測冠軍 2026-05-15 修正：EMA23↓ 全出 / +MA20）
             'trim_add_00679b': (
                 {
                     'ticker':           '00679B',
                     'name':             '元大美債 20 年',
-                    'rule':             'Trim -5% / +MA20',
-                    'trim_pct':         5,
+                    'rule':             'EMA23↓ 全出 / +MA20',
+                    'trim_mode':        'signal_full',
+                    'trim_pct':         None,        # 用訊號不用 DD
+                    'trim_size_pct':    100,
+                    'trim_signal':      'EMA23 cross-down',
                     'add_signal':       'MA20 cross-up',
                     'price':            price_00679b,
                     'recent_high':      indicators_00679b.get('recent_high_60d'),
                     'dd_from_high_pct': indicators_00679b.get('dd_from_high_pct'),
-                    'trim_threshold':   (indicators_00679b.get('recent_high_60d') or 0) * 0.95,
-                    'trim_triggered':   (indicators_00679b.get('dd_from_high_pct') or 0) <= -5,
+                    'ema23':            indicators_00679b.get('ema23'),
+                    'below_ema23':      indicators_00679b.get('below_ema23'),
+                    'trim_triggered':   indicators_00679b.get('cross_down_ema23'),
+                    'trim_threshold':   indicators_00679b.get('ema23'),   # 顯示用
                     'add_level':        indicators_00679b.get('ma20'),
-                    'above_add_level':  price_00679b is not None and indicators_00679b.get('ma20') is not None
-                                         and price_00679b > indicators_00679b.get('ma20'),
-                    'cross_up':         False,
+                    'above_add_level':  indicators_00679b.get('above_ma20'),
+                    'cross_up':         indicators_00679b.get('cross_up_ma20'),
                     'add_level_label':  'MA20',
-                    'lots_held':        3,        # 用戶目前 RZF 3 口
+                    'lots_held':        3,
                     'cost_basis':       26.75,
-                    'lot_size':         10000,    # 美債 ETF 股期 = 10,000 受益憑證
+                    'lot_size':         10000,
                     'lot_unit_label':   '受益憑證',
-                    'trim_size_lots':   2,        # 3 × 50% ≈ 1-2 口（取 2 較保守）
+                    'trim_size_lots':   3,           # 全出
                     'futures_name':     'RZF 美債 20 年股期',
-                    'note': '5 年回測冠軍：報酬 -8.7% / DD -27% / Sharpe -0.10（B&H -17.5% / -34% / -0.22；損失減半）',
+                    'note': '5 年回測冠軍（已修 bug）：報酬 +4.2% / DD -12.7% / Sharpe 0.15（B&H -18.6% / -34.4% / -0.24；翻正！）',
                 } if indicators_00679b else None
             ),
             'iv_used':    round(near_iv, 4),

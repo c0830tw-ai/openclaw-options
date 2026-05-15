@@ -5868,42 +5868,46 @@ function EngineStatus({ data }) {
   );
 }
 
-// 5 年回測對照表（2021-05 → 2026-05），用於替代規則參考
+// 5 年回測對照表（2021-05 → 2026-05），bug 修正後重新跑（2026-05-15）
+// 修正：原版 add-back 後 units < 1.0 導致無法再次觸發 trim
 const TRIM_ADD_BACKTEST = {
   '0050': {
-    benchmark_ret: 245.2, benchmark_dd: -33.8, benchmark_sharpe: 1.28,
+    benchmark_ret: 254.8, benchmark_dd: -33.8, benchmark_sharpe: 1.31,
     variants: [
-      { rule: 'Trim -10% / +MA60',  ret: 254.6, dd: -26.6, sharpe: 1.51, trims: 5, current: true },
-      { rule: 'Buy & Hold',          ret: 245.2, dd: -33.8, sharpe: 1.28, trims: 0 },
-      { rule: 'Ladder 5/10/15% / +MA20', ret: 240.7, dd: -31.4, sharpe: 1.30, trims: 9 },
-      { rule: 'Trim -5% / +MA20',   ret: 240.2, dd: -29.1, sharpe: 1.31, trims: 7 },
-      { rule: 'Trim -15% / +MA20',  ret: 234.0, dd: -36.0, sharpe: 1.26, trims: 2 },
-      { rule: 'Trim -10% / +BB↓',    ret: 233.2, dd: -31.9, sharpe: 1.27, trims: 5 },
-      { rule: 'Trim -10% / +MA20',  ret: 226.7, dd: -36.1, sharpe: 1.25, trims: 4 },
+      { rule: '5%/50% + 10%/100% / +MA20', ret: 275.9, dd: -20.1, sharpe: 1.72, trims: 8, current: true },
+      { rule: 'EMA23↓ 全出 / +MA20',    ret: 212.4, dd: -14.5, sharpe: 1.69, trims: 50 },
+      { rule: 'EMA23↓ 全出 / +EMA23↑',  ret: 224.2, dd: -16.2, sharpe: 1.68, trims: 70 },
+      { rule: 'Trim -10%×100% / +MA60', ret: 273.8, dd: -19.1, sharpe: 1.66, trims: 5 },
+      { rule: 'Trim -10%×100% / +MA20', ret: 267.9, dd: -28.5, sharpe: 1.59, trims: 4 },
+      { rule: 'Trim -5% / +MA20',      ret: 251.0, dd: -29.1, sharpe: 1.34, trims: 7 },
+      { rule: 'Trim -10%×50% / +MA60',  ret: 264.5, dd: -26.6, sharpe: 1.54, trims: 5 },
+      { rule: 'Buy & Hold',            ret: 254.8, dd: -33.8, sharpe: 1.31, trims: 0 },
     ],
   },
   '2330': {
-    benchmark_ret: 352.1, benchmark_dd: -44.8, benchmark_sharpe: 1.19,
+    benchmark_ret: 358.4, benchmark_dd: -44.8, benchmark_sharpe: 1.20,
     variants: [
-      { rule: 'Trim -10% / +BB↓',    ret: 398.7, dd: -41.9, sharpe: 1.31, trims: 14 },
-      { rule: 'Trim -15% / +MA20',  ret: 384.9, dd: -39.2, sharpe: 1.34, trims: 5, current: true },
-      { rule: 'Buy & Hold',          ret: 352.1, dd: -44.8, sharpe: 1.19, trims: 0 },
-      { rule: 'Ladder 5/10/15% / +MA20', ret: 344.6, dd: -39.1, sharpe: 1.23, trims: 17 },
-      { rule: 'Trim -10% / +MA20',  ret: 344.1, dd: -42.0, sharpe: 1.21, trims: 4 },
-      { rule: 'Trim -5% / +MA20',   ret: 341.0, dd: -32.9, sharpe: 1.33, trims: 20 },
-      { rule: 'Trim -10% / +MA60',  ret: 324.2, dd: -40.9, sharpe: 1.20, trims: 4 },
+      { rule: 'Trim -10%×100% / +MA20', ret: 424.5, dd: -26.6, sharpe: 1.49, trims: 4, current: true },
+      { rule: '5%/50% + 10%/100% / +MA20', ret: 344.6, dd: -24.3, sharpe: 1.46, trims: 38 },
+      { rule: 'Ladder 5/10/15% / +MA20', ret: 350.8, dd: -33.1, sharpe: 1.39, trims: 17 },
+      { rule: 'Trim -10%×50% / +MA20',  ret: 394.3, dd: -35.9, sharpe: 1.39, trims: 4 },
+      { rule: 'Trim -5% / +MA20',      ret: 320.6, dd: -30.2, sharpe: 1.35, trims: 20 },
+      { rule: 'EMA23↓ 全出 / +MA20',    ret: 250.1, dd: -19.2, sharpe: 1.32, trims: 56 },
+      { rule: 'Trim -10%×50% / +MA60',  ret: 316.7, dd: -39.4, sharpe: 1.31, trims: 4 },
+      { rule: 'Buy & Hold',            ret: 358.4, dd: -44.8, sharpe: 1.20, trims: 0 },
     ],
   },
   '00679B': {
-    benchmark_ret: -17.5, benchmark_dd: -34.4, benchmark_sharpe: -0.22,
+    benchmark_ret: -18.6, benchmark_dd: -34.4, benchmark_sharpe: -0.24,
     variants: [
-      { rule: 'Trim -5% / +MA20',   ret: -8.7,  dd: -27.0, sharpe: -0.10, trims: 14, current: true },
-      { rule: 'Trim -10% / +MA60',  ret: -14.5, dd: -31.1, sharpe: -0.21, trims: 5 },
-      { rule: 'Ladder 5/10/15% / +MA20', ret: -14.6, dd: -31.4, sharpe: -0.20, trims: 20 },
-      { rule: 'Trim -10% / +BB↓',    ret: -16.2, dd: -33.4, sharpe: -0.20, trims: 6 },
-      { rule: 'Buy & Hold',          ret: -17.5, dd: -34.4, sharpe: -0.22, trims: 0 },
-      { rule: 'Trim -15% / +MA20',  ret: -18.5, dd: -35.2, sharpe: -0.25, trims: 3 },
-      { rule: 'Trim -10% / +MA20',  ret: -20.0, dd: -36.0, sharpe: -0.27, trims: 4 },
+      { rule: 'EMA23↓ 全出 / +MA20',    ret: 4.2,  dd: -12.7, sharpe: 0.15, trims: 48, current: true },
+      { rule: 'EMA23↓ 全出 / +EMA23↑',  ret: 0.6,  dd: -19.4, sharpe: 0.06, trims: 65 },
+      { rule: 'Trim -5% / +MA20',      ret: -9.7, dd: -27.0, sharpe: -0.12, trims: 15 },
+      { rule: 'EMA23↓ 半出 / +EMA23↑',  ret: -9.0, dd: -25.6, sharpe: -0.14, trims: 65 },
+      { rule: 'Trim -10%×100% / +MA20', ret: -13.7, dd: -30.0, sharpe: -0.17, trims: 5 },
+      { rule: '5%/50% + 10%/100% / +MA20', ret: -12.4, dd: -28.5, sharpe: -0.18, trims: 20 },
+      { rule: 'Trim -10%×50% / +MA20',  ret: -16.2, dd: -32.0, sharpe: -0.21, trims: 4 },
+      { rule: 'Buy & Hold',            ret: -18.6, dd: -34.4, sharpe: -0.24, trims: 0 },
     ],
   },
 };
@@ -5972,22 +5976,30 @@ function TrimAddBacktestTable({ ticker }) {
 function TrimAddSOP({ s }) {
   if (!s || s.price == null) return <div style={{padding:'12px', color:'#94a3b8', fontSize:11}}>資料不足（需 60 日 K）</div>;
 
-  const trimDist     = s.recent_high ? ((s.trim_threshold - s.price) / s.price) * 100 : null;
+  const mode         = s.trim_mode || 'single';   // single / tiered / single_full / signal_full
+  const trimDist     = s.trim_threshold ? ((s.trim_threshold - s.price) / s.price) * 100 : null;
+  const trimDist2    = s.trim_threshold_2 ? ((s.trim_threshold_2 - s.price) / s.price) * 100 : null;
   const addDist      = s.add_level ? ((s.add_level - s.price) / s.price) * 100 : null;
-  const trimReleased = s.lot_size * (s.lots_held * 0.5) * s.price;
+  // trim 大小：tiered 第一階用 50%、其他用 trim_size_pct
+  const trimSize1Pct = mode === 'tiered' ? (s.trim_size_pct || 50) : (s.trim_size_pct || 100);
+  const trimLots1    = s.lots_held * trimSize1Pct / 100;
+  const trimReleased = s.lot_size * trimLots1 * s.price;
   const fullNotional = s.lot_size * s.lots_held * s.price;
   const pnlPerLot    = s.cost_basis ? (s.price - s.cost_basis) * s.lot_size : null;
   const totalPnl     = pnlPerLot != null ? pnlPerLot * s.lots_held : null;
 
-  // 動作判定（add 訊號：cross_up 或已在 add_level 上方 — 顯示為 active）
-  const addActive = s.cross_up || s.above_add_level;
-  const action = s.trim_triggered ? 'TRIM' : (addActive && pnlPerLot != null ? 'HOLD' : 'WATCH');
-  // 注意：如果還沒砍，above_add_level=true 是「正常持有狀態」不是 add-back 訊號
-  // 真正的 add-back 訊號只有在 trim 後才有意義；這裡簡化處理顯示為 HOLD
-  const actionColor = s.trim_triggered ? '#ef4444' : '#475569';
-  const actionLabel = s.trim_triggered
-    ? `🔴 觸發 Trim — 砍 ${Math.round(s.lots_held*0.5)}-${Math.ceil(s.lots_held*0.5)} 口`
-    : '✓ 維持持倉、等訊號';
+  // 動作判定
+  const tier2Triggered = s.trim_triggered_2 === true;
+  const tier1Triggered = s.trim_triggered === true;
+  const trimNow        = tier2Triggered || tier1Triggered;
+  const actionColor = tier2Triggered ? '#ef4444'
+                    : tier1Triggered ? '#fb923c'
+                    : '#475569';
+  const actionLabel = tier2Triggered ? `🔴 觸發 Trim 第 2 階 — 全出 ${s.lots_held} 口`
+                    : tier1Triggered ? (mode === 'tiered'
+                        ? `🟠 觸發 Trim 第 1 階 — 砍 ${Math.round(trimLots1)} 口（留 ${s.lots_held - Math.round(trimLots1)} 口）`
+                        : `🔴 觸發 Trim — ${trimSize1Pct === 100 ? '全出' : '砍'} ${Math.round(trimLots1)} 口`)
+                    : '✓ 維持持倉、等訊號';
 
   const Row = ({ label, value, hint, color }) => (
     <div style={{display:'flex', justifyContent:'space-between', padding:'4px 0',
@@ -6011,7 +6023,7 @@ function TrimAddSOP({ s }) {
       {/* 動作大字 */}
       <div style={{
         padding:'14px 16px', marginBottom:12, borderRadius:6,
-        background: s.trim_triggered ? '#2a0e0e' : '#0a0f1a',
+        background: tier2Triggered ? '#2a0e0e' : tier1Triggered ? '#2a1408' : '#0a0f1a',
         borderLeft: `4px solid ${actionColor}`,
         display:'flex', justifyContent:'space-between', alignItems:'center'
       }}>
@@ -6024,7 +6036,7 @@ function TrimAddSOP({ s }) {
           <div style={{fontSize:14, color: '#e2e8f0', fontWeight:600}}>
             {s.price?.toFixed(2)} → {s.recent_high?.toFixed(2)}
           </div>
-          <div style={{fontSize:11, color: s.dd_from_high_pct < -s.trim_pct/2 ? '#fb923c' : '#86efac'}}>
+          <div style={{fontSize:11, color: s.dd_from_high_pct < -3 ? '#fb923c' : '#86efac'}}>
             DD {s.dd_from_high_pct?.toFixed(2)}%
           </div>
         </div>
@@ -6036,10 +6048,27 @@ function TrimAddSOP({ s }) {
         borderLeft:'3px solid #475569'
       }}>
         <div style={{fontSize:12, fontWeight:600, color:'#e2e8f0', marginBottom:6}}>📍 進出場觸發點</div>
-        <Row label={`Trim 觸發 (-${s.trim_pct}% from high)`}
-             value={s.trim_threshold?.toFixed(2)}
-             hint={trimDist != null ? `距現價 ${trimDist >= 0 ? '+' : ''}${trimDist.toFixed(2)}%` : ''}
-             color={s.trim_triggered ? '#ef4444' : '#94a3b8'} />
+        {mode === 'signal_full' ? (
+          <Row label={`Trim 觸發 (${s.trim_signal})`}
+               value={s.ema23 != null
+                      ? `EMA23 ${s.ema23.toFixed(2)} ${s.below_ema23 ? '✓ 已跌破' : ''}`
+                      : '—'}
+               hint={trimDist != null ? `距現價 ${trimDist >= 0 ? '+' : ''}${trimDist.toFixed(2)}%` : ''}
+               color={tier1Triggered ? '#ef4444' : '#94a3b8'} />
+        ) : (
+          <>
+            <Row label={`Trim 觸發 (-${s.trim_pct}% from high${mode === 'tiered' ? '，砍 ' + s.trim_size_pct + '%' : ''})`}
+                 value={s.trim_threshold?.toFixed(2)}
+                 hint={trimDist != null ? `距現價 ${trimDist >= 0 ? '+' : ''}${trimDist.toFixed(2)}%` : ''}
+                 color={tier1Triggered ? '#fb923c' : '#94a3b8'} />
+            {mode === 'tiered' && s.trim_threshold_2 != null && (
+              <Row label={`Trim 第 2 階 (-${s.trim_pct_2}% from high，全出)`}
+                   value={s.trim_threshold_2?.toFixed(2)}
+                   hint={trimDist2 != null ? `距現價 ${trimDist2 >= 0 ? '+' : ''}${trimDist2.toFixed(2)}%` : ''}
+                   color={tier2Triggered ? '#ef4444' : '#94a3b8'} />
+            )}
+          </>
+        )}
         <Row label={`Add-back (${s.add_signal})`}
              value={s.add_level?.toFixed(2)}
              hint={addDist != null ? `距現價 ${addDist >= 0 ? '+' : ''}${addDist.toFixed(2)}%` : ''}
@@ -6071,9 +6100,20 @@ function TrimAddSOP({ s }) {
         borderLeft:'3px solid #fbbf24'
       }}>
         <div style={{fontSize:12, fontWeight:600, color:'#e2e8f0', marginBottom:6}}>🎯 觸發時動作</div>
-        <Row label="Trim 動作"
-             value={`砍 ${Math.round(s.lots_held * 0.5)}-${Math.ceil(s.lots_held * 0.5)} 口`}
-             hint={`釋出 ~${(trimReleased / 10000).toFixed(0)} 萬`} />
+        {mode === 'tiered' ? (
+          <>
+            <Row label="第 1 階（先警戒）"
+                 value={`砍 ${Math.round(trimLots1)} 口（50%）`}
+                 hint={`留 ${s.lots_held - Math.round(trimLots1)} 口、釋出 ~${(trimReleased / 10000).toFixed(0)} 萬`} />
+            <Row label="第 2 階（完全出場）"
+                 value={`砍剩餘 ${s.lots_held - Math.round(trimLots1)} 口（100%）`}
+                 hint={`總釋出 ~${(fullNotional / 10000).toFixed(0)} 萬`} />
+          </>
+        ) : (
+          <Row label="Trim 動作"
+               value={`${trimSize1Pct === 100 ? '全出' : '砍'} ${Math.round(trimLots1)} 口`}
+               hint={`釋出 ~${((s.lot_size * trimLots1 * s.price) / 10000).toFixed(0)} 萬`} />
+        )}
         <Row label="Add-back 動作"
              value={`加回到 ${s.lots_held} 口滿倉`}
              hint={`當 ${s.ticker} 收盤站上 ${s.add_level_label}`} />
