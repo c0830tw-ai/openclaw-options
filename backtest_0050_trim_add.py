@@ -162,9 +162,11 @@ def stats(eq: List[float]) -> dict:
 def build_strategies(closes, dates):
     """組合所有變體；回傳 [(name, eq, meta)]。"""
     _, bb_low, _ = calc_bb(closes, 20)
+    ma10 = calc_ma(closes, 10)
     ma20 = calc_ma(closes, 20)
     ma60 = calc_ma(closes, 60)
     ema23 = calc_ema(closes, 23)
+    ema10 = calc_ema(closes, 10)
 
     def ma20_cross_up(i):
         if i < 1 or ma20[i] is None or ma20[i-1] is None: return False
@@ -181,6 +183,12 @@ def build_strategies(closes, dates):
     def ema23_cross_up(i):
         if i < 1 or ema23[i] is None or ema23[i-1] is None: return False
         return closes[i] > ema23[i] and closes[i-1] <= ema23[i-1]
+    def ma10_cross_up(i):
+        if i < 1 or ma10[i] is None or ma10[i-1] is None: return False
+        return closes[i] > ma10[i] and closes[i-1] <= ma10[i-1]
+    def ema10_cross_up(i):
+        if i < 1 or ema10[i] is None or ema10[i-1] is None: return False
+        return closes[i] > ema10[i] and closes[i-1] <= ema10[i-1]
 
     results = []
     # Trim 單階段（50%）+ 不同 add-back
@@ -249,6 +257,31 @@ def build_strategies(closes, dates):
     eq, meta = run_trim_add(closes, dates, [(0, 0.50)], ema23_cross_up,
                             trim_signal_fn=ema23_break_down)
     results.append(('EMA23↓ 半出 / +EMA23↑', eq, meta))
+
+    # ★ 買回訊號變體（用戶 5/15）：對 0050 冠軍規則 trim 5%/50%+10%/100% 試不同 add-back
+    # 比較 MA10 / MA20 / EMA10 / EMA23 / BB↓
+    eq, meta = run_trim_add(closes, dates, [(0.05, 0.50), (0.10, 1.00)], ma10_cross_up)
+    results.append(('Trim 5%/50%+10%/100% / +MA10', eq, meta))
+
+    eq, meta = run_trim_add(closes, dates, [(0.05, 0.50), (0.10, 1.00)], ema10_cross_up)
+    results.append(('Trim 5%/50%+10%/100% / +EMA10', eq, meta))
+
+    eq, meta = run_trim_add(closes, dates, [(0.05, 0.50), (0.10, 1.00)], ema23_cross_up)
+    results.append(('Trim 5%/50%+10%/100% / +EMA23', eq, meta))
+
+    eq, meta = run_trim_add(closes, dates, [(0.05, 0.50), (0.10, 1.00)],
+                            lambda i: bb_low[i] is not None and closes[i] <= bb_low[i])
+    results.append(('Trim 5%/50%+10%/100% / +BB↓ touch', eq, meta))
+
+    # 對 2330 / 00679B 冠軍規則也測 MA10 buy-back
+    # Trim -10%×100% / +MA10 (vs 現用 MA20)
+    eq, meta = run_trim_add(closes, dates, [(0.10, 1.00)], ma10_cross_up)
+    results.append(('Trim -10%×100% / +MA10', eq, meta))
+
+    # EMA23↓ 全出 / +MA10 (vs 現用 MA20)
+    eq, meta = run_trim_add(closes, dates, [(0, 1.00)], ma10_cross_up,
+                            trim_signal_fn=ema23_break_down)
+    results.append(('EMA23↓ 全出 / +MA10', eq, meta))
 
     # 對照組 Buy & Hold
     bh_eq = [c / closes[0] for c in closes]

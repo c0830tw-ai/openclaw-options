@@ -432,11 +432,19 @@ def evaluate(data: dict, rules: dict) -> list:
             if s.get('cross_up'):
                 lvl = s.get('add_level_label', 'MA')
                 lvl_val = s.get('add_level')
+                lvl_str = f'{lvl_val:.2f}' if lvl_val is not None else '—'
+                lot_size = s.get('lot_size', 0)
+                # 估算買回 notional（以滿倉 size 算）
+                est_notional = (lots * lot_size * price / 10000) if (lots and lot_size and price) else 0
+                futures_name = s.get('futures_name', '')
                 alerts.append({
                     'key':   f'add_{ticker}',
                     'level': '🟢',
-                    'msg':   f"{ticker} Add-back 訊號：收盤站上 {lvl} ({lvl_val:.2f})，加回滿倉",
-                    'tip':   f'規則：{rule}。T+1 開盤分批限價買回剩餘 cash 對應口數',
+                    'msg':   f"{ticker} Add-back 訊號：收盤站上 {lvl} ({lvl_str})，**買回到 {lots} 口滿倉**",
+                    'tip':   (f'規則：{rule}\n'
+                              f'目標部位：{lots} 口 {futures_name}（依當前 trim 狀態買回對應口數）\n'
+                              f'預估 notional：~{est_notional:.0f} 萬\n'
+                              f'執行：T+1 09:00-09:30 限價買回；流動性好可一次掛、差就分 2-3 次掛'),
                 })
 
     return alerts

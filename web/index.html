@@ -5992,13 +5992,17 @@ function TrimAddSOP({ s }) {
   const tier2Triggered = s.trim_triggered_2 === true;
   const tier1Triggered = s.trim_triggered === true;
   const trimNow        = tier2Triggered || tier1Triggered;
+  const addBackNow     = s.cross_up === true;
+  // 優先順序：Trim 觸發 > Add-back 觸發 > 維持
   const actionColor = tier2Triggered ? '#ef4444'
                     : tier1Triggered ? '#fb923c'
+                    : addBackNow     ? '#22c55e'
                     : '#475569';
   const actionLabel = tier2Triggered ? `🔴 觸發 Trim 第 2 階 — 全出 ${s.lots_held} 口`
                     : tier1Triggered ? (mode === 'tiered'
                         ? `🟠 觸發 Trim 第 1 階 — 砍 ${Math.round(trimLots1)} 口（留 ${s.lots_held - Math.round(trimLots1)} 口）`
                         : `🔴 觸發 Trim — ${trimSize1Pct === 100 ? '全出' : '砍'} ${Math.round(trimLots1)} 口`)
+                    : addBackNow     ? `🟢 收盤站上 ${s.add_level_label} — Add-back 訊號：買回到 ${s.lots_held} 口滿倉`
                     : '✓ 維持持倉、等訊號';
 
   const Row = ({ label, value, hint, color }) => (
@@ -6023,7 +6027,10 @@ function TrimAddSOP({ s }) {
       {/* 動作大字 */}
       <div style={{
         padding:'14px 16px', marginBottom:12, borderRadius:6,
-        background: tier2Triggered ? '#2a0e0e' : tier1Triggered ? '#2a1408' : '#0a0f1a',
+        background: tier2Triggered ? '#2a0e0e'
+                   : tier1Triggered ? '#2a1408'
+                   : addBackNow     ? '#0e2010'
+                   : '#0a0f1a',
         borderLeft: `4px solid ${actionColor}`,
         display:'flex', justifyContent:'space-between', alignItems:'center'
       }}>
@@ -6116,7 +6123,8 @@ function TrimAddSOP({ s }) {
         )}
         <Row label="Add-back 動作"
              value={`加回到 ${s.lots_held} 口滿倉`}
-             hint={`當 ${s.ticker} 收盤站上 ${s.add_level_label}`} />
+             hint={`當 ${s.ticker} 收盤站上 ${s.add_level_label}（${s.add_level?.toFixed(2)}）→ T+1 09:00-09:30 限價買回`}
+             color={addBackNow ? '#22c55e' : undefined} />
       </div>
 
       {/* 規則說明 */}
@@ -6693,9 +6701,11 @@ function App() {
                  const triggers = [];
                  [data?.trim_add_0050, data?.trim_add_2330, data?.trim_add_00679b].forEach(s => {
                    if (!s) return;
-                   if (s.trim_triggered) triggers.push(`${s.ticker} 🔴`);
+                   if (s.trim_triggered_2) triggers.push(`${s.ticker} 🔴全出`);
+                   else if (s.trim_triggered) triggers.push(`${s.ticker} 🟠Trim`);
+                   else if (s.cross_up) triggers.push(`${s.ticker} 🟢Add`);
                  });
-                 if (triggers.length) return triggers.join(' ');
+                 if (triggers.length) return triggers.join(' · ');
                  const dds = [];
                  [data?.trim_add_0050, data?.trim_add_2330, data?.trim_add_00679b].forEach(s => {
                    if (s && s.dd_from_high_pct != null && s.dd_from_high_pct < -5) {
