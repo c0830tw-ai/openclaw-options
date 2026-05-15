@@ -57,42 +57,86 @@ def calc_ma(closes, period):
     return out
 
 
+def calc_ema(closes, period):
+    if not closes:
+        return []
+    k = 2 / (period + 1)
+    out = [closes[0]]
+    for v in closes[1:]:
+        out.append(v * k + out[-1] * (1 - k))
+    return out
+
+
 def run_trim_add(closes: List[float], dates: List[date],
                  trim_levels: List[Tuple[float, float]],
-                 add_signal_fn: Callable[[int], bool]) -> Tuple[List[float], dict]:
-    """trim_levels: [(DD threshold, trim fraction), ...] e.g. [(0.05, 0.25), (0.10, 0.25)]
-       add_signal_fn(i) → 重新加滿回 1.0 unit
+                 add_signal_fn,
+                 add_levels=None,
+                 trim_signal_fn=None) -> Tuple[List[float], dict]:
+    """trim_levels: [(DD threshold, trim fraction), ...]
+       add_signal_fn(i): 單階 add-back 訊號 → 加滿回 1.0 unit
+       add_levels (optional): [(signal_fn, fraction), ...] — 分階加回
+       trim_signal_fn (optional): 訊號式 trim（如跌破均線），提供時忽略 DD threshold；
+                                  砍倉比例用 trim_levels[0][1]，可重複觸發（add-back 後 reset）
        回傳 (逐日 equity normalized, stats dict)"""
     n = len(closes)
     units = 1.0
     cash = 0.0
     recent_high = closes[0]
-    trim_state = 0           # 已觸發第幾個 trim level
+    trim_state = 0
+    add_state  = 0
     n_trims = 0
     n_adds = 0
     eq = [1.0]
     base = closes[0]
+    laddered_add = add_levels is not None and len(add_levels) > 0
+    use_signal_trim = trim_signal_fn is not None
+    signal_trim_frac = trim_levels[0][1] if trim_levels else 1.0
     for i in range(1, n):
-        # 在已滿倉或重新加滿時更新 recent high
-        if units >= 0.99:
+        # 「滿倉」判定：cash 為 0（沒閒置資金）= 已全部投入
+        fully_deployed = cash < 1e-6
+        if fully_deployed:
             recent_high = max(recent_high, closes[i])
         # 檢查 trim
-        dd = closes[i] / recent_high - 1
-        while trim_state < len(trim_levels) and dd <= -trim_levels[trim_state][0]:
-            trim_frac = trim_levels[trim_state][1]
-            trim_units = units * trim_frac
-            cash += trim_units * closes[i]
-            units -= trim_units
-            trim_state += 1
-            n_trims += 1
-        # 檢查 add-back（要求已有 cash 才執行）
-        if cash > 0 and add_signal_fn(i):
-            add_units = cash / closes[i]
-            units += add_units
-            cash = 0
-            recent_high = closes[i]
-            trim_state = 0
-            n_adds += 1
+        if use_signal_trim:
+            # 訊號式 trim：滿倉時若觸發訊號就砍
+            if fully_deployed and trim_signal_fn(i):
+                trim_units = units * signal_trim_frac
+                cash += trim_units * closes[i]
+                units -= trim_units
+                n_trims += 1
+        else:
+            dd = closes[i] / recent_high - 1
+            while trim_state < len(trim_levels) and dd <= -trim_levels[trim_state][0]:
+                trim_frac = trim_levels[trim_state][1]
+                trim_units = units * trim_frac
+                cash += trim_units * closes[i]
+                units -= trim_units
+                trim_state += 1
+                n_trims += 1
+        # 檢查 add-back
+        if cash > 0:
+            if laddered_add:
+                # 分階加回：每個 level 觸發時加該比例（of 原始 cash）
+                while add_state < len(add_levels) and add_levels[add_state][0](i):
+                    frac = add_levels[add_state][1]
+                    # frac 是剩餘 cash 的比例（最後一階用 frac=1.0 確保加滿）
+                    add_cash = cash * frac
+                    add_units = add_cash / closes[i]
+                    units += add_units
+                    cash  -= add_cash
+                    add_state += 1
+                    n_adds += 1
+                if cash < 1e-6:
+                    cash = 0; trim_state = 0; add_state = 0
+                    recent_high = closes[i]
+            else:
+                if add_signal_fn(i):
+                    add_units = cash / closes[i]
+                    units += add_units
+                    cash = 0
+                    recent_high = closes[i]
+                    trim_state = 0
+                    n_adds += 1
         eq.append((units * closes[i] + cash) / base)
     return eq, {'n_trims': n_trims, 'n_adds': n_adds,
                 'final_units': units, 'final_cash': cash}
@@ -120,6 +164,7 @@ def build_strategies(closes, dates):
     _, bb_low, _ = calc_bb(closes, 20)
     ma20 = calc_ma(closes, 20)
     ma60 = calc_ma(closes, 60)
+    ema23 = calc_ema(closes, 23)
 
     def ma20_cross_up(i):
         if i < 1 or ma20[i] is None or ma20[i-1] is None: return False
@@ -129,6 +174,13 @@ def build_strategies(closes, dates):
         return closes[i] > ma60[i] and closes[i-1] <= ma60[i-1]
     def bb_low_touch(i):
         return bb_low[i] is not None and closes[i] <= bb_low[i]
+    def ema23_break_down(i):
+        # 收盤跌破 23 EMA（前一日仍在 EMA 上方）
+        if i < 1 or ema23[i] is None or ema23[i-1] is None: return False
+        return closes[i] < ema23[i] and closes[i-1] >= ema23[i-1]
+    def ema23_cross_up(i):
+        if i < 1 or ema23[i] is None or ema23[i-1] is None: return False
+        return closes[i] > ema23[i] and closes[i-1] <= ema23[i-1]
 
     results = []
     # Trim 單階段（50%）+ 不同 add-back
@@ -152,6 +204,51 @@ def build_strategies(closes, dates):
                             [(0.05, 0.25), (0.10, 0.33), (0.15, 0.50)],
                             ma20_cross_up)
     results.append(('Ladder 5/10/15% / +MA20', eq, meta))
+
+    # ── 新增變體（用戶 5/15 詢問執行方式對比）──
+    # Trim 100% (全出) + MA60 加回
+    eq, meta = run_trim_add(closes, dates, [(0.10, 1.00)], ma60_cross_up)
+    results.append(('Trim -10%×100% / +MA60', eq, meta))
+
+    # Trim 100% (全出) + MA20 加回
+    eq, meta = run_trim_add(closes, dates, [(0.10, 1.00)], ma20_cross_up)
+    results.append(('Trim -10%×100% / +MA20', eq, meta))
+
+    # Trim 50% + Add laddered (MA20 加 50% + MA60 加剩餘全部)
+    eq, meta = run_trim_add(
+        closes, dates, [(0.10, 0.50)], None,
+        add_levels=[(ma20_cross_up, 0.50), (ma60_cross_up, 1.00)]
+    )
+    results.append(('Trim 50% / +MA20×½+MA60×½', eq, meta))
+
+    # ★ 新增（用戶 5/15 提議）：-5% 砍 50% + -10% 再砍 100%（即全出）
+    # 這是「分階出場」邏輯：先預警出一半、跌深再全出
+    eq, meta = run_trim_add(closes, dates, [(0.05, 0.50), (0.10, 1.00)], ma60_cross_up)
+    results.append(('Trim 5%/50%+10%/100% / +MA60', eq, meta))
+
+    eq, meta = run_trim_add(closes, dates, [(0.05, 0.50), (0.10, 1.00)], ma20_cross_up)
+    results.append(('Trim 5%/50%+10%/100% / +MA20', eq, meta))
+
+    # ★ 新增（用戶 5/15 提議）：跌破 23 EMA 全賣 + 站上 MA60 全買
+    # 訊號式 trim（非 DD 觸發），用 trim_levels[0][1] = 1.0 表示全出
+    eq, meta = run_trim_add(closes, dates, [(0, 1.00)], ma60_cross_up,
+                            trim_signal_fn=ema23_break_down)
+    results.append(('EMA23↓ 全出 / +MA60', eq, meta))
+
+    # 同樣訊號 trim 但 MA20 加回（看是否更快）
+    eq, meta = run_trim_add(closes, dates, [(0, 1.00)], ma20_cross_up,
+                            trim_signal_fn=ema23_break_down)
+    results.append(('EMA23↓ 全出 / +MA20', eq, meta))
+
+    # 跌破 EMA23 全出 + 站回 EMA23 全進（同訊號雙向，最敏感）
+    eq, meta = run_trim_add(closes, dates, [(0, 1.00)], ema23_cross_up,
+                            trim_signal_fn=ema23_break_down)
+    results.append(('EMA23↓ 全出 / +EMA23↑', eq, meta))
+
+    # 跌破 EMA23 半出 + 站回 EMA23 補回（保守版）
+    eq, meta = run_trim_add(closes, dates, [(0, 0.50)], ema23_cross_up,
+                            trim_signal_fn=ema23_break_down)
+    results.append(('EMA23↓ 半出 / +EMA23↑', eq, meta))
 
     # 對照組 Buy & Hold
     bh_eq = [c / closes[0] for c in closes]
