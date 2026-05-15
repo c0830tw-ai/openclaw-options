@@ -5973,6 +5973,88 @@ function TrimAddBacktestTable({ ticker }) {
   );
 }
 
+// Regime detector — 每個資產 regime + 推薦策略
+const REGIME_COLOR = {
+  bull:      { bg:'#0a1f0e', fg:'#22c55e', icon:'🐂' },
+  long_bear: { bg:'#2a0e0e', fg:'#ef4444', icon:'🐻' },
+  v_crash:   { bg:'#2a1408', fg:'#fb923c', icon:'🐻' },
+  sideways:  { bg:'#101620', fg:'#60a5fa', icon:'😴' },
+};
+
+function RegimeCard({ ticker, name, regime }) {
+  if (!regime) return (
+    <div style={{padding:'10px 14px', marginBottom:8, background:'#0a0f1a',
+                 borderLeft:'3px solid #475569', borderRadius:4, fontSize:11, color:'#64748b'}}>
+      <b style={{color:'#94a3b8'}}>{name} ({ticker})</b>：資料不足
+    </div>
+  );
+  const c = REGIME_COLOR[regime.regime] || REGIME_COLOR.sideways;
+  const sigs = regime.signals || {};
+  const scores = regime.all_scores || {};
+  return (
+    <div style={{padding:'12px 14px', marginBottom:10, background: c.bg,
+                 borderLeft:`4px solid ${c.fg}`, borderRadius:4, fontSize:11}}>
+      <div style={{display:'flex', alignItems:'baseline', justifyContent:'space-between', marginBottom:6}}>
+        <div>
+          <b style={{color:'#e2e8f0', fontSize:13}}>{name} ({ticker})</b>
+          <span style={{marginLeft:10, fontSize:14, color: c.fg, fontWeight:700}}>
+            {regime.label}
+          </span>
+          <span style={{marginLeft:8, fontSize:10, color:'#64748b'}}>
+            score {regime.score}/100
+          </span>
+        </div>
+      </div>
+      {/* 推薦策略 */}
+      <div style={{padding:'6px 10px', marginBottom:6, background:'#070b15',
+                   borderRadius:3, fontSize:11, color:'#cbd5e1'}}>
+        🎯 <b style={{color: c.fg}}>推薦策略</b>：{regime.recommended_strategy}
+      </div>
+      {/* 訊號明細 */}
+      <div style={{display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:6,
+                   padding:'4px 0', fontSize:10, color:'#94a3b8'}}>
+        <div>ADX <b style={{color: sigs.adx > 25 ? '#86efac' : '#fca5a5'}}>{sigs.adx ?? '—'}</b></div>
+        <div>60d <b style={{color: sigs.ret_60d_pct > 5 ? '#86efac' : sigs.ret_60d_pct < -5 ? '#fca5a5' : '#fbbf24'}}>
+          {sigs.ret_60d_pct >= 0 ? '+' : ''}{sigs.ret_60d_pct?.toFixed(1) ?? '—'}%</b></div>
+        <div>10d <b style={{color: sigs.ret_10d_pct > 3 ? '#86efac' : sigs.ret_10d_pct < -3 ? '#fca5a5' : '#cbd5e1'}}>
+          {sigs.ret_10d_pct >= 0 ? '+' : ''}{sigs.ret_10d_pct?.toFixed(1) ?? '—'}%</b></div>
+        <div>DD <b style={{color: sigs.dd_from_high_pct < -5 ? '#fca5a5' : '#86efac'}}>
+          {sigs.dd_from_high_pct?.toFixed(1) ?? '—'}%</b></div>
+        <div>MA60 <b style={{color: sigs.above_ma60 ? '#86efac' : '#fca5a5'}}>
+          {sigs.above_ma60 ? '✓上' : '✗下'}</b></div>
+        <div>MA20 <b style={{color: sigs.above_ma20 ? '#86efac' : '#fca5a5'}}>
+          {sigs.above_ma20 ? '✓上' : '✗下'}</b></div>
+        <div>BB <b style={{color:'#cbd5e1'}}>{sigs.bb_pattern || '—'}</b></div>
+        <div>MACD <b style={{color: sigs.macd_hist > 0 ? '#86efac' : '#fca5a5'}}>
+          {sigs.macd_hist >= 0 ? '+' : ''}{sigs.macd_hist?.toFixed(1) ?? '—'}</b></div>
+      </div>
+      {/* Score 明細 */}
+      <div style={{marginTop:6, padding:'4px 8px', background:'#070b15', borderRadius:3,
+                   fontSize:9, color:'#64748b', lineHeight:1.5}}>
+        🐂 Bull: {scores.bull ?? 0} · 🐻 Long Bear: {scores.long_bear ?? 0}
+        · 🐻 V Crash: {scores.v_crash ?? 0} · 😴 Sideways: {scores.sideways ?? 0}
+        <br />
+        💡 {regime.why}
+      </div>
+    </div>
+  );
+}
+
+function RegimeDetector({ data }) {
+  return (
+    <div style={{padding:'4px 0'}}>
+      <RegimeCard ticker="0050"   name="元大台灣 50"     regime={data?.indicators_0050?.regime} />
+      <RegimeCard ticker="2330"   name="台積電"          regime={data?.indicators?.regime} />
+      <RegimeCard ticker="00679B" name="元大美債 20 年" regime={data?.indicators_00679b?.regime} />
+      <div style={{marginTop:10, padding:'8px 12px', background:'#070b15',
+                   borderLeft:'3px solid #475569', borderRadius:4, fontSize:10, color:'#64748b', lineHeight:1.5}}>
+        💡 <b>使用方式</b>：score &gt; 60 = 訊號明確；score 40-60 = regime 轉換中；score &lt; 40 = 不明確<br />
+        ⚠ <b>切換策略前</b>：建議連續 5-7 個交易日 regime 維持同一個，再人工切換 trim_add 規則
+      </div>
+    </div>
+  );
+}
+
 function TrimAddSOP({ s }) {
   if (!s || s.price == null) return <div style={{padding:'12px', color:'#94a3b8', fontSize:11}}>資料不足（需 60 日 K）</div>;
 
@@ -6693,6 +6775,21 @@ function App() {
       <Section title="💡 市場機會" defaultOpen={false} accent="blue"
                badge={data?.weekly_opportunities?.length ? `${data.weekly_opportunities.length} 週` : null}>
         <WeeklyOpportunities data={data} />
+      </Section>
+
+      {/* 📊 Regime Detector — 偵測市況推薦策略 */}
+      <Section title="📊 Regime Detector" defaultOpen={false} accent="blue"
+               badge={(() => {
+                 const r0050 = data?.indicators_0050?.regime;
+                 const r2330 = data?.indicators?.regime;
+                 const r679 = data?.indicators_00679b?.regime;
+                 const tags = [];
+                 if (r0050) tags.push(`0050 ${r0050.label}`);
+                 if (r2330) tags.push(`2330 ${r2330.label}`);
+                 if (r679)  tags.push(`00679B ${r679.label}`);
+                 return tags.length ? tags.join(' · ') : null;
+               })()}>
+        <RegimeDetector data={data} />
       </Section>
 
       {/* 📉 動態管理 SOP — 三個資產的 trim & add-back */}

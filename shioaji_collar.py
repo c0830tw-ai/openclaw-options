@@ -582,6 +582,105 @@ def _detect_bb_pattern(opens: list, highs: list, lows: list, closes: list,
     }
 
 
+def _detect_regime(closes: list, highs: list, lows: list,
+                   adx: float, bb_pattern: Optional[dict],
+                   ma20: float, ma60: Optional[float],
+                   dd_from_high_pct: Optional[float],
+                   macd_hist: Optional[float],
+                   hv: Optional[float]) -> Optional[dict]:
+    """偵測市況 regime（牛/長熊/短熊/盤整）並推薦策略。
+
+    Score-based approach: 計算每種 regime 的分數，取最高。
+    回傳：{regime, label, score, recommended_strategy, signals: {...}, why}
+    """
+    if not closes or len(closes) < 30:
+        return None
+
+    cur = closes[-1]
+    ret_60d = (cur / closes[-min(60, len(closes))] - 1) * 100 if len(closes) >= 2 else 0
+    ret_10d = (cur / closes[-min(10, len(closes))] - 1) * 100 if len(closes) >= 11 else 0
+    above_ma20 = cur > ma20 if ma20 else False
+    above_ma60 = cur > ma60 if ma60 else False
+    bb_p = (bb_pattern or {}).get('pattern')
+    band_width_rank = (bb_pattern or {}).get('band_width_pct_rank', 50)
+
+    # 計算各 regime score
+    scores = {'bull': 0, 'long_bear': 0, 'v_crash': 0, 'sideways': 0}
+
+    # 🐂 Bull score
+    if adx > 25: scores['bull'] += 30
+    if above_ma60: scores['bull'] += 20
+    if bb_p in ('ride_up_expand', 'ride_up'): scores['bull'] += 30
+    if macd_hist and macd_hist > 0: scores['bull'] += 10
+    if ret_60d > 10: scores['bull'] += 15
+    if dd_from_high_pct and dd_from_high_pct < -5: scores['bull'] -= 20
+
+    # 🐻 Long Bear score
+    if adx > 25: scores['long_bear'] += 20
+    if not above_ma60: scores['long_bear'] += 25
+    if bb_p in ('ride_down_expand', 'ride_down'): scores['long_bear'] += 30
+    if macd_hist and macd_hist < 0: scores['long_bear'] += 10
+    if ret_60d < -10: scores['long_bear'] += 20
+    if dd_from_high_pct and dd_from_high_pct < -15: scores['long_bear'] += 10
+
+    # 🐻 V Crash score（短期暴跌）
+    if ret_10d < -10: scores['v_crash'] += 40
+    if bb_p == 'leave_up_bear': scores['v_crash'] += 25
+    if band_width_rank > 80: scores['v_crash'] += 20   # 帶寬擴張
+    if dd_from_high_pct and dd_from_high_pct < -15 and ret_10d < -5:
+        scores['v_crash'] += 15
+
+    # 😴 Sideways score
+    if adx < 20: scores['sideways'] += 35
+    if bb_p in ('squeeze', 'parallel'): scores['sideways'] += 30
+    if abs(ret_60d) < 5: scores['sideways'] += 20
+    if macd_hist is not None and abs(macd_hist) < (cur * 0.005 if cur else 1):
+        scores['sideways'] += 15
+
+    # 選最高分
+    regime = max(scores, key=scores.get)
+    top_score = scores[regime]
+
+    label_map = {
+        'bull':       '🐂 牛市',
+        'long_bear':  '🐻 長熊',
+        'v_crash':    '🐻 短熊 (V 字)',
+        'sideways':   '😴 盤整',
+    }
+    recommend = {
+        'bull':       'Trim 5%/50%+10%/100% / +BB↓ touch（牛市抄回測點最佳）',
+        'long_bear':  'EMA23↓ 全出 / +MA20（早出場避漫長跌）',
+        'v_crash':    'ATR×2 trailing / +MA20（自適應距離抓 V 反）',
+        'sideways':   'EMA23↓ / +MA60 或保本停利（慢進慢出避 whipsaw）',
+    }
+    why_map = {
+        'bull':      f'ADX {adx:.1f} + 站上 MA60 + 60d {ret_60d:+.1f}%',
+        'long_bear': f'ADX {adx:.1f} + 跌破 MA60 + 60d {ret_60d:+.1f}%',
+        'v_crash':   f'10d {ret_10d:+.1f}% + DD {dd_from_high_pct or 0:+.1f}%',
+        'sideways':  f'ADX {adx:.1f} + 60d {ret_60d:+.1f}% + BB {bb_p}',
+    }
+
+    return {
+        'regime':     regime,
+        'label':      label_map[regime],
+        'score':      top_score,
+        'all_scores': scores,
+        'recommended_strategy': recommend[regime],
+        'why':        why_map[regime],
+        'signals':    {
+            'adx':              round(adx, 1),
+            'above_ma20':       above_ma20,
+            'above_ma60':       above_ma60,
+            'bb_pattern':       bb_p,
+            'band_width_rank':  round(band_width_rank, 1) if band_width_rank is not None else None,
+            'ret_10d_pct':      round(ret_10d, 2),
+            'ret_60d_pct':      round(ret_60d, 2),
+            'dd_from_high_pct': round(dd_from_high_pct, 2) if dd_from_high_pct is not None else None,
+            'macd_hist':        round(macd_hist, 2) if macd_hist is not None else None,
+        },
+    }
+
+
 def _calc_adx(highs: list, lows: list, closes: list, period: int = 14) -> float:
     """Wilder 平滑法 ADX（平均趨向指數）。"""
     n = len(closes)
@@ -1966,6 +2065,24 @@ def fetch_kbars(api, stock_code: str) -> Optional[dict]:
             recent_high = max(closes[-60:])
             result['recent_high_60d'] = recent_high
             result['dd_from_high_pct'] = (closes[-1] / recent_high - 1) * 100
+
+        # Regime detection（用戶 5/16 要求加 Regime Detector）
+        try:
+            regime = _detect_regime(
+                closes, highs, lows,
+                adx=adx,
+                bb_pattern=bb_pat,
+                ma20=ma,
+                ma60=result.get('ma60'),
+                dd_from_high_pct=result.get('dd_from_high_pct'),
+                macd_hist=macd_tuple[2] if macd_tuple else None,
+                hv=hv,
+            )
+            if regime:
+                result['regime'] = regime
+                log.info(f"{stock_code} Regime: {regime['label']} (score {regime['score']})")
+        except Exception as _e:
+            log.warning(f'{stock_code} regime 偵測失敗（{_e}），略過')
         return result
     except Exception as e:
         log.warning(f'{stock_code} kbar 抓取失敗（{e}）')
