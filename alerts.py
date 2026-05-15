@@ -61,6 +61,8 @@ DEFAULT_RULES = {
     'telegram_enabled':          True,
     'event_alerts_enabled':      False, # 事件提醒（CPI/FOMC 等），預設關閉避免每次 refresh 都發
     'risk_alerts_skip_metrics':  ['Theta 成本'],  # 略過這些風險指標的 Telegram 推播
+    'trim_add_alerts_enabled':   True,  # 動態管理 SOP 訊號 — 必須開啟（用戶 5/15 要求不能遺漏）
+    'trim_add_cooldown_minutes': 720,   # trim/add 訊號專用 cooldown 12h（避免每次 refresh 重推）
 }
 
 
@@ -347,6 +349,69 @@ def evaluate(data: dict, rules: dict) -> list:
             'tip':   f'{ev.get("note") or risk_tip}。賣方/長 vega 部位請評估是否調整',
         })
 
+    # 14. 動態管理 SOP 訊號（trim & add-back）— 用戶 5/15 要求一定要推
+    # 預設開啟、不在 dashboard dedup 範圍（行動類訊號）
+    if rules.get('trim_add_alerts_enabled', True):
+        for key, label in [('trim_add_0050', '0050'),
+                           ('trim_add_2330', '2330'),
+                           ('trim_add_00679b', '00679B')]:
+            s = data.get(key)
+            if not s:
+                continue
+            ticker = s.get('ticker', label)
+            rule   = s.get('rule', '')
+            price  = s.get('price')
+            mode   = s.get('trim_mode', 'single')
+            lots   = s.get('lots_held', 0)
+            # Trim 觸發（依 mode 區分訊號）
+            tier2 = s.get('trim_triggered_2') is True
+            tier1 = s.get('trim_triggered') is True
+            if mode == 'tiered':
+                if tier2:
+                    alerts.append({
+                        'key':   f'trim_{ticker}_tier2',
+                        'level': '🔴',
+                        'msg':   f"{ticker} Trim 第 2 階觸發：現價 {price}，**全出 {lots} 口**",
+                        'tip':   f'規則：{rule}。從高點跌 -10%+，T+1 09:00-09:30 限價賣出剩餘所有口數',
+                    })
+                elif tier1:
+                    half = round(lots * 0.5)
+                    alerts.append({
+                        'key':   f'trim_{ticker}_tier1',
+                        'level': '🟠',
+                        'msg':   f"{ticker} Trim 第 1 階觸發：現價 {price}，砍 {half} 口（留 {lots - half} 口）",
+                        'tip':   f'規則：{rule}。從高點跌 -5%+，T+1 09:00-09:30 限價賣 50%',
+                    })
+            elif mode == 'signal_full':
+                if tier1:
+                    sig = s.get('trim_signal', '訊號')
+                    alerts.append({
+                        'key':   f'trim_{ticker}_signal',
+                        'level': '🔴',
+                        'msg':   f"{ticker} Trim 訊號：{sig}，現價 {price}，**全出 {lots} 口**",
+                        'tip':   f'規則：{rule}。T+1 09:00-09:30 限價全出',
+                    })
+            else:   # single_full / single
+                if tier1:
+                    size = s.get('trim_size_pct', 50)
+                    act  = '全出' if size == 100 else f'砍 {round(lots*size/100)} 口'
+                    alerts.append({
+                        'key':   f'trim_{ticker}',
+                        'level': '🔴',
+                        'msg':   f"{ticker} Trim 觸發：現價 {price}，**{act}**",
+                        'tip':   f'規則：{rule}。T+1 09:00-09:30 限價執行',
+                    })
+            # Add-back 訊號（cross_up = 收盤剛站上 add_level，今天才剛 cross）
+            if s.get('cross_up'):
+                lvl = s.get('add_level_label', 'MA')
+                lvl_val = s.get('add_level')
+                alerts.append({
+                    'key':   f'add_{ticker}',
+                    'level': '🟢',
+                    'msg':   f"{ticker} Add-back 訊號：收盤站上 {lvl} ({lvl_val:.2f})，加回滿倉",
+                    'tip':   f'規則：{rule}。T+1 開盤分批限價買回剩餘 cash 對應口數',
+                })
+
     return alerts
 
 
@@ -536,7 +601,13 @@ def main(dry_run: bool = False):
 
     fired = evaluate(data, rules)
     cooldown = rules['cooldown_minutes']
-    new_fired = [a for a in fired if not in_cooldown(state, a['key'], cooldown)]
+    trim_cooldown = rules.get('trim_add_cooldown_minutes', cooldown)
+    # trim/add 訊號用較長 cooldown（避免每次 refresh 重推），其他用通用 cooldown
+    def _cd(key: str) -> int:
+        if key.startswith('trim_') or key.startswith('add_'):
+            return trim_cooldown
+        return cooldown
+    new_fired = [a for a in fired if not in_cooldown(state, a['key'], _cd(a['key']))]
 
     for a in fired:
         prefix = '[FIRED]' if a in new_fired else '[COOLDOWN]'
