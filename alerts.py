@@ -352,6 +352,33 @@ def evaluate(data: dict, rules: dict) -> list:
     # 14. 動態管理 SOP 訊號（trim & add-back）— 用戶 5/15 要求一定要推
     # 預設開啟、不在 dashboard dedup 範圍（行動類訊號）
     if rules.get('trim_add_alerts_enabled', True):
+        # 14a. DD 里程碑警示（-5% / -10% / -15% from recent high）
+        # 用戶 5/15 強調「創高後回檔 5%、10% 一定要通知」，獨立於 trim 動作
+        DD_MILESTONES = [5, 10, 15]
+        for key, label in [('trim_add_0050', '0050'),
+                           ('trim_add_2330', '2330'),
+                           ('trim_add_00679b', '00679B')]:
+            s = data.get(key)
+            if not s:
+                continue
+            dd  = s.get('dd_from_high_pct')
+            rh  = s.get('recent_high')
+            if dd is None or rh is None:
+                continue
+            ticker = s.get('ticker', label)
+            # 找出當前 DD 已突破的最深里程碑（如 DD -6%，回報 -5%；DD -11% 回報 -10%）
+            crossed = [m for m in DD_MILESTONES if dd <= -m]
+            if crossed:
+                deepest = max(crossed)
+                level = '🔴' if deepest >= 10 else '🟠'
+                alerts.append({
+                    'key':   f'dd_warn_{ticker}_{deepest}',
+                    'level': level,
+                    'msg':   f"{ticker} 從 60d 高 {rh:.2f} 回檔 {dd:.2f}%（突破 -{deepest}% 里程碑）",
+                    'tip':   f'規則：{s.get("rule", "")}。詳見 dashboard 動態管理 SOP 卡片',
+                })
+
+        # 14b. Trim & add-back 動作訊號
         for key, label in [('trim_add_0050', '0050'),
                            ('trim_add_2330', '2330'),
                            ('trim_add_00679b', '00679B')]:
@@ -604,7 +631,7 @@ def main(dry_run: bool = False):
     trim_cooldown = rules.get('trim_add_cooldown_minutes', cooldown)
     # trim/add 訊號用較長 cooldown（避免每次 refresh 重推），其他用通用 cooldown
     def _cd(key: str) -> int:
-        if key.startswith('trim_') or key.startswith('add_'):
+        if key.startswith('trim_') or key.startswith('add_') or key.startswith('dd_warn_'):
             return trim_cooldown
         return cooldown
     new_fired = [a for a in fired if not in_cooldown(state, a['key'], _cd(a['key']))]
