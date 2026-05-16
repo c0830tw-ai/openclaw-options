@@ -6494,7 +6494,6 @@ function SectionNear({ data, taiex, taiexHigh, taiexLow, price2330, price0050, h
         <SectionMeta dte={data.dte} dteTrading={data.dte_trading} iv={data.iv_used} ivSource={data.iv_source} />
       </div>
       <StrikeAlert selectedOptions={data.selected_options} taiex={taiex} dte={data.dte} />
-      <ShortPutRecommender data={data} />
       <HuiDistCheck selectedOptions={data.selected_options} taiex={taiex} />
       <div className="options-row">
         <OptionCard type="put"  data={data.selected_options?.put}  taiex={taiex} taiexHigh={taiexHigh} taiexLow={taiexLow} price2330={price2330} price0050={price0050} />
@@ -6528,7 +6527,6 @@ function SectionWeekly({ weekly, label, taiex, taiexHigh, taiexLow, price2330, p
         <SectionMeta dte={dte} dteTrading={dte_trading} iv={iv_used} ivSource={iv_source} />
       </div>
       <StrikeAlert selectedOptions={selected_options} taiex={taiex} dte={dte} />
-      <ShortPutRecommender recommender={weekly.short_put_recommender} tx={taiex} />
       <HuiDistCheck selectedOptions={selected_options} taiex={taiex} />
       <div className="options-row">
         <OptionCard type="put"  data={selected_options?.put}  taiex={taiex} taiexHigh={taiexHigh} taiexLow={taiexLow} price2330={price2330} price0050={price0050} />
@@ -6556,7 +6554,6 @@ function SectionFarMonth({ farMonth, taiex, taiexHigh, taiexLow, price2330, pric
         <SectionMeta dte={dte} dteTrading={dte_trading} iv={iv_used} ivSource={iv_source} />
       </div>
       <StrikeAlert selectedOptions={selected_options} taiex={taiex} dte={dte} />
-      <ShortPutRecommender recommender={farMonth.short_put_recommender} tx={taiex} />
       <HuiDistCheck selectedOptions={selected_options} taiex={taiex} />
       <div className="options-row">
         <OptionCard type="put"  data={selected_options?.put}  taiex={taiex} taiexHigh={taiexHigh} taiexLow={taiexLow} price2330={price2330} price0050={price0050} />
