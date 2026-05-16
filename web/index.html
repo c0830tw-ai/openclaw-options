@@ -6502,11 +6502,6 @@ function SectionNear({ data, taiex, taiexHigh, taiexLow, price2330, price0050, h
       <SimTable structures={data.structures} selectedOptions={data.selected_options} taiex={taiex} />
       <RollPanel dte={data.dte} selectedOptions={data.selected_options} taiex={taiex} label={`近月 ${data.txo_month}`} />
       <WheelPanel selectedOptions={data.selected_options} taiex={taiex} price2330={price2330} price0050={price0050} hvVal={hvVal} />
-      <div className="structures">
-        {data.structures?.map((s, i) => (
-          <StructCard key={s.name} s={s} isRecommended={i === 0} taiex={taiex} txoMonth={data.txo_month} />
-        ))}
-      </div>
       <SpreadsSection spreads={data.spreads} taiex={taiex} txoMonth={data.txo_month} />
     </>
   );
@@ -6535,11 +6530,6 @@ function SectionWeekly({ weekly, label, taiex, taiexHigh, taiexLow, price2330, p
       <SimTable structures={structures} selectedOptions={selected_options} taiex={taiex} />
       <RollPanel dte={dte} selectedOptions={selected_options} taiex={taiex} label={`${label} ${series}`} />
       <WheelPanel selectedOptions={selected_options} taiex={taiex} price2330={price2330} price0050={price0050} hvVal={hvVal} />
-      <div className="structures compact-grid">
-        {structures?.map((s, i) => (
-          <StructCard key={s.name} s={s} isRecommended={i === 0} taiex={taiex} compact />
-        ))}
-      </div>
     </>
   );
 }
@@ -6562,11 +6552,6 @@ function SectionFarMonth({ farMonth, taiex, taiexHigh, taiexLow, price2330, pric
       <SimTable structures={structures} selectedOptions={selected_options} taiex={taiex} />
       <RollPanel dte={dte} selectedOptions={selected_options} taiex={taiex} label={`遠月 ${txo_month}`} />
       <WheelPanel selectedOptions={selected_options} taiex={taiex} price2330={price2330} price0050={price0050} hvVal={hvVal} />
-      <div className="structures compact-grid">
-        {structures?.map((s, i) => (
-          <StructCard key={s.name} s={s} isRecommended={i === 0} taiex={taiex} compact />
-        ))}
-      </div>
     </>
   );
 }
@@ -6608,11 +6593,6 @@ function Section0050({ collar, taiex }) {
           <span className="ib-key">建議 TXO 口數</span>
           <span className="ib-val accent">{recommended_contracts} 口</span>
         </div>
-      </div>
-      <div className="structures compact-grid">
-        {structures?.map((s, i) => (
-          <StructCard key={s.name} s={s} isRecommended={i === 0} taiex={taiex} compact />
-        ))}
       </div>
     </>
   );
