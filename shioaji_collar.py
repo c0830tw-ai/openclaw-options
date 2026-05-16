@@ -2036,6 +2036,9 @@ def fetch_kbars(api, stock_code: str) -> Optional[dict]:
             yesterday_ma20 = sum(closes[-21:-1]) / 20
             result['above_ma20']    = closes[-1] > ma20_today
             result['cross_up_ma20'] = (closes[-1] > ma20_today and closes[-2] <= yesterday_ma20)
+        # BB↓ touch (Regime Detector 2026-05-16 加入：牛市加回訊號)
+        # 收盤 ≤ BB 下軌 = 觸碰、買回
+        result['bb_low_touched'] = (bb_l is not None and closes[-1] <= bb_l)
         # EMA23（trim 出場訊號用，2026-05-15 加入）
         if n_days >= 23:
             def _ema(series, p):
@@ -3302,18 +3305,18 @@ def main():
             'indicators_0050': indicators_0050,
             'indicators_00679b': indicators_00679b,
             # 0050 動態管理 SOP 訊號（5 年回測冠軍：Trim -10% / +MA60）
-            # 0050 SOP（5 年回測冠軍 2026-05-15 修正：Tiered -5%×50% + -10%×100% / +MA20）
+            # 0050 SOP（2026-05-16 Regime Detector 驗證：牛市改用 BB↓ touch 買回）
             'trim_add_0050': (
                 {
                     'ticker':           '0050',
                     'name':             '元大台灣 50',
-                    'rule':             'Trim 5%/50% + 10%/100% / +MA20',
+                    'rule':             'Trim 5%/50% + 10%/100% / +BB↓ touch',
                     'trim_mode':        'tiered',
-                    'trim_pct':         5,           # 第一階觸發 -5%
+                    'trim_pct':         5,
                     'trim_size_pct':    50,
-                    'trim_pct_2':       10,          # 第二階觸發 -10%（全出）
-                    'trim_size_pct_2':  100,         # 100% of 剩餘
-                    'add_signal':       'MA20 cross-up',
+                    'trim_pct_2':       10,
+                    'trim_size_pct_2':  100,
+                    'add_signal':       'BB↓ touch',
                     'price':            price_0050,
                     'recent_high':      indicators_0050.get('recent_high_60d'),
                     'dd_from_high_pct': indicators_0050.get('dd_from_high_pct'),
@@ -3321,45 +3324,46 @@ def main():
                     'trim_threshold_2': (indicators_0050.get('recent_high_60d') or 0) * 0.90,
                     'trim_triggered':   (indicators_0050.get('dd_from_high_pct') or 0) <= -5,
                     'trim_triggered_2': (indicators_0050.get('dd_from_high_pct') or 0) <= -10,
-                    'add_level':        indicators_0050.get('ma20'),
-                    'above_add_level':  indicators_0050.get('above_ma20'),
-                    'cross_up':         indicators_0050.get('cross_up_ma20'),
-                    'add_level_label':  'MA20',
+                    'add_level':        indicators_0050.get('bb_lower'),
+                    # BB↓ touch 反向：價格在 BB↓ 上方 = 安全（等訊號）；觸碰 BB↓ = 觸發
+                    'above_add_level':  not indicators_0050.get('bb_low_touched'),
+                    'cross_up':         indicators_0050.get('bb_low_touched'),
+                    'add_level_label':  'BB↓',
                     'lots_held':        CFG.lots_0050,
                     'cost_basis':       CFG.cost_basis_0050,
                     'lot_size':         CFG.lot_size_0050,
                     'lot_unit_label':   '受益憑證',
                     'trim_size_lots':   round(CFG.lots_0050 * 0.5),
                     'futures_name':     'NYF 0050 股期',
-                    'note': '5 年回測冠軍（已修 bug）：報酬 +275.9% / DD -20.1% / Sharpe 1.72（贏 B&H 全部維度）',
+                    'note': '牛市冠軍：5 年 +275.9% / 強牛段 +106.2% / Sharpe 4.17（Regime Detector 推薦）',
                 } if indicators_0050 else None
             ),
-            # 2330 SOP（5 年回測冠軍 2026-05-15 修正：-10%×100% / +MA20）
+            # 2330 SOP（2026-05-16 Regime Detector 驗證：牛市改用 BB↓ touch 買回）
             'trim_add_2330': (
                 {
                     'ticker':           '2330',
                     'name':             '台積電',
-                    'rule':             'Trim -10%×100% / +MA20',
+                    'rule':             'Trim -10%×100% / +BB↓ touch',
                     'trim_mode':        'single_full',
                     'trim_pct':         10,
-                    'trim_size_pct':    100,         # 全出
-                    'add_signal':       'MA20 cross-up',
+                    'trim_size_pct':    100,
+                    'add_signal':       'BB↓ touch',
                     'price':            price_2330,
                     'recent_high':      indicators.get('recent_high_60d'),
                     'dd_from_high_pct': indicators.get('dd_from_high_pct'),
                     'trim_threshold':   (indicators.get('recent_high_60d') or 0) * 0.90,
                     'trim_triggered':   (indicators.get('dd_from_high_pct') or 0) <= -10,
-                    'add_level':        indicators.get('ma20'),
-                    'above_add_level':  indicators.get('above_ma20'),
-                    'cross_up':         indicators.get('cross_up_ma20'),
-                    'add_level_label':  'MA20',
+                    'add_level':        indicators.get('bb_lower'),
+                    'above_add_level':  not indicators.get('bb_low_touched'),
+                    'cross_up':         indicators.get('bb_low_touched'),
+                    'add_level_label':  'BB↓',
                     'lots_held':        14,
                     'cost_basis':       2148,
                     'lot_size':         100,
                     'lot_unit_label':   '股',
-                    'trim_size_lots':   14,          # 全出
+                    'trim_size_lots':   14,
                     'futures_name':     'QFF 小台積電期',
-                    'note': '5 年回測冠軍（已修 bug）：報酬 +424.5% / DD -26.6% / Sharpe 1.49（B&H +358.4% / -44.8% / 1.20）',
+                    'note': '牛市冠軍：強牛段 +114% / Sharpe 3.31（Regime Detector 推薦）',
                 } if indicators else None
             ),
             # 00679B SOP（5 年回測冠軍 2026-05-15 修正：EMA23↓ 全出 / +MA20）
