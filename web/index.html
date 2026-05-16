@@ -21,6 +21,9 @@
       padding: 20px;
       padding-bottom: max(20px, calc(env(safe-area-inset-bottom) + 20px));
       overscroll-behavior-y: none;
+      /* 用戶 5/17 要求字體放大（49 歲眼睛吃力）— 全頁面 zoom 1.15 */
+      /* zoom 在 Safari/Chrome/iOS 支援；Firefox 不支援但 fallback 不影響功能 */
+      zoom: 1.15;
     }
     @media (max-width: 600px) {
       body { padding: 12px 10px; font-size: 13px; }
