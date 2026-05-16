@@ -63,6 +63,8 @@ DEFAULT_RULES = {
     'risk_alerts_skip_metrics':  ['Theta 成本'],  # 略過這些風險指標的 Telegram 推播
     'trim_add_alerts_enabled':   True,  # 動態管理 SOP 訊號 — 必須開啟（用戶 5/15 要求不能遺漏）
     'trim_add_cooldown_minutes': 720,   # trim/add 訊號專用 cooldown 12h（避免每次 refresh 重推）
+    'regime_sideways_alerts_enabled': True,  # Sideways 連續 N 天警告（用戶 5/16 要求）
+    'regime_sideways_min_days':       3,     # 連續 N 天 sideways score > 60 才推
 }
 
 
@@ -447,6 +449,57 @@ def evaluate(data: dict, rules: dict) -> list:
                               f'執行：T+1 09:00-09:30 限價買回；流動性好可一次掛、差就分 2-3 次掛'),
                 })
 
+        # 14c. Sideways regime 警告（連續 3 天 score > 60）— 用戶 5/16 要求
+        # 提醒考慮暫停 -5% Trim、改用 EMA23↓ / +MA60 盤整版規則
+        if rules.get('regime_sideways_alerts_enabled', True):
+            import datetime as _dt
+            from pathlib import Path as _P
+            streaks_file = _P(__file__).parent / 'regime_streaks.json'
+            streaks = {}
+            try:
+                if streaks_file.exists():
+                    streaks = json.loads(streaks_file.read_text(encoding='utf-8'))
+            except Exception:
+                streaks = {}
+            today_str = _dt.datetime.now().strftime('%Y-%m-%d')
+            min_days = rules.get('regime_sideways_min_days', 3)
+
+            for ind_key, ticker in [('indicators', '2330'),
+                                     ('indicators_0050', '0050'),
+                                     ('indicators_00679b', '00679B')]:
+                ind = data.get(ind_key) or {}
+                regime = ind.get('regime')
+                if not regime:
+                    continue
+                sideways_score = (regime.get('all_scores') or {}).get('sideways', 0)
+                is_sideways = regime.get('regime') == 'sideways' and sideways_score > 60
+                streak_key = f'{ticker}_sideways'
+                prev = streaks.get(streak_key, {'count': 0, 'last_date': None})
+                if is_sideways:
+                    if prev['last_date'] != today_str:
+                        prev['count'] = (prev['count'] + 1) if prev.get('last_date') else 1
+                        prev['last_date'] = today_str
+                        streaks[streak_key] = prev
+                    if prev['count'] >= min_days:
+                        alerts.append({
+                            'key':   f'regime_sideways_{ticker}',
+                            'level': '🟡',
+                            'msg':   f"{ticker} 進入盤整 {prev['count']} 天（Sideways score {sideways_score}）",
+                            'tip':   (f'⚠ 考慮暫停 -5% Trim 規則（盤整裡會 whipsaw）\n'
+                                      f'建議改用：EMA23↓ 全出 + MA60 cross-up 加回\n'
+                                      f'或：保本停利 +5% 啟動 trail -5%\n'
+                                      f'或：觀望等 regime 明朗（牛/熊確認）'),
+                        })
+                else:
+                    # 不是 sideways 就清掉 streak
+                    if streak_key in streaks:
+                        del streaks[streak_key]
+            try:
+                streaks_file.write_text(json.dumps(streaks, ensure_ascii=False, indent=2),
+                                         encoding='utf-8')
+            except Exception:
+                pass
+
     return alerts
 
 
@@ -639,7 +692,8 @@ def main(dry_run: bool = False):
     trim_cooldown = rules.get('trim_add_cooldown_minutes', cooldown)
     # trim/add 訊號用較長 cooldown（避免每次 refresh 重推），其他用通用 cooldown
     def _cd(key: str) -> int:
-        if key.startswith('trim_') or key.startswith('add_') or key.startswith('dd_warn_'):
+        if (key.startswith('trim_') or key.startswith('add_')
+                or key.startswith('dd_warn_') or key.startswith('regime_')):
             return trim_cooldown
         return cooldown
     new_fired = [a for a in fired if not in_cooldown(state, a['key'], _cd(a['key']))]

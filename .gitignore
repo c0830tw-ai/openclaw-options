@@ -5,6 +5,7 @@ night_probe.py
 taiwan_holidays_cache.json
 alerts_config.json
 alerts_state.json
+regime_streaks.json
 trades_ledger.json
 daily_snapshots.json
 .claude/
