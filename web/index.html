@@ -6502,7 +6502,6 @@ function SectionNear({ data, taiex, taiexHigh, taiexLow, price2330, price0050, h
       <SimTable structures={data.structures} selectedOptions={data.selected_options} taiex={taiex} />
       <RollPanel dte={data.dte} selectedOptions={data.selected_options} taiex={taiex} label={`近月 ${data.txo_month}`} />
       <WheelPanel selectedOptions={data.selected_options} taiex={taiex} price2330={price2330} price0050={price0050} hvVal={hvVal} />
-      <SpreadsSection spreads={data.spreads} taiex={taiex} txoMonth={data.txo_month} />
     </>
   );
 }
