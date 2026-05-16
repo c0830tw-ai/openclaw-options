@@ -1103,6 +1103,22 @@ function EquityChart({ data }) {
   );
 }
 
+function GroupDivider({ label, color = '#475569' }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      margin: '20px 0 8px 0', padding: '0 4px',
+    }}>
+      <div style={{flex: 1, height: 1, background: `${color}33`}} />
+      <span style={{
+        fontSize: 11, fontWeight: 700, color: color,
+        letterSpacing: '0.1em', textTransform: 'uppercase',
+      }}>{label}</span>
+      <div style={{flex: 1, height: 1, background: `${color}33`}} />
+    </div>
+  );
+}
+
 function Section({ title, defaultOpen = true, badge, accent = 'gray', children }) {
   const [open, setOpen] = React.useState(defaultOpen);
   const accentColors = {
@@ -6747,81 +6763,6 @@ function App() {
         </div>
       </div>
 
-      {/* 💡 市場機會 — 想加倉時看 */}
-      <Section title="💡 市場機會" defaultOpen={false} accent="blue"
-               badge={data?.weekly_opportunities?.length ? `${data.weekly_opportunities.length} 週` : null}>
-        <WeeklyOpportunities data={data} />
-      </Section>
-
-      {/* 📊 Regime Detector — 偵測市況推薦策略 */}
-      <Section title="📊 Regime Detector" defaultOpen={false} accent="blue"
-               badge={(() => {
-                 const r0050 = data?.indicators_0050?.regime;
-                 const r2330 = data?.indicators?.regime;
-                 const r679 = data?.indicators_00679b?.regime;
-                 const tags = [];
-                 if (r0050) tags.push(`0050 ${r0050.label}`);
-                 if (r2330) tags.push(`2330 ${r2330.label}`);
-                 if (r679)  tags.push(`00679B ${r679.label}`);
-                 return tags.length ? tags.join(' · ') : null;
-               })()}>
-        <RegimeDetector data={data} />
-      </Section>
-
-      {/* 📉 動態管理 SOP — 三個資產的 trim & add-back */}
-      <Section title="📉 動態管理 SOP" defaultOpen={false} accent="green"
-               badge={(() => {
-                 const triggers = [];
-                 [data?.trim_add_0050, data?.trim_add_2330, data?.trim_add_00679b].forEach(s => {
-                   if (!s) return;
-                   if (s.trim_triggered_2) triggers.push(`${s.ticker} 🔴全出`);
-                   else if (s.trim_triggered) triggers.push(`${s.ticker} 🟠Trim`);
-                   else if (s.cross_up) triggers.push(`${s.ticker} 🟢Add`);
-                 });
-                 if (triggers.length) return triggers.join(' · ');
-                 const dds = [];
-                 [data?.trim_add_0050, data?.trim_add_2330, data?.trim_add_00679b].forEach(s => {
-                   if (s && s.dd_from_high_pct != null && s.dd_from_high_pct < -5) {
-                     dds.push(`${s.ticker} ${s.dd_from_high_pct.toFixed(1)}%`);
-                   }
-                 });
-                 return dds.length ? dds.join(' · ') : null;
-               })()}>
-        <TrimAddSOP s={data?.trim_add_0050} />
-        <div style={{marginTop:16}} />
-        <TrimAddSOP s={data?.trim_add_2330} />
-        <div style={{marginTop:16}} />
-        <TrimAddSOP s={data?.trim_add_00679b} />
-      </Section>
-
-      {/* 📘 月選策略 SOP — 近月 + 次月 4-leg 結構執行流程 */}
-      <Section title="📘 月選策略 SOP" defaultOpen={false} accent="blue"
-               badge={(() => {
-                 const dte = data?.dte;
-                 const tx = data?.market?.tx_futures;
-                 const farDte = data?.far_month?.dte;
-                 const alerts = [];
-                 if (dte != null && dte >= 25 && dte <= 32) alerts.push('建倉時機');
-                 if (farDte != null && farDte >= 25 && farDte <= 35) alerts.push('次月可建');
-                 if (tx != null) {
-                   const callG = Math.round(tx * 1.029 / 100) * 100;
-                   const putG  = Math.round(tx * 0.910 / 100) * 100;
-                   if (tx >= callG) alerts.push('TX↑ 護欄');
-                   if (tx <= putG)  alerts.push('TX↓ 護欄');
-                 }
-                 if (dte != null && dte <= 1) alerts.push('平倉日 🔴');
-                 return alerts.length ? alerts.join(' · ') : null;
-               })()}>
-        <MonthlyStrategySOP data={data} mode="near" />
-        <div style={{
-          margin:'16px 0 12px 0', borderTop:'1px dashed #334155',
-          paddingTop:12, fontSize:10, color:'#64748b', textAlign:'center'
-        }}>
-          ── 次月預覽 ──
-        </div>
-        <MonthlyStrategySOP data={data} mode="far" />
-      </Section>
-
       {error && <div className="error-box">⚠ 載入失敗：{error}</div>}
       {data?.quotes_source === 'bs_estimate' && (
         <div className="error-box" style={{background:'#17130a', borderColor:'#ca8a04', color:'#fde68a'}}>
@@ -6841,12 +6782,94 @@ function App() {
         </div>
       ) : data ? (
         <>
+          {/* ═══════════════ 區塊 1：行情總覽 ═══════════════ */}
           <MarketStrip market={data.market} txo_month={data.txo_month} dte={data.dte}
                        indicators={data.indicators} targets={data.targets}
                        indicators0050={data.indicators_0050}
                        indicators00679b={data.indicators_00679b}
                        holding00679b={data.holding_00679b}
                        iv={data.iv_used} ivSource={data.iv_source} />
+
+          {/* ═══════════════ 區塊 2：決策訊號（最重要、預設開）═══════════════ */}
+          <GroupDivider label="🎯 決策訊號" color="#22c55e" />
+
+          {/* 📊 Regime Detector — 偵測市況推薦策略 */}
+          <Section title="📊 Regime Detector" defaultOpen={true} accent="blue"
+                   badge={(() => {
+                     const r0050 = data?.indicators_0050?.regime;
+                     const r2330 = data?.indicators?.regime;
+                     const r679 = data?.indicators_00679b?.regime;
+                     const tags = [];
+                     if (r0050) tags.push(`0050 ${r0050.label}`);
+                     if (r2330) tags.push(`2330 ${r2330.label}`);
+                     if (r679)  tags.push(`00679B ${r679.label}`);
+                     return tags.length ? tags.join(' · ') : null;
+                   })()}>
+            <RegimeDetector data={data} />
+          </Section>
+
+          {/* 📉 動態管理 SOP — 三個資產的 trim & add-back */}
+          <Section title="📉 動態管理 SOP" defaultOpen={true} accent="green"
+                   badge={(() => {
+                     const triggers = [];
+                     [data?.trim_add_0050, data?.trim_add_2330, data?.trim_add_00679b].forEach(s => {
+                       if (!s) return;
+                       if (s.trim_triggered_2) triggers.push(`${s.ticker} 🔴全出`);
+                       else if (s.trim_triggered) triggers.push(`${s.ticker} 🟠Trim`);
+                       else if (s.cross_up) triggers.push(`${s.ticker} 🟢Add`);
+                     });
+                     if (triggers.length) return triggers.join(' · ');
+                     const dds = [];
+                     [data?.trim_add_0050, data?.trim_add_2330, data?.trim_add_00679b].forEach(s => {
+                       if (s && s.dd_from_high_pct != null && s.dd_from_high_pct < -5) {
+                         dds.push(`${s.ticker} ${s.dd_from_high_pct.toFixed(1)}%`);
+                       }
+                     });
+                     return dds.length ? dds.join(' · ') : null;
+                   })()}>
+            <TrimAddSOP s={data?.trim_add_0050} />
+            <div style={{marginTop:16}} />
+            <TrimAddSOP s={data?.trim_add_2330} />
+            <div style={{marginTop:16}} />
+            <TrimAddSOP s={data?.trim_add_00679b} />
+          </Section>
+
+          {/* 📘 月選策略 SOP — 近月 + 次月 4-leg 結構執行流程 */}
+          <Section title="📘 月選策略 SOP" defaultOpen={false} accent="blue"
+                   badge={(() => {
+                     const dte = data?.dte;
+                     const tx = data?.market?.tx_futures;
+                     const farDte = data?.far_month?.dte;
+                     const alerts = [];
+                     if (dte != null && dte >= 25 && dte <= 32) alerts.push('建倉時機');
+                     if (farDte != null && farDte >= 25 && farDte <= 35) alerts.push('次月可建');
+                     if (tx != null) {
+                       const callG = Math.round(tx * 1.029 / 100) * 100;
+                       const putG  = Math.round(tx * 0.910 / 100) * 100;
+                       if (tx >= callG) alerts.push('TX↑ 護欄');
+                       if (tx <= putG)  alerts.push('TX↓ 護欄');
+                     }
+                     if (dte != null && dte <= 1) alerts.push('平倉日 🔴');
+                     return alerts.length ? alerts.join(' · ') : null;
+                   })()}>
+            <MonthlyStrategySOP data={data} mode="near" />
+            <div style={{
+              margin:'16px 0 12px 0', borderTop:'1px dashed #334155',
+              paddingTop:12, fontSize:10, color:'#64748b', textAlign:'center'
+            }}>
+              ── 次月預覽 ──
+            </div>
+            <MonthlyStrategySOP data={data} mode="far" />
+          </Section>
+
+          {/* 💡 市場機會 — 想加倉時看 */}
+          <Section title="💡 市場機會" defaultOpen={false} accent="blue"
+                   badge={data?.weekly_opportunities?.length ? `${data.weekly_opportunities.length} 週` : null}>
+            <WeeklyOpportunities data={data} />
+          </Section>
+
+          {/* ═══════════════ 區塊 3：選擇權鏈細節（依 DTE 排序）═══════════════ */}
+          <GroupDivider label="📈 選擇權鏈" color="#60a5fa" />
           <DTEWarning dte={data.dte} />
           <MarketHoursNote />
           {(() => {
@@ -6866,6 +6889,9 @@ function App() {
             return sections.map(s => <React.Fragment key={s.key}>{s.el}</React.Fragment>);
           })()}
           <Section0050 collar={data.collar_0050} taiex={data.market?.taiex} />
+
+          {/* ═══════════════ 區塊 4：對帳與績效（預設摺疊）═══════════════ */}
+          <GroupDivider label="📊 對帳與績效" color="#94a3b8" />
 
           {/* 📋 持倉明細 — 對帳/檢查用 */}
           <Section title="📋 持倉明細" defaultOpen={false} accent="gray"
