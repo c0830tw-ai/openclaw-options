@@ -6544,6 +6544,16 @@ function MonthlyStrategySOP({ data, mode = 'near' }) {
 
       <StepBox num="3" title={isHighIV ? '下單順序（高 IV 分段版）' : '下單順序（流動性最差先掛）'}
                status={isHighIV ? 'warn' : null}>
+        {dte != null && dte < 7 && !isFar && (
+          <div style={{
+            padding:'8px 12px', marginBottom:10,
+            background:'#2a1408', borderLeft:'3px solid #fb923c', borderRadius:4,
+            fontSize:11, color:'#fb923c'
+          }}>
+            ⚠️ <b>DTE 只剩 {dte} 天，下方履約價不適合新建倉</b>（σ√T 太小、距現價過近）<br />
+            <span style={{color:'#94a3b8'}}>→ 下方「<b>次月（建倉用）</b>」段才是該看的建倉建議</span>
+          </div>
+        )}
         {(() => {
           // ── BS-derived 履約價（依當前 IV / DTE 計算 target delta 對應 strike）──
           // 比寫死百分比準確得多（尤其長 DTE / 高 IV 時差距大）
@@ -7048,10 +7058,14 @@ function App() {
                    })()}>
             <MonthlyStrategySOP data={data} mode="near" />
             <div style={{
-              margin:'16px 0 12px 0', borderTop:'1px dashed #334155',
-              paddingTop:12, fontSize:10, color:'#64748b', textAlign:'center'
+              margin:'20px 0 14px 0', padding:'12px 14px',
+              background:'#0a1f0e', borderLeft:'4px solid #22c55e', borderRadius:6,
+              fontSize:13, color:'#86efac', textAlign:'center', fontWeight:600
             }}>
-              ── 次月預覽 ──
+              🟢 ─── <b>次月（建倉用）</b> ─── 🟢
+              <div style={{fontSize:10, color:'#64748b', fontWeight:400, marginTop:4}}>
+                ↓ 這才是建月選新單該看的履約價（DTE 30）↓
+              </div>
             </div>
             <MonthlyStrategySOP data={data} mode="far" />
           </Section>
