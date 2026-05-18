@@ -6074,6 +6074,62 @@ function RegimeDetector({ data }) {
   );
 }
 
+function CollapsibleTrimAddCard({ s }) {
+  // 智能展開：有觸發訊號的預設展開、其他預設摺疊
+  const hasTrigger = s && (s.trim_triggered_2 || s.trim_triggered || s.cross_up
+                            || (s.dd_from_high_pct != null && s.dd_from_high_pct < -5));
+  const [open, setOpen] = React.useState(hasTrigger);
+
+  if (!s) return null;
+  if (s.price == null) return null;
+
+  // 摘要：狀態 + DD + 觸發點距離
+  const status = s.trim_triggered_2 ? { icon:'🔴', color:'#ef4444', text:`觸發全出 (剩 ${s.lots_held} 口)` }
+               : s.trim_triggered ? { icon:'🟠', color:'#fb923c',
+                                       text: s.trim_mode === 'tiered'
+                                         ? `第 1 階觸發 (砍 ${Math.round(s.lots_held*0.5)} 口)`
+                                         : '觸發全出' }
+               : s.cross_up        ? { icon:'🟢', color:'#22c55e', text:'Add-back 訊號' }
+               : (s.dd_from_high_pct != null && s.dd_from_high_pct < -5)
+                                   ? { icon:'🟡', color:'#fbbf24', text:`DD ${s.dd_from_high_pct.toFixed(1)}%` }
+                                   : { icon:'⚪', color:'#475569', text:'安全·維持' };
+
+  return (
+    <div style={{
+      marginBottom: 12, background:'#0a0f1a',
+      borderLeft: `3px solid ${status.color}`, borderRadius:6
+    }}>
+      <div onClick={() => setOpen(!open)}
+           style={{
+             cursor:'pointer', padding:'10px 14px',
+             display:'flex', justifyContent:'space-between', alignItems:'center',
+             userSelect:'none'
+           }}>
+        <div style={{display:'flex', alignItems:'baseline', gap:8}}>
+          <span style={{fontSize:14, fontWeight:700, color:'#e2e8f0'}}>
+            {open ? '▼' : '▶'} {s.name} ({s.ticker})
+          </span>
+          <span style={{fontSize:11, color:'#94a3b8'}}>{s.rule}</span>
+        </div>
+        <div style={{display:'flex', alignItems:'center', gap:10}}>
+          <span style={{fontSize:11, color:'#94a3b8'}}>現價 {s.price?.toFixed(2)}</span>
+          <span style={{
+            padding:'3px 8px', borderRadius:10, fontSize:11, fontWeight:600,
+            color: status.color, background: `${status.color}22`, border:`1px solid ${status.color}55`
+          }}>
+            {status.icon} {status.text}
+          </span>
+        </div>
+      </div>
+      {open && (
+        <div style={{padding:'0 4px 8px 4px'}}>
+          <TrimAddSOP s={s} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TrimAddSOP({ s }) {
   if (!s || s.price == null) return <div style={{padding:'12px', color:'#94a3b8', fontSize:11}}>資料不足（需 60 日 K）</div>;
 
@@ -7019,11 +7075,9 @@ function App() {
                      });
                      return dds.length ? dds.join(' · ') : null;
                    })()}>
-            <TrimAddSOP s={data?.trim_add_0050} />
-            <div style={{marginTop:16}} />
-            <TrimAddSOP s={data?.trim_add_2330} />
-            <div style={{marginTop:16}} />
-            <TrimAddSOP s={data?.trim_add_00679b} />
+            <CollapsibleTrimAddCard s={data?.trim_add_0050} />
+            <CollapsibleTrimAddCard s={data?.trim_add_2330} />
+            <CollapsibleTrimAddCard s={data?.trim_add_00679b} />
           </Section>
 
           {/* 📅 週選 IC SOP — Weekly Iron Condor */}
