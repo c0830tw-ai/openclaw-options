@@ -7070,14 +7070,15 @@ function App() {
             <MonthlyStrategySOP data={data} mode="far" />
           </Section>
 
-          {/* 💡 市場機會 — 想加倉時看 */}
+          {/* ═══════════════ 區塊 3：選擇權鏈細節（依 DTE 排序）═══════════════ */}
+          <GroupDivider label="📈 選擇權鏈" color="#60a5fa" />
+
+          {/* 💡 市場機會 — 屬於選擇權鏈邏輯：哪一週週選最划算建倉（2026-05-18 從決策訊號移過來）*/}
           <Section title="💡 市場機會" defaultOpen={false} accent="blue"
                    badge={data?.weekly_opportunities?.length ? `${data.weekly_opportunities.length} 週` : null}>
             <WeeklyOpportunities data={data} />
           </Section>
 
-          {/* ═══════════════ 區塊 3：選擇權鏈細節（依 DTE 排序）═══════════════ */}
-          <GroupDivider label="📈 選擇權鏈" color="#60a5fa" />
           <DTEWarning dte={data.dte} />
           <MarketHoursNote />
           {(() => {
