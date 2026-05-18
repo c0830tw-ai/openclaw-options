@@ -6821,39 +6821,32 @@ function SectionFarMonth({ farMonth, taiex, taiexHigh, taiexLow, price2330, pric
 
 function Section0050({ collar, taiex }) {
   if (!collar) return null;
-  const { price_0050, chg_0050, chgpct_0050, lots, lot_size, notional, beta, beta_adj_ratio, recommended_contracts, structures } = collar;
-  const chgCls = chg_0050 == null ? '' : chg_0050 > 0 ? 'up' : chg_0050 < 0 ? 'down' : '';
+  const { lots, lot_size, notional, beta, beta_adj_ratio, recommended_contracts } = collar;
+  // 2026-05-18 瘦身：拿掉現價/漲跌（MarketStrip 已有），只保留 TXO collar 口數推薦
   return (
     <>
       <div className="section-divider etf">
-        <span className="section-title">0050 股期 {lots} 口 對應台指選擇權領口</span>
+        <span className="section-title">0050 → TXO 領口口數推薦</span>
       </div>
       <div className="info-bar-0050">
         <div className="ib-item">
-          <span className="ib-key">0050 現價</span>
-          <span className={`ib-val ${chgCls}`} style={chg_0050 != null ? {color: chg_0050 > 0 ? '#f87171' : chg_0050 < 0 ? '#4ade80' : undefined} : {}}>
-            {price_0050?.toFixed(2)}
-          </span>
-          {chg_0050 != null && (
-            <span className={`chg-label ${chgCls}`} style={{color: chg_0050 > 0 ? '#f87171' : '#4ade80'}}>
-              {chg_0050 >= 0 ? '+' : ''}{chg_0050.toFixed(2)} ({chg_0050 >= 0 ? '+' : ''}{chgpct_0050?.toFixed(2)}%)
-            </span>
-          )}
+          <span className="ib-key">持倉</span>
+          <span className="ib-val">{lots} 口 × {lot_size.toLocaleString()}</span>
         </div>
         <div className="ib-item">
-          <span className="ib-key">{lots}口名目（{lot_size.toLocaleString()}單位/口）</span>
+          <span className="ib-key">名目</span>
           <span className="ib-val">{(notional / 10000).toFixed(0)} 萬</span>
         </div>
         <div className="ib-item">
-          <span className="ib-key">Beta（貝塔）vs TAIEX</span>
+          <span className="ib-key">Beta vs TAIEX</span>
           <span className="ib-val">{beta}</span>
         </div>
         <div className="ib-item">
-          <span className="ib-key">Beta（貝塔）調整比例</span>
+          <span className="ib-key">Beta 調整比</span>
           <span className="ib-val">{beta_adj_ratio?.toFixed(2)}</span>
         </div>
         <div className="ib-item">
-          <span className="ib-key">建議 TXO 口數</span>
+          <span className="ib-key">建議 TXO 對沖</span>
           <span className="ib-val accent">{recommended_contracts} 口</span>
         </div>
       </div>
