@@ -91,7 +91,7 @@ class Config:
     cap_pct_2330: float = 0.10
 
     # 選月策略：距結算 < N 天就用次月
-    days_to_next_month: int = 5
+    days_to_next_month: int = 1   # 結算當天才切換（DTE 0），讓用戶 T-1/T-2 還能管理當月部位
 
     # 垂直價差設定
     spread_width: float = 100.0            # 價差寬度（點數，TXO 通常 50–200）
