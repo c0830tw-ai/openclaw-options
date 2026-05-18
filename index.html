@@ -7146,22 +7146,48 @@ function App() {
           })()}
           <Section0050 collar={data.collar_0050} taiex={data.market?.taiex} />
 
-          {/* ═══════════════ 區塊 4：對帳與績效（預設摺疊）═══════════════ */}
-          <GroupDivider label="📊 對帳與績效" color="#94a3b8" />
+          {/* ═══════════════ 區塊 4：帳務（預設摺疊）═══════════════ */}
+          <GroupDivider label="📊 帳務" color="#94a3b8" />
 
-          {/* 📋 持倉明細 — 對帳/檢查用 */}
-          <Section title="📋 持倉明細" defaultOpen={false} accent="gray"
-                   badge={data?.broker?.total_positions ? `${data.broker.total_positions} 筆` : null}>
+          {/* 📊 帳務 — 合併持倉明細 + 績效追蹤（2026-05-18 整理 5/5）*/}
+          <Section title="📊 帳務（持倉 + 績效）" defaultOpen={false} accent="gray"
+                   badge={(() => {
+                     const tags = [];
+                     if (data?.broker?.total_positions) tags.push(`${data.broker.total_positions} 筆持倉`);
+                     if (data?.trade_journal?.total_trades) tags.push(`${data.trade_journal.total_trades} 日記`);
+                     return tags.length ? tags.join(' · ') : null;
+                   })()}>
+            {/* 持倉明細 sub-section */}
+            <div style={{
+              display:'flex', alignItems:'center', gap:8,
+              margin:'4px 0 10px 0', padding:'6px 12px',
+              background:'#0a0f1a', borderLeft:'3px solid #60a5fa', borderRadius:4,
+              fontSize:13, fontWeight:600, color:'#e2e8f0'
+            }}>
+              📋 持倉明細
+              {data?.broker?.total_positions && (
+                <span style={{fontSize:11, fontWeight:400, color:'#94a3b8'}}>
+                  · {data.broker.total_positions} 筆
+                </span>
+              )}
+            </div>
             <BrokerPositions data={data} />
             <PortfolioBreakdown data={data} />
-          </Section>
 
-          {/* 📈 績效追蹤 — 月底看 */}
-          <Section title="📈 績效追蹤" defaultOpen={false} accent="purple"
-                   badge={[
-                     data?.trade_journal?.total_trades ? `${data.trade_journal.total_trades} 日記` : null,
-                     data?.event_history ? `${data.event_history.event_count} 歷史事件` : null,
-                   ].filter(Boolean).join(' · ') || null}>
+            {/* 績效追蹤 sub-section */}
+            <div style={{
+              display:'flex', alignItems:'center', gap:8,
+              margin:'20px 0 10px 0', padding:'6px 12px',
+              background:'#0a0f1a', borderLeft:'3px solid #a78bfa', borderRadius:4,
+              fontSize:13, fontWeight:600, color:'#e2e8f0'
+            }}>
+              📈 績效追蹤
+              {data?.trade_journal?.total_trades && (
+                <span style={{fontSize:11, fontWeight:400, color:'#94a3b8'}}>
+                  · {data.trade_journal.total_trades} 日記
+                </span>
+              )}
+            </div>
             <PerformanceMetrics data={data} />
             <EquityChart data={data} />
             <RollingMetricsChart data={data} />
