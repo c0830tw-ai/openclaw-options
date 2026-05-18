@@ -7073,19 +7073,7 @@ function App() {
             <CollapsibleTrimAddCard s={data?.trim_add_00679b} />
           </Section>
 
-          {/* 📅 週選 IC SOP — Weekly Iron Condor */}
-          <Section title="📅 週選 IC SOP" defaultOpen={false} accent="blue"
-                   badge={(() => {
-                     const dte = data?.weekly_wed?.dte;
-                     if (dte == null) return null;
-                     if (dte <= 1) return '🔴 平倉日';
-                     if (dte >= 4 && dte <= 6) return '🟢 建單日';
-                     return `DTE ${dte}`;
-                   })()}>
-            <WeeklyICSOP data={data} />
-          </Section>
-
-          {/* 📘 月選策略 SOP — 近月 + 次月 4-leg 結構執行流程 */}
+          {/* 📘 月選策略 SOP — 主結構（4-leg + 次月）— 2026-05-18 移到週選 IC 之前 */}
           <Section title="📘 月選策略 SOP" defaultOpen={false} accent="blue"
                    badge={(() => {
                      const dte = data?.dte;
@@ -7115,6 +7103,18 @@ function App() {
               </div>
             </div>
             <MonthlyStrategySOP data={data} mode="far" />
+          </Section>
+
+          {/* 📅 週選 IC SOP — Weekly Iron Condor（輔助收入） */}
+          <Section title="📅 週選 IC SOP" defaultOpen={false} accent="blue"
+                   badge={(() => {
+                     const dte = data?.weekly_wed?.dte;
+                     if (dte == null) return null;
+                     if (dte <= 1) return '🔴 平倉日';
+                     if (dte >= 4 && dte <= 6) return '🟢 建單日';
+                     return `DTE ${dte}`;
+                   })()}>
+            <WeeklyICSOP data={data} />
           </Section>
 
           {/* ═══════════════ 區塊 3：選擇權鏈細節（依 DTE 排序）═══════════════ */}
