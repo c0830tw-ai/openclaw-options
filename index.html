@@ -4,9 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>2330 0050對應大盤選擇權領口策略</title>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <!-- 釘死 7.x：Babel 8 的 preset-react 預設改用 automatic runtime（會吐 import），瀏覽器內編譯會整包炸掉導致白畫面 -->
+  <script src="https://unpkg.com/@babel/standalone@7.29.7/babel.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -21,10 +22,13 @@
       padding: 20px;
       padding-bottom: max(20px, calc(env(safe-area-inset-bottom) + 20px));
       overscroll-behavior-y: none;
-      /* 用戶 5/17 要求字體放大（49 歲眼睛吃力）— 全頁面 zoom 1.15 */
+      /* 阻止任何子元素超寬造成橫向 scroll（5/24 加）；fixed PTR bar 不受影響 */
+      overflow-x: hidden;
+      /* 用戶 5/17 要求字體放大（49 歲眼睛吃力）— 全頁面 zoom 1.10（5/21 從 1.15 調降避免橫向 scroll） */
       /* zoom 在 Safari/Chrome/iOS 支援；Firefox 不支援但 fallback 不影響功能 */
-      zoom: 1.15;
+      zoom: 1.10;
     }
+    html { overflow-x: hidden; }
     @media (max-width: 600px) {
       body { padding: 12px 10px; font-size: 13px; }
     }
@@ -1318,13 +1322,15 @@ function IndicatorBar({ indicators, targets, iv, ivSource, dec = 0 }) {
         {regimeBadge && <span className="ind-badge" style={{color: regimeBadge.color}}>{regimeBadge.text}</span>}
         {!regimeBadge && adxm.label && <span className="ind-badge" style={{color: adxm.dot}}>{adxm.label}</span>}
       </div>
-      <div className="ind-cell">
+      <div className="ind-cell" title="建議的保護 Put 履約價（下方保護線）：TX 跌到這附近以下，put 開始提供避險。BS target delta 算出。">
         <span className="ind-key">Put 目標</span>
         <span className="ind-val lo">{putTarget?.toLocaleString()}</span>
+        <span className="ind-badge" style={{color:'#86efac'}}>下方保護</span>
       </div>
-      <div className="ind-cell">
+      <div className="ind-cell" title="建議的賣 Call 履約價（上方上限線）：TX 漲到這附近以上，獲利封頂、賣出的 call 可能被軋。BS target delta 算出。">
         <span className="ind-key">Call 目標</span>
         <span className="ind-val hi">{callTarget?.toLocaleString()}</span>
+        <span className="ind-badge" style={{color:'#fca5a5'}}>上方上限</span>
       </div>
       <div className="ind-cell" title={`MACD: ${macd?.toFixed(2) ?? '—'} / Signal: ${macd_signal?.toFixed(2) ?? '—'} / 選法 ${methodLabel}`}>
         <span className="ind-key">MACD</span>
@@ -1922,6 +1928,111 @@ function WheelPanel({ selectedOptions, taiex, price2330, price0050, hvVal }) {
       )}
       <div className="wheel-note">
         流程：賣 Put 等回補 → 到期無事收租 → Put 穿價以履約價買回持股 → 重建 Collar
+      </div>
+    </div>
+  );
+}
+
+function ShortPutComparison({ data }) {
+  // 一次看 4 個月份的 short put 推薦（近月 / 週三 / 週五 / 遠月）
+  const tx = data?.market?.tx_futures;
+  const rows = [
+    { label: '週三週選', dte: data?.weekly_wed?.dte, spr: data?.weekly_wed?.short_put_recommender },
+    { label: '週五週選', dte: data?.weekly_fri?.dte, spr: data?.weekly_fri?.short_put_recommender },
+    { label: '近月',     dte: data?.dte,             spr: data?.short_put_recommender },
+    { label: '遠月',     dte: data?.far_month?.dte,  spr: data?.far_month?.short_put_recommender },
+  ].filter(r => r.spr && r.spr.recommended).sort((a, b) => (a.dte || 0) - (b.dte || 0));
+  if (!rows.length) return null;
+  const fmt = n => n == null ? '—' : Math.round(n).toLocaleString();
+  const lvlColor = lv => ({ strict:'#22c55e', no_20d_low:'#fbbf24', min_safety:'#fb923c', none:'#ef4444' }[lv] || '#94a3b8');
+  const lvlLabel = lv => ({ strict:'全通過', no_20d_low:'放寬 20d', min_safety:'最低安全', none:'無候選' }[lv] || lv || '—');
+
+  // 市況×IV 守門（依 2022-26 回測：賣 put 要賺需「非空頭 + 高 IV」）
+  const regLabel = data?.regime_advisor?.regime_label || '';
+  const isBear = /熊|空/.test(regLabel);
+  const isBull = /牛|多/.test(regLabel);
+  const isRange = /盤整|sideways/i.test(regLabel);
+  const ivp = data?.iv_percentile?.current_pct;
+  const ivLow = ivp != null && ivp < 40;
+  const txRsi = data?.indicators?.put_refs?.rsi;
+  const txKdK = data?.indicators?.put_refs?.kd_k;
+  const txKdD = data?.indicators?.put_refs?.kd_d;
+  const guard = isBear
+      ? { c:'#ef4444', t:'⚠ 空頭：純賣 put 風險高',
+          d:'回測：空頭中即使高 IV，賣 put 期望值也≈0~負（下跌會輾過）。建議改 bull put 價差、縮口數或暫緩。' }
+    : ivLow
+      ? { c:'#fbbf24', t:`🟡 IV 偏低（分位 ${ivp?.toFixed(0)}）：賣 put 不划算`,
+          d:'回測：低 IV 時純賣 put 期望值趨近零（權利金太薄）。建議跳過或改價差。' }
+    : (isBull || isRange) && ivp != null
+      ? { c:'#22c55e', t:`🟢 ${isBull ? '多頭' : '盤整'} + IV 偏高：環境有利賣 put`,
+          d:'回測：此情境純賣 put 統計有利（EV 約 +17~+31 點/口）。仍守安全履約與停損。' }
+      : { c:'#475569', t:'依當下市況 / IV 自行判斷',
+          d:'回測重點：賣 put 要有 edge 需「非空頭 + IV 偏高」；低 IV 或空頭時改價差或跳過。' };
+
+  return (
+    <div style={{margin:'10px 0', padding:'10px 12px', background:'#0a0e1c',
+                 border:'1px solid #1e3a5f', borderRadius:6}}>
+      <div style={{display:'flex', alignItems:'baseline', justifyContent:'space-between', marginBottom:8}}>
+        <span style={{fontWeight:700, color:'#60a5fa', fontSize:13}}>💰 賣 Put 推薦 — 4 個月份比較</span>
+        <span style={{fontSize:10, color:'#64748b'}}>
+          TX 現價 {fmt(tx)}
+          {txRsi != null && <span style={{marginLeft:8}}>· RSI <span style={{fontWeight:700, color: txRsi >= 70 ? '#fca5a5' : txRsi <= 30 ? '#86efac' : '#cbd5e1'}}>{txRsi.toFixed(0)}</span>{txRsi >= 70 ? ' 超買' : txRsi <= 30 ? ' 超賣' : ''}</span>}
+          {txKdK != null && txKdD != null && <span style={{marginLeft:8}}>· KD <span style={{fontWeight:700, color: txKdK >= 80 ? '#fca5a5' : txKdK <= 20 ? '#86efac' : '#cbd5e1'}}>{txKdK.toFixed(0)}/{txKdD.toFixed(0)}</span>{txKdK >= 80 ? ' 超買' : txKdK <= 20 ? ' 超賣' : ''}</span>}
+        </span>
+      </div>
+      {/* 市況×IV 守門橫幅（回測結論） */}
+      <div style={{margin:'0 0 8px', padding:'8px 10px', borderRadius:4,
+                   background:`${guard.c}14`, borderLeft:`3px solid ${guard.c}`}}>
+        <div style={{fontSize:12, fontWeight:700, color:guard.c}}>
+          {guard.t}{regLabel && <span style={{fontSize:10, color:'#64748b', marginLeft:6, fontWeight:400}}>（市況：{regLabel}）</span>}
+        </div>
+        <div style={{fontSize:10, color:'#94a3b8', marginTop:3, lineHeight:1.5}}>{guard.d}</div>
+      </div>
+      <div style={{overflowX:'auto', WebkitOverflowScrolling:'touch'}}>
+      <table style={{width:'100%', fontSize:11, borderCollapse:'collapse', minWidth:'460px'}}>
+        <thead>
+          <tr style={{color:'#64748b', borderBottom:'1px solid #1e293b'}}>
+            <th style={{textAlign:'left',  padding:'4px 6px'}}>月份</th>
+            <th style={{textAlign:'right', padding:'4px 6px'}}>DTE</th>
+            <th style={{textAlign:'right', padding:'4px 6px'}}>賣出 strike</th>
+            <th style={{textAlign:'right', padding:'4px 6px'}}>Δ</th>
+            <th style={{textAlign:'right', padding:'4px 6px'}}>OTM</th>
+            <th style={{textAlign:'right', padding:'4px 6px'}}>淨收</th>
+            <th style={{textAlign:'right', padding:'4px 6px'}}>EV</th>
+            <th style={{textAlign:'right', padding:'4px 6px'}}>level</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => {
+            const rec = r.spr.recommended;
+            const sp = r.spr.spread;
+            const ev = sp?.ev_ntd;
+            const evColor = ev == null ? '#94a3b8' : (ev >= 0 ? '#86efac' : '#fca5a5');
+            const lv = r.spr.relax_level;
+            return (
+              <tr key={i} style={{borderBottom:'1px dashed #1e293b'}}>
+                <td style={{padding:'5px 6px', color:'#cbd5e1', fontWeight:600}}>{r.label}</td>
+                <td style={{padding:'5px 6px', textAlign:'right', color:'#94a3b8'}}>{r.dte}d</td>
+                <td style={{padding:'5px 6px', textAlign:'right', color:'#fde047', fontWeight:700}}>{fmt(rec.strike)}P</td>
+                <td style={{padding:'5px 6px', textAlign:'right',
+                            color: Math.abs(rec.delta) <= 0.10 ? '#86efac' : '#fbbf24'}}>{rec.delta.toFixed(3)}</td>
+                <td style={{padding:'5px 6px', textAlign:'right'}}>{rec.otm_pct.toFixed(1)}%</td>
+                <td style={{padding:'5px 6px', textAlign:'right', color:'#86efac'}}>
+                  {sp?.net_credit_pts != null ? `${sp.net_credit_pts.toFixed(1)}pt` : '—'}
+                </td>
+                <td style={{padding:'5px 6px', textAlign:'right', color:evColor}}>
+                  {ev != null ? `${ev >= 0 ? '+' : ''}${fmt(ev)}` : '—'}
+                </td>
+                <td style={{padding:'5px 6px', textAlign:'right',
+                            color:lvlColor(lv), fontSize:9}}>{lvlLabel(lv)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      </div>
+      <div style={{fontSize:9, color:'#475569', marginTop:6, lineHeight:1.4}}>
+        💡 EV &gt; 0 = 統計期望值划算；level = 篩選嚴格度（綠最嚴、紅未通過）；淨收 = BPS 100pt 寬的淨權利金
       </div>
     </div>
   );
@@ -2693,15 +2804,15 @@ function BuildPlanHelper({ data }) {
 
           <div style={{marginTop:'6px', borderTop:'1px solid #1e2535', paddingTop:'6px'}}>
             {batches.map((b, i) => (
-              <div key={i} style={{display:'flex', alignItems:'baseline', gap:'8px',
+              <div key={i} style={{display:'flex', alignItems:'baseline', gap:'6px',
                                     padding:'4px 8px', background: i === 0 ? '#0f1828' : 'transparent',
                                     borderLeft: i === 0 ? '3px solid #4ade80' : '3px solid #334155',
-                                    borderRadius:'3px', marginBottom:'2px'}}>
-                <span style={{fontSize:'11px', color: i === 0 ? '#86efac' : '#94a3b8', fontWeight:700, minWidth:'50px'}}>
+                                    borderRadius:'3px', marginBottom:'2px', flexWrap:'wrap'}}>
+                <span style={{fontSize:'11px', color: i === 0 ? '#86efac' : '#94a3b8', fontWeight:700, minWidth:'44px'}}>
                   第 {b.week} 週
                 </span>
-                <span style={{fontSize:'10px', color:'#64748b', minWidth:'90px'}}>{b.date}</span>
-                <span style={{fontSize:'13px', color:'#cbd5e1', fontWeight:700, minWidth:'60px'}}>
+                <span style={{fontSize:'10px', color:'#64748b', minWidth:'74px'}}>{b.date}</span>
+                <span style={{fontSize:'13px', color:'#cbd5e1', fontWeight:700, minWidth:'52px'}}>
                   +{b.qty} 口
                 </span>
                 <span style={{fontSize:'10px', color:'#64748b'}}>
@@ -5104,13 +5215,13 @@ function PastEventImpact({ data }) {
         <div style={{marginTop:'6px', borderTop:'1px solid #1e2535', paddingTop:'4px'}}>
           <div style={{fontSize:'9px', color:'#64748b', marginBottom:'2px'}}>近 5 個事件</div>
           {eh.events.slice(0, 5).map((e, i) => (
-            <div key={i} style={{display:'flex', alignItems:'baseline', gap:'8px', fontSize:'10px', padding:'1px 0'}}>
-              <span style={{minWidth:'74px', color:'#94a3b8'}}>{e.date}</span>
-              <span style={{flex:1, color:'#cbd5e1'}}>{e.name}</span>
-              <span style={{minWidth:'52px', textAlign:'right', color: colSign(e.tx_change_T_pct), fontWeight:700}}>
+            <div key={i} style={{display:'flex', alignItems:'baseline', gap:'8px', fontSize:'10px', padding:'1px 0', flexWrap:'wrap'}}>
+              <span style={{minWidth:'68px', color:'#94a3b8'}}>{e.date}</span>
+              <span style={{flex:'1 1 120px', minWidth:0, color:'#cbd5e1', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{e.name}</span>
+              <span style={{minWidth:'46px', textAlign:'right', color: colSign(e.tx_change_T_pct), fontWeight:700}}>
                 T {fmtPct(e.tx_change_T_pct)}
               </span>
-              <span style={{minWidth:'52px', textAlign:'right', color: colSign(e.tx_change_T1_pct)}}>
+              <span style={{minWidth:'46px', textAlign:'right', color: colSign(e.tx_change_T1_pct)}}>
                 T+1 {fmtPct(e.tx_change_T1_pct)}
               </span>
             </div>
@@ -5638,183 +5749,202 @@ function PutRefsBar({ price, refs }) {
   if (refs.bb_d_mid   != null) items.push({ name:'日中',  v:refs.bb_d_mid,   c:'#f97316' });
   if (items.length === 0) return null;
   items.forEach(i => { i.pct = (i.v - price) / price * 100; });
-  items.push({ name:'現價', v:price, pct:0, c:'#fde047', big:true });
 
-  const pcts = items.map(i => i.pct);
-  const minP = Math.min(...pcts), maxP = Math.max(...pcts);
-  const pad = ((maxP - minP) || 2) * 0.2;
-  const aMin = minP - pad, aMax = maxP + pad;
-  const x = p => ((p - aMin) / (aMax - aMin)) * 100;
+  const fmtV = v => Math.round(v).toLocaleString();
+  const bars = refs.bars;
+  const hasBars = bars && Array.isArray(bars.c) && bars.c.length > 1;
 
-  // 標籤防撞：同 side+row 內若 x 距離 < LABEL_W 視為重疊，往下一個 row 推
-  const LABEL_W = 16; // 估每個標籤約佔容器 16%
-  const sorted = [...items].map(it => ({...it, xp: x(it.pct)})).sort((a,b) => a.xp - b.xp);
-  sorted.forEach((it, idx) => {
-    const preferred = idx % 2 === 0 ? ['above','below'] : ['below','above'];
-    let placed = false;
-    for (let row = 0; row < 6 && !placed; row++) {
-      for (const side of preferred) {
-        const overlap = sorted.some(o => o !== it && o.side != null
-          && o.side === side && o.row === row
-          && Math.abs(o.xp - it.xp) < LABEL_W);
-        if (!overlap) { it.side = side; it.row = row; placed = true; break; }
-      }
-    }
-    if (!placed) { it.side = 'above'; it.row = 0; }
-  });
-  const maxRow = Math.max(...sorted.map(it => it.row));
-  const ROW_H = 22;            // 每 row 高度（px）
-  const AXIS_GAP = 10;         // 中軸到第一個 row 的距離
-  const halfH = AXIS_GAP + (maxRow + 1) * ROW_H + 4;
-  const totalH = halfH * 2;
+  // ----- 價格域（含參考價、現價、若有 K 棒則含高低）-----
+  const vals = items.map(i => i.v).concat([price]);
+  if (hasBars) { vals.push(...bars.h, ...bars.l); }
+  let yMin = Math.min(...vals), yMax = Math.max(...vals);
+  const ypad = (yMax - yMin || 1) * 0.04;
+  yMin -= ypad; yMax += ypad;
 
-  const fmtV = v => Number.isInteger(v) ? v.toLocaleString() : Math.round(v).toLocaleString();
+  const H = 360, TOP = 8, BOT = 8;          // 繪圖區高度（px）
+  const PH = H - TOP - BOT;
+  const yPx = v => TOP + (yMax - v) / (yMax - yMin) * PH;
+
+  const TAG_W = 148, STRIP = 6, PLOT_R = TAG_W + STRIP;   // 右側保留給價籤/引線
+
+  // ----- 右側價籤防撞（依真實 y 排序，不足間距則往下推）-----
+  const TAGH = 16;
+  const tags = items.map(it => ({...it}))
+    .concat([{ name:'現價', v:price, pct:0, c:'#fde047', big:true }])
+    .map(it => ({...it, y: yPx(it.v)}))
+    .sort((a,b) => a.y - b.y);
+  let lastY = -Infinity;
+  tags.forEach(t => { t.ty = Math.max(t.y, lastY + TAGH); lastY = t.ty; });
+  const overflow = (tags.length ? tags[tags.length-1].ty : 0) - (H - TAGH/2);
+  if (overflow > 0) tags.forEach(t => { t.ty -= overflow; });
 
   return (
     <div style={{padding:'8px 12px 12px', marginTop:'6px', background:'#070b15', borderRadius:4, borderLeft:'3px solid #60a5fa'}}>
-      <div style={{display:'flex', alignItems:'baseline', gap:8, marginBottom:4}}>
-        <span style={{color:'#60a5fa', fontWeight:700, fontSize:12}}>📉 Put 進場參考線</span>
-        <span style={{color:'#64748b', fontSize:10}}>TX {fmtV(price)} · 越近現價越偏空</span>
+      <div style={{display:'flex', alignItems:'baseline', gap:8, marginBottom:6}}>
+        <span style={{color:'#60a5fa', fontWeight:700, fontSize:13}}>📉 Put 進場參考線</span>
+        <span style={{color:'#94a3b8', fontSize:11}}>TX {fmtV(price)} · 越近現價越偏空</span>
       </div>
-      <div style={{position:'relative', height: totalH, marginTop:4, marginBottom:4}}>
-        <div style={{position:'absolute', left:0, right:0, top:'50%', height:1, background:'#1e293b'}} />
-        <div style={{position:'absolute', left:`${x(0)}%`, top:`calc(50% - 8px)`, height:'16px', width:1, background:'#475569'}} />
-        {sorted.map((it, idx) => {
-          const isAbove = it.side === 'above';
-          const offset = AXIS_GAP + it.row * ROW_H;
-          const labelStyle = {
-            position:'absolute',
-            [isAbove ? 'bottom' : 'top']: `calc(50% + ${offset}px)`,
-            textAlign:'center', whiteSpace:'nowrap',
-            transform:'translateX(-50%)', left:'50%'
-          };
-          // 連接線：從圓點延伸到 label，方便辨認屬於哪個點
-          const connectorStyle = {
-            position:'absolute',
-            left:'50%',
-            width:1,
-            background:`${it.c}55`,
-            [isAbove ? 'bottom' : 'top']: `calc(50% + ${it.big ? 5 : 4}px)`,
-            height: `${offset - (it.big ? 5 : 4)}px`,
-            transform:'translateX(-50%)'
-          };
-          return (
-            <div key={idx} style={{position:'absolute', left:`${it.xp}%`, top:0, bottom:0, transform:'translateX(-50%)'}}>
-              {it.row > 0 && <div style={connectorStyle} />}
-              <div style={labelStyle}>
-                <div style={{fontSize:9, color:it.c, fontWeight: it.big?700:500, lineHeight:1.2}}>{it.name}</div>
-                <div style={{fontSize:8, color:'#64748b', lineHeight:1.2}}>
-                  {fmtV(it.v)}{!it.big && <span style={{color:it.pct>=0?'#fca5a5':'#86efac', marginLeft:2}}>({it.pct>=0?'+':''}{it.pct.toFixed(2)}%)</span>}
-                </div>
-              </div>
-              <div style={{width:it.big?10:7, height:it.big?10:7, borderRadius:'50%', background:it.c,
-                           boxShadow: it.big ? `0 0 0 2px ${it.c}40` : 'none',
-                           position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)'}}/>
+      <div style={{position:'relative', height: H}}>
+        {/* 繪圖區（保留右側給價籤） */}
+        <div style={{position:'absolute', left:0, top:0, bottom:0, right:PLOT_R}}>
+          {/* 參考水平線 */}
+          {items.map((it, idx) => (
+            <div key={'l'+idx} style={{position:'absolute', left:0, right:0, top:yPx(it.v),
+              height:0, borderTop:`1px dashed ${it.c}66`}} />
+          ))}
+          {/* 現價線 */}
+          <div style={{position:'absolute', left:0, right:0, top:yPx(price),
+            height:0, borderTop:'1px solid #fde047aa'}} />
+          {/* 日 K 蠟燭（台股：漲紅跌綠） */}
+          {hasBars && bars.c.map((c, i) => {
+            const o = bars.o[i], h = bars.h[i], l = bars.l[i];
+            const col = c >= o ? '#ef4444' : '#22c55e';
+            const cx = (i + 0.5) / bars.c.length * 100;
+            const bw = Math.max(2, (100 / bars.c.length) * 0.55);
+            const bodyTop = yPx(Math.max(o, c));
+            const bodyH = Math.max(1, Math.abs(yPx(o) - yPx(c)));
+            return (
+              <React.Fragment key={'b'+i}>
+                <div style={{position:'absolute', left:`${cx}%`, top:yPx(h), height:yPx(l)-yPx(h),
+                  width:1, background:col, transform:'translateX(-50%)'}} />
+                <div style={{position:'absolute', left:`${cx}%`, top:bodyTop, height:bodyH,
+                  width:`${bw}%`, background:col, transform:'translateX(-50%)', borderRadius:1}} />
+              </React.Fragment>
+            );
+          })}
+        </div>
+        {/* 引線：只有價位太近被推開時才畫，沒位移的價籤不畫線 */}
+        <svg style={{position:'absolute', right:TAG_W, top:0, width:STRIP, height:H, overflow:'visible'}}
+             viewBox={`0 0 ${STRIP} ${H}`} preserveAspectRatio="none">
+          {tags.filter(t => Math.abs(t.ty - t.y) > 2).map((t, idx) => (
+            <line key={'c'+idx} x1="0" y1={t.y} x2={STRIP} y2={t.ty}
+              stroke={`${t.c}aa`} strokeWidth="1" />
+          ))}
+        </svg>
+        {/* 右側價籤（單行：名稱 價位 幅度） */}
+        <div style={{position:'absolute', right:0, top:0, bottom:0, width:TAG_W}}>
+          {tags.map((t, idx) => (
+            <div key={'t'+idx} style={{position:'absolute', left:0, right:0, top:t.ty - 8,
+              display:'flex', alignItems:'baseline', gap:4, whiteSpace:'nowrap', lineHeight:1}}>
+              <span style={{fontSize:12, fontWeight:700, color:t.c}}>{t.name}</span>
+              <span style={{fontSize:11, color:'#cbd5e1'}}>{fmtV(t.v)}</span>
+              {!t.big && <span style={{fontSize:11, color:t.pct>=0?'#fca5a5':'#86efac'}}>
+                {t.pct>=0?'+':''}{t.pct.toFixed(2)}%</span>}
             </div>
-          );
-        })}
+          ))}
+        </div>
       </div>
+      {!hasBars && (
+        <div style={{fontSize:10, color:'#64748b', marginTop:2}}>（等後端推送日K後顯示蠟燭；目前僅參考價位）</div>
+      )}
     </div>
   );
 }
 
 function RangeThermometer({ label, accent, price, ind, tx, putStrike, callStrike, futNear, futNearMonth, isStock = false }) {
   if (!price || !ind) return null;
+  const fmtP = v => Number.isInteger(v) ? v.toLocaleString() : v.toFixed(2);
+  const fmtK = v => Math.round(v).toLocaleString();
+
+  // pv = 繪圖用價位（個股價軸）；txt = 標籤顯示文字
   const items = [];
-  if (ind.bb_lower != null) items.push({ name:'BB↓',  v:ind.bb_lower, pct:(ind.bb_lower-price)/price*100, c:'#22c55e' });
-  if (ind.ma20     != null) items.push({ name:'MA20', v:ind.ma20,     pct:(ind.ma20    -price)/price*100, c:'#94a3b8' });
-  if (ind.bb_upper != null) items.push({ name:'BB↑',  v:ind.bb_upper, pct:(ind.bb_upper-price)/price*100, c:'#ef4444' });
-  // strikes 是 TX 點位，用 tx 當基準
-  if (putStrike  != null && tx) items.push({ name:'Put',  v:putStrike,  pct:(putStrike -tx)/tx*100, c:'#86efac' });
-  if (callStrike != null && tx) items.push({ name:'Call', v:callStrike, pct:(callStrike-tx)/tx*100, c:'#fbbf24' });
-  // 期貨近月（跟現股同單位，直接拿 price 比）
+  if (ind.bb_lower != null) items.push({ name:'BB↓',  pv:ind.bb_lower, txt:fmtP(ind.bb_lower), pct:(ind.bb_lower-price)/price*100, c:'#22c55e' });
+  if (ind.ma20     != null) items.push({ name:'MA20', pv:ind.ma20,     txt:fmtP(ind.ma20),     pct:(ind.ma20    -price)/price*100, c:'#94a3b8' });
+  if (ind.bb_upper != null) items.push({ name:'BB↑',  pv:ind.bb_upper, txt:fmtP(ind.bb_upper), pct:(ind.bb_upper-price)/price*100, c:'#ef4444' });
+  // strike 是 TX 點位：用同 % 距離換算成個股等效價位 (price×strike/tx) 來疊圖，但標籤仍顯示原始 strike
+  if (putStrike  != null && tx) items.push({ name:'Put',  pv:price*putStrike/tx,  txt:fmtK(putStrike),  pct:(putStrike -tx)/tx*100, c:'#86efac' });
+  if (callStrike != null && tx) items.push({ name:'Call', pv:price*callStrike/tx, txt:fmtK(callStrike), pct:(callStrike-tx)/tx*100, c:'#fbbf24' });
   if (futNear != null) {
     const futLabel = futNearMonth ? `期${String(futNearMonth).slice(4,6)}` : '期近';
-    items.push({ name: futLabel, v: futNear, pct: (futNear - price) / price * 100, c: '#38bdf8' });
+    items.push({ name: futLabel, pv: futNear, txt:fmtP(futNear), pct: (futNear - price) / price * 100, c: '#38bdf8' });
   }
-  items.push({ name:'現價', v:price, pct:0, c:'#fbbf24', big:true });
-  if (items.length <= 1) return null;
+  if (items.length === 0) return null;
 
-  const pcts = items.map(i => i.pct);
-  const minP = Math.min(...pcts), maxP = Math.max(...pcts);
-  const pad = ((maxP - minP) || 4) * 0.15;
-  const aMin = minP - pad, aMax = maxP + pad;
-  const x = p => ((p - aMin) / (aMax - aMin)) * 100;
+  const bars = ind.bars;
+  const hasBars = bars && Array.isArray(bars.c) && bars.c.length > 1;
 
-  // 標籤防撞：同 side+row 內若 x 距離 < LABEL_W 視為重疊，往下一個 row 推
-  const LABEL_W = 14;
-  const sorted = [...items].map(it => ({...it, xp: x(it.pct)})).sort((a,b) => a.xp - b.xp);
-  sorted.forEach((it, idx) => {
-    const preferred = idx % 2 === 0 ? ['above','below'] : ['below','above'];
-    let placed = false;
-    for (let row = 0; row < 6 && !placed; row++) {
-      for (const side of preferred) {
-        const overlap = sorted.some(o => o !== it && o.side != null
-          && o.side === side && o.row === row
-          && Math.abs(o.xp - it.xp) < LABEL_W);
-        if (!overlap) { it.side = side; it.row = row; placed = true; break; }
-      }
-    }
-    if (!placed) { it.side = 'above'; it.row = 0; }
-  });
-  const maxRow = Math.max(...sorted.map(it => it.row));
-  const ROW_H = 24;
-  const AXIS_GAP = 12;
-  const halfH = AXIS_GAP + (maxRow + 1) * ROW_H + 4;
-  const totalH = halfH * 2;
-  const fmtV = v => Number.isInteger(v) ? v.toLocaleString() : v.toFixed(2);
+  // ----- 價格域（個股價軸）-----
+  const vals = items.map(i => i.pv).concat([price]);
+  if (hasBars) { vals.push(...bars.h, ...bars.l); }
+  let yMin = Math.min(...vals), yMax = Math.max(...vals);
+  const ypad = (yMax - yMin || 1) * 0.04;
+  yMin -= ypad; yMax += ypad;
+
+  const H = 360, TOP = 8, BOT = 8;
+  const PH = H - TOP - BOT;
+  const yPx = v => TOP + (yMax - v) / (yMax - yMin) * PH;
+
+  const TAG_W = 150, STRIP = 6, PLOT_R = TAG_W + STRIP;
+  const TAGH = 16;
+  const tags = items.map(it => ({...it}))
+    .concat([{ name:'現價', pv:price, txt:fmtP(price), pct:0, c:'#fde047', big:true }])
+    .map(it => ({...it, y: yPx(it.pv)}))
+    .sort((a,b) => a.y - b.y);
+  let lastY = -Infinity;
+  tags.forEach(t => { t.ty = Math.max(t.y, lastY + TAGH); lastY = t.ty; });
+  const overflow = (tags.length ? tags[tags.length-1].ty : 0) - (H - TAGH/2);
+  if (overflow > 0) tags.forEach(t => { t.ty -= overflow; });
 
   return (
     <div style={{padding:'10px 14px 14px', borderLeft:`3px solid ${accent}`, marginBottom:'10px', background:'#070b15', borderRadius:4}}>
       <div style={{display:'flex', alignItems:'baseline', gap:8, marginBottom:6}}>
         <span style={{color: accent, fontWeight:700, fontSize:13}}>{label}</span>
-        <span style={{color:'#94a3b8', fontSize:12}}>現價 {fmtV(price)}</span>
-        {tx && !isStock && <span style={{color:'#475569', fontSize:10, marginLeft:'auto'}}>strike vs TX {Math.round(tx).toLocaleString()}</span>}
-        {tx &&  isStock && <span style={{color:'#475569', fontSize:10, marginLeft:'auto'}}>strike vs TX {Math.round(tx).toLocaleString()}</span>}
+        <span style={{color:'#94a3b8', fontSize:12}}>現價 {fmtP(price)}</span>
+        {tx && <span style={{color:'#475569', fontSize:10, marginLeft:'auto'}}>strike vs TX {Math.round(tx).toLocaleString()}</span>}
       </div>
-      <div style={{position:'relative', height: totalH, marginTop:6, marginBottom:6}}>
-        <div style={{position:'absolute', left:0, right:0, top:'50%', height:2, background:'#1e293b', borderRadius:1}} />
-        <div style={{position:'absolute', left:`${x(0)}%`, top:`calc(50% - 8px)`, height:'16px', width:1, background:'#475569'}} />
-        {sorted.map((it, idx) => {
-          const isAbove = it.side === 'above';
-          const offset = AXIS_GAP + it.row * ROW_H;
-          const labelStyle = {
-            position:'absolute',
-            [isAbove ? 'bottom' : 'top']: `calc(50% + ${offset}px)`,
-            textAlign:'center', whiteSpace:'nowrap',
-            transform:'translateX(-50%)', left:'50%'
-          };
-          const connectorStyle = {
-            position:'absolute',
-            left:'50%',
-            width:1,
-            background:`${it.c}55`,
-            [isAbove ? 'bottom' : 'top']: `calc(50% + ${it.big ? 6 : 5}px)`,
-            height: `${offset - (it.big ? 6 : 5)}px`,
-            transform:'translateX(-50%)'
-          };
-          return (
-            <div key={idx} style={{position:'absolute', left:`${it.xp}%`, top:0, bottom:0, transform:'translateX(-50%)'}}>
-              {it.row > 0 && <div style={connectorStyle} />}
-              <div style={labelStyle}>
-                <div style={{fontSize:10, color:it.c, fontWeight: it.big ? 700 : 500, lineHeight:1.2}}>{it.name}</div>
-                <div style={{fontSize:9, color:'#94a3b8', lineHeight:1.2}}>
-                  {fmtV(it.v)}
-                  {!it.big && <span style={{color:it.pct>=0?'#fca5a5':'#86efac', marginLeft:3}}>({it.pct>=0?'+':''}{it.pct.toFixed(1)}%)</span>}
-                </div>
-              </div>
-              <div style={{width: it.big?12:9, height: it.big?12:9, borderRadius:'50%', background:it.c,
-                           boxShadow: it.big ? `0 0 0 3px ${it.c}40` : 'none', position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)'}}/>
+      <div style={{position:'relative', height: H}}>
+        {/* 繪圖區（保留右側給價籤） */}
+        <div style={{position:'absolute', left:0, top:0, bottom:0, right:PLOT_R}}>
+          {items.map((it, idx) => (
+            <div key={'l'+idx} style={{position:'absolute', left:0, right:0, top:yPx(it.pv),
+              height:0, borderTop:`1px dashed ${it.c}66`}} />
+          ))}
+          <div style={{position:'absolute', left:0, right:0, top:yPx(price), height:0, borderTop:'1px solid #fde047aa'}} />
+          {hasBars && bars.c.map((c, i) => {
+            const o = bars.o[i], h = bars.h[i], l = bars.l[i];
+            const col = c >= o ? '#ef4444' : '#22c55e';
+            const cx = (i + 0.5) / bars.c.length * 100;
+            const bw = Math.max(2, (100 / bars.c.length) * 0.55);
+            const bodyTop = yPx(Math.max(o, c));
+            const bodyH = Math.max(1, Math.abs(yPx(o) - yPx(c)));
+            return (
+              <React.Fragment key={'b'+i}>
+                <div style={{position:'absolute', left:`${cx}%`, top:yPx(h), height:yPx(l)-yPx(h), width:1, background:col, transform:'translateX(-50%)'}} />
+                <div style={{position:'absolute', left:`${cx}%`, top:bodyTop, height:bodyH, width:`${bw}%`, background:col, transform:'translateX(-50%)', borderRadius:1}} />
+              </React.Fragment>
+            );
+          })}
+        </div>
+        {/* 引線：只有價位太近被推開時才畫 */}
+        <svg style={{position:'absolute', right:TAG_W, top:0, width:STRIP, height:H, overflow:'visible'}}
+             viewBox={`0 0 ${STRIP} ${H}`} preserveAspectRatio="none">
+          {tags.filter(t => Math.abs(t.ty - t.y) > 2).map((t, idx) => (
+            <line key={'c'+idx} x1="0" y1={t.y} x2={STRIP} y2={t.ty} stroke={`${t.c}aa`} strokeWidth="1" />
+          ))}
+        </svg>
+        {/* 右側價籤（單行：名稱 價位 幅度） */}
+        <div style={{position:'absolute', right:0, top:0, bottom:0, width:TAG_W}}>
+          {tags.map((t, idx) => (
+            <div key={'t'+idx} style={{position:'absolute', left:0, right:0, top:t.ty - 8,
+              display:'flex', alignItems:'baseline', gap:4, whiteSpace:'nowrap', lineHeight:1}}>
+              <span style={{fontSize:12, fontWeight:700, color:t.c}}>{t.name}</span>
+              <span style={{fontSize:11, color:'#cbd5e1'}}>{t.txt}</span>
+              {!t.big && <span style={{fontSize:11, color:t.pct>=0?'#fca5a5':'#86efac'}}>{t.pct>=0?'+':''}{t.pct.toFixed(2)}%</span>}
             </div>
-          );
-        })}
+          ))}
+        </div>
       </div>
       {/* HV / ADX 摘要 */}
       <div style={{display:'flex', gap:14, fontSize:11, color:'#64748b', marginTop:4}}>
         {ind.hv != null && <span>HV <span style={{color:'#cbd5e1', fontWeight:600}}>{(ind.hv*100).toFixed(1)}%</span></span>}
         {ind.adx != null && <span>ADX <span style={{color:'#cbd5e1', fontWeight:600}}>{ind.adx.toFixed(1)}</span></span>}
         {ind.atr != null && <span>ATR <span style={{color:'#cbd5e1', fontWeight:600}}>{Math.round(ind.atr).toLocaleString()}</span></span>}
+        {ind.rsi != null && <span>RSI <span style={{fontWeight:600, color: ind.rsi >= 70 ? '#fca5a5' : ind.rsi <= 30 ? '#86efac' : '#cbd5e1'}}>{ind.rsi.toFixed(0)}</span>{ind.rsi >= 70 ? <span style={{color:'#fca5a5', fontSize:9, marginLeft:2}}>超買</span> : ind.rsi <= 30 ? <span style={{color:'#86efac', fontSize:9, marginLeft:2}}>超賣</span> : null}</span>}
+        {ind.kd_k != null && ind.kd_d != null && <span>KD <span style={{fontWeight:600, color: ind.kd_k >= 80 ? '#fca5a5' : ind.kd_k <= 20 ? '#86efac' : '#cbd5e1'}}>{ind.kd_k.toFixed(0)}/{ind.kd_d.toFixed(0)}</span>{ind.kd_k >= 80 ? <span style={{color:'#fca5a5', fontSize:9, marginLeft:2}}>超買</span> : ind.kd_k <= 20 ? <span style={{color:'#86efac', fontSize:9, marginLeft:2}}>超賣</span> : (ind.kd_k > ind.kd_d ? <span style={{color:'#86efac', fontSize:9, marginLeft:2}}>↑</span> : <span style={{color:'#fca5a5', fontSize:9, marginLeft:2}}>↓</span>)}</span>}
       </div>
+      {!hasBars && (
+        <div style={{fontSize:10, color:'#64748b', marginTop:2}}>（等後端推送日K後顯示蠟燭；目前僅參考價位）</div>
+      )}
     </div>
   );
 }
@@ -6074,7 +6204,7 @@ function RegimeDetector({ data }) {
   );
 }
 
-function CollapsibleTrimAddCard({ s }) {
+function CollapsibleTrimAddCard({ s, regime, broker }) {
   // 智能展開：有觸發訊號的預設展開、其他預設摺疊
   const hasTrigger = s && (s.trim_triggered_2 || s.trim_triggered || s.cross_up
                             || (s.dd_from_high_pct != null && s.dd_from_high_pct < -5));
@@ -6123,8 +6253,65 @@ function CollapsibleTrimAddCard({ s }) {
       </div>
       {open && (
         <div style={{padding:'0 4px 8px 4px'}}>
+          <AssetGlance s={s} regime={regime} broker={broker} />
           <TrimAddSOP s={s} />
         </div>
+      )}
+    </div>
+  );
+}
+
+function AssetGlance({ s, regime, broker }) {
+  // 「該檔一眼看」mini block：現價 / regime / DD / 持倉 NT
+  if (!s) return null;
+  // 從 broker.positions 找該檔對應的股期持倉（NYF / QFF / RZF）
+  const familyMap = { '0050': 'NYF', '2330': 'QFF', '00679B': 'RZF' };
+  const fam = familyMap[s.ticker];
+  const positions = broker?.positions || [];
+  const myPos = positions.filter(p => p.family === fam);
+  const totalPnl = myPos.reduce((sum, p) => sum + (p.pnl || 0), 0);
+  const totalQty = myPos.reduce((sum, p) => sum + (p.quantity || 0), 0);
+  const notional = (s.lots_held || 0) * (s.lot_size || 0) * (s.price || 0);
+
+  const regimeColor = regime?.label ? (
+    /牛/.test(regime.label) ? '#86efac' :
+    /熊/.test(regime.label) ? '#fca5a5' :
+    /盤整|sideways/i.test(regime.label) ? '#fbbf24' : '#94a3b8'
+  ) : '#475569';
+  const ddColor = s.dd_from_high_pct == null ? '#94a3b8'
+                 : s.dd_from_high_pct >= -3 ? '#86efac'
+                 : s.dd_from_high_pct >= -7 ? '#fbbf24'
+                 : '#fca5a5';
+  const pnlColor = totalPnl >= 0 ? '#86efac' : '#fca5a5';
+  const fmtN = n => n == null ? '—' : Math.round(n).toLocaleString();
+  const fmtPct = n => n == null ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`;
+
+  const Cell = ({ label, val, color, hint }) => (
+    <div style={{flex:'1 1 90px', minWidth:0}}>
+      <div style={{fontSize:9, color:'#64748b', marginBottom:2, letterSpacing:'0.05em'}}>{label}</div>
+      <div style={{fontSize:13, fontWeight:700, color: color || '#cbd5e1', lineHeight:1.2,
+                   whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{val}</div>
+      {hint && <div style={{fontSize:9, color:'#64748b', marginTop:1}}>{hint}</div>}
+    </div>
+  );
+
+  return (
+    <div style={{
+      margin:'4px 0 10px 0', padding:'8px 12px',
+      background:'#070b15', borderLeft:'3px solid #60a5fa', borderRadius:4,
+      display:'flex', gap:10, flexWrap:'wrap', alignItems:'flex-start'
+    }}>
+      <Cell label="現價" val={s.price?.toFixed(2) ?? '—'} color="#e2e8f0"
+            hint={s.chgpct != null ? fmtPct(s.chgpct) : null} />
+      <Cell label="REGIME" val={regime?.label || '—'} color={regimeColor}
+            hint={regime?.score != null ? `score ${Math.round(regime.score)}` : null} />
+      <Cell label="60d DD" val={fmtPct(s.dd_from_high_pct)} color={ddColor}
+            hint={s.recent_high ? `peak ${s.recent_high.toFixed(2)}` : null} />
+      <Cell label="持倉名目" val={`NT$ ${fmtN(notional)}`} color="#cbd5e1"
+            hint={`${s.lots_held} 口 × 成本 ${s.cost_basis?.toFixed(2) ?? '—'}`} />
+      {myPos.length > 0 && (
+        <Cell label="持倉損益" val={`${totalPnl >= 0 ? '+' : ''}NT$ ${fmtN(totalPnl)}`} color={pnlColor}
+              hint={`${totalQty} 口 (broker)`} />
       )}
     </div>
   );
@@ -6137,13 +6324,8 @@ function TrimAddSOP({ s }) {
   const trimDist     = s.trim_threshold ? ((s.trim_threshold - s.price) / s.price) * 100 : null;
   const trimDist2    = s.trim_threshold_2 ? ((s.trim_threshold_2 - s.price) / s.price) * 100 : null;
   const addDist      = s.add_level ? ((s.add_level - s.price) / s.price) * 100 : null;
-  // trim 大小：tiered 第一階用 50%、其他用 trim_size_pct
+  // trim 大小：tiered 第一階用 50%、其他用 trim_size_pct（只給建議百分比，不換算口數）
   const trimSize1Pct = mode === 'tiered' ? (s.trim_size_pct || 50) : (s.trim_size_pct || 100);
-  const trimLots1    = s.lots_held * trimSize1Pct / 100;
-  const trimReleased = s.lot_size * trimLots1 * s.price;
-  const fullNotional = s.lot_size * s.lots_held * s.price;
-  const pnlPerLot    = s.cost_basis ? (s.price - s.cost_basis) * s.lot_size : null;
-  const totalPnl     = pnlPerLot != null ? pnlPerLot * s.lots_held : null;
 
   // 動作判定
   const tier2Triggered = s.trim_triggered_2 === true;
@@ -6155,11 +6337,11 @@ function TrimAddSOP({ s }) {
                     : tier1Triggered ? '#fb923c'
                     : addBackNow     ? '#22c55e'
                     : '#475569';
-  const actionLabel = tier2Triggered ? `🔴 觸發 Trim 第 2 階 — 全出 ${s.lots_held} 口`
+  const actionLabel = tier2Triggered ? '🔴 觸發 Trim 第 2 階 — 全部出清'
                     : tier1Triggered ? (mode === 'tiered'
-                        ? `🟠 觸發 Trim 第 1 階 — 砍 ${Math.round(trimLots1)} 口（留 ${s.lots_held - Math.round(trimLots1)} 口）`
-                        : `🔴 觸發 Trim — ${trimSize1Pct === 100 ? '全出' : '砍'} ${Math.round(trimLots1)} 口`)
-                    : addBackNow     ? `🟢 收盤站上 ${s.add_level_label} — Add-back 訊號：買回到 ${s.lots_held} 口滿倉`
+                        ? `🟠 觸發 Trim 第 1 階 — 減碼 ${trimSize1Pct}%`
+                        : `🔴 觸發 Trim — ${trimSize1Pct === 100 ? '全部出清' : '減碼 ' + trimSize1Pct + '%'}`)
+                    : addBackNow     ? `🟢 收盤站上 ${s.add_level_label} — Add-back 訊號：加回滿倉`
                     : '✓ 維持持倉、等訊號';
 
   const Row = ({ label, value, hint, color }) => (
@@ -6239,47 +6421,27 @@ function TrimAddSOP({ s }) {
              color={s.above_add_level ? '#86efac' : '#fca5a5'} />
       </div>
 
-      {/* 持倉與釋出 */}
-      <div style={{
-        padding:'10px 14px', marginBottom:10, background:'#070b15', borderRadius:4,
-        borderLeft:'3px solid #60a5fa'
-      }}>
-        <div style={{fontSize:12, fontWeight:600, color:'#e2e8f0', marginBottom:6}}>💼 目前持倉</div>
-        <Row label={s.futures_name} value={`${s.lots_held} 口`}
-             hint={`每口 ${s.lot_size?.toLocaleString()} ${s.lot_unit_label}`} />
-        <Row label="進場均價"
-             value={s.cost_basis?.toFixed(2)} />
-        <Row label="目前 notional"
-             value={`${(fullNotional / 10000).toFixed(0)} 萬`} />
-        {totalPnl != null && (
-          <Row label="未實現 P&L"
-               value={`${totalPnl >= 0 ? '+' : ''}${Math.round(totalPnl).toLocaleString()}`}
-               color={totalPnl >= 0 ? '#86efac' : '#fca5a5'} />
-        )}
-      </div>
-
-      {/* 觸發後動作模擬 */}
+      {/* 觸發時動作（只給建議，不換算口數） */}
       <div style={{
         padding:'10px 14px', marginBottom:10, background:'#070b15', borderRadius:4,
         borderLeft:'3px solid #fbbf24'
       }}>
-        <div style={{fontSize:12, fontWeight:600, color:'#e2e8f0', marginBottom:6}}>🎯 觸發時動作</div>
+        <div style={{fontSize:12, fontWeight:600, color:'#e2e8f0', marginBottom:6}}>🎯 觸發時動作（建議）</div>
         {mode === 'tiered' ? (
           <>
             <Row label="第 1 階（先警戒）"
-                 value={`砍 ${Math.round(trimLots1)} 口（50%）`}
-                 hint={`留 ${s.lots_held - Math.round(trimLots1)} 口、釋出 ~${(trimReleased / 10000).toFixed(0)} 萬`} />
+                 value={`減碼 ${trimSize1Pct}%`}
+                 hint={s.trim_pct != null ? `跌破 -${s.trim_pct}% 門檻` : ''} />
             <Row label="第 2 階（完全出場）"
-                 value={`砍剩餘 ${s.lots_held - Math.round(trimLots1)} 口（100%）`}
-                 hint={`總釋出 ~${(fullNotional / 10000).toFixed(0)} 萬`} />
+                 value="出清剩餘（累計 100%）"
+                 hint={s.trim_pct_2 != null ? `跌破 -${s.trim_pct_2}% 門檻` : ''} />
           </>
         ) : (
           <Row label="Trim 動作"
-               value={`${trimSize1Pct === 100 ? '全出' : '砍'} ${Math.round(trimLots1)} 口`}
-               hint={`釋出 ~${((s.lot_size * trimLots1 * s.price) / 10000).toFixed(0)} 萬`} />
+               value={trimSize1Pct === 100 ? '全部出清' : `減碼 ${trimSize1Pct}%`} />
         )}
         <Row label="Add-back 動作"
-             value={`加回到 ${s.lots_held} 口滿倉`}
+             value="加回滿倉"
              hint={`當 ${s.ticker} 收盤站上 ${s.add_level_label}（${s.add_level?.toFixed(2)}）→ T+1 09:00-09:30 限價買回`}
              color={addBackNow ? '#22c55e' : undefined} />
       </div>
@@ -6298,16 +6460,18 @@ function TrimAddSOP({ s }) {
   );
 }
 
-function WeeklyICSOP({ data }) {
+function WeeklyICSOP({ data, weekly, label }) {
   // Weekly Iron Condor SOP — 8/8 regime 都正報酬，年化 +5-25%
-  const tx     = data?.market?.tx_futures;
-  const wedDte = data?.weekly_wed?.dte;
-  const wedIv  = data?.weekly_wed?.iv_used ?? data?.iv_used;
-  const wedMonth = data?.weekly_wed?.txo_month;
+  // weekly 未帶入時退回 weekly_wed（向後相容）；DTE 用該結算自己的天數
+  const w        = weekly || data?.weekly_wed;
+  const tx       = data?.market?.tx_futures;
+  const wedDte   = w?.dte;
+  const wedIv    = w?.iv_used ?? data?.iv_used;
+  const wedMonth = label || w?.series || '週三結算';
   const ivPctile = data?.iv_percentile?.current_pct;
 
   if (!tx || wedDte == null) {
-    return <div style={{padding:'12px', color:'#94a3b8', fontSize:11}}>等待週三週選資料…</div>;
+    return <div style={{padding:'12px', color:'#94a3b8', fontSize:11}}>等待{label || '週三週選'}資料…</div>;
   }
 
   // BS-derived 履約價（short delta 0.20、long delta 0.10）
@@ -6362,6 +6526,32 @@ function WeeklyICSOP({ data }) {
                 : ivBranch === 'low'  ? '⚠ 跳過（IV 太低）'
                 : '預設 1 口（沒 PR 資料）';
 
+  // ── 我的看法：用「當下 IV」算實際標準差距離 + 比對近期真實日振幅 ──
+  const dteTd   = w?.dte_trading ?? wedDte;
+  const oneSD   = tx * sigma * Math.sqrt(Math.max(dteTd, 1) / 252);   // 剩餘天期 1 個標準差（點）
+  const callPts = K_sc - tx, putPts = tx - K_sp;                       // 賣方離現價點數
+  const callSD  = oneSD ? callPts / oneSD : 0;
+  const putSD   = oneSD ? putPts  / oneSD : 0;
+  const minSD   = Math.min(callSD, putSD);
+  const minBufPts = Math.min(callPts, putPts);
+  const callPct = callPts / tx * 100, putPct = putPts / tx * 100;
+  // 近 10 日真實日振幅（從 TX 日 K）
+  const bars = data?.indicators?.put_refs?.bars;
+  let avgRange = null, maxMove = null;
+  if (bars && Array.isArray(bars.c) && bars.c.length > 1) {
+    const n = bars.c.length, k = Math.min(10, n);
+    let sr = 0, mm = 0;
+    for (let i = n - k; i < n; i++) sr += (bars.h[i] - bars.l[i]);
+    for (let i = Math.max(1, n - k); i < n; i++) mm = Math.max(mm, Math.abs(bars.c[i] - bars.c[i - 1]));
+    avgRange = sr / k; maxMove = mm;
+  }
+  const verdict = minSD >= 0.8 ? { c:'#22c55e', t:'🟢 緩衝充足' }
+                : minSD >= 0.5 ? { c:'#fbbf24', t:'🟡 緩衝偏薄' }
+                :                 { c:'#ef4444', t:'🔴 緩衝過薄' };
+  const gammaZone = sigma > 0.30 && dteTd <= 5;                         // 高 IV + 短天期
+  const rangeWarn = avgRange != null && minBufPts < avgRange;          // 緩衝 < 單日均振幅
+  const tight     = minSD < 0.6;
+
   const Row = ({ label, value, hint, color }) => (
     <div style={{display:'flex', justifyContent:'space-between', padding:'3px 0',
                  borderBottom:'1px dashed #1e293b', fontSize:11}}>
@@ -6377,7 +6567,7 @@ function WeeklyICSOP({ data }) {
     <div style={{padding:'4px 0'}}>
       {/* 標題 + 狀態 */}
       <div style={{fontSize:11, color:'#94a3b8', marginBottom:8, paddingLeft:4}}>
-        <b style={{color:'#e2e8f0'}}>週選 {wedMonth} (週三結算)</b>
+        <b style={{color:'#e2e8f0'}}>📅 IC SOP · {wedMonth}（DTE {wedDte}）</b>
         <span style={{marginLeft:8, color:'#64748b'}}>規則：8/8 regime 正報酬、Sharpe 7.75</span>
       </div>
 
@@ -6427,6 +6617,40 @@ function WeeklyICSOP({ data }) {
              hint={`+${sp.toFixed(0)} pts`} color="#fca5a5" />
         <Row label="🟢 買 long put (δ -0.10)" value={K_bp.toLocaleString()}
              hint={`-${bp.toFixed(0)} pts`} color="#86efac" />
+      </div>
+
+      {/* 🧭 我的看法（依當下 IV 與近期振幅自動評估） */}
+      <div style={{padding:'10px 14px', marginBottom:10, background:'#0a0f1a',
+                   borderRadius:4, borderLeft:`3px solid ${verdict.c}`}}>
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:6}}>
+          <span style={{fontSize:12, fontWeight:600, color:'#e2e8f0'}}>🧭 我的看法</span>
+          <span style={{fontSize:14, fontWeight:700, color:verdict.c}}>{verdict.t}</span>
+        </div>
+        <div style={{fontSize:11, color:'#cbd5e1', lineHeight:1.6}}>
+          賣方離現價最近 <b style={{color:verdict.c}}>{minSD.toFixed(2)} 個標準差</b>
+          （賣 call +{callPct.toFixed(1)}% / 賣 put −{putPct.toFixed(1)}%；
+          以 IV {(sigma*100).toFixed(0)}% 算 1SD ≈ ±{oneSD.toFixed(0)} 點）<br/>
+          {avgRange != null && (
+            <span>近 10 日日振幅平均 <b style={{color:'#e2e8f0'}}>{avgRange.toFixed(0)}</b> 點、單日最大變動 <b style={{color:'#e2e8f0'}}>{maxMove.toFixed(0)}</b> 點<br/></span>
+          )}
+          每口最大虧損 <b style={{color:'#fca5a5'}}>{maxLoss.toFixed(0)} 點</b>（~${maxLossNT.toLocaleString(undefined,{maximumFractionDigits:0})}）
+        </div>
+        {(rangeWarn || gammaZone || tight) && (
+          <div style={{marginTop:6, fontSize:11, color:'#fca5a5', lineHeight:1.6}}>
+            {rangeWarn && <div>⚠ 賣方緩衝（{minBufPts.toFixed(0)} 點）≈ 單日均振幅以內，一根大 K 就可能觸及</div>}
+            {gammaZone && <div>⚠ 高 IV（{(sigma*100).toFixed(0)}%）+ 短天期（DTE {wedDte}）= gamma 風險最大區間</div>}
+          </div>
+        )}
+        <div style={{marginTop:6, fontSize:11, color:'#94a3b8', lineHeight:1.6}}>
+          {tight ? (
+            <>建議調整：<br/>
+              • 賣方往外推到 δ0.12–0.15（IV 高時往外推仍收得到權利金）<br/>
+              • 或砍口數 / 只做單邊（偏空就只留上方賣 call）<br/>
+              • 或等 IV 回落再進（現在建緊的 IC CP 值差）</>
+          ) : (
+            <>緩衝尚可：按上方 IV PR 建議口數進場即可，務必守主動管理停損（賣方被突破立即買回對應腳）。</>
+          )}
+        </div>
       </div>
 
       {/* 預估 P&L */}
@@ -6636,11 +6860,30 @@ function MonthlyStrategySOP({ data, mode = 'near' }) {
           // 計算實際距現價%（顯示用）
           const pct = (k) => (k != null && tx != null) ? ((k - tx) / tx * 100) : null;
           const fmtPct = (v) => v == null ? '' : ` (${v >= 0 ? '+' : ''}${v.toFixed(1)}%)`;
-          const Strike = ({ v }) => (
-            <b style={{color: v != null ? '#fde047' : '#64748b'}}>
-              {v != null ? v.toLocaleString() : '—'}
-            </b>
-          );
+          // 實際鏈上的 strike（與 BS 推薦並列顯示）
+          const actualCallK   = src?.selected_options?.call?.strike ?? null;
+          const actualLongPK  = src?.selected_options?.put?.strike ?? null;
+          const actualShortPK = src?.short_put_recommender?.recommended?.strike ?? null;
+          // Strike：v 是 BS 推薦；actual 是鏈上實際可下，若不同就標出差距
+          const Strike = ({ v, actual }) => {
+            const actualNum = actual != null ? Math.round(actual) : null;
+            const showActual = actualNum != null && v != null && actualNum !== v;
+            return (
+              <>
+                <b style={{color: v != null ? '#fde047' : '#64748b'}}>
+                  {v != null ? v.toLocaleString() : '—'}
+                </b>
+                {showActual && (
+                  <span style={{fontSize:9, color:'#94a3b8', marginLeft:4, whiteSpace:'nowrap'}}>
+                    / 鏈 <b style={{color:'#cbd5e1'}}>{actualNum.toLocaleString()}</b>
+                    <span style={{color: Math.abs(actualNum - v) <= 100 ? '#64748b' : '#fbbf24'}}>
+                      {' '}({actualNum - v >= 0 ? '+' : ''}{actualNum - v})
+                    </span>
+                  </span>
+                )}
+              </>
+            );
+          };
           if (isHighIV) {
             return (
               <>
@@ -6651,20 +6894,20 @@ function MonthlyStrategySOP({ data, mode = 'near' }) {
                   <li>
                     <b style={{color:'#86efac'}}>立即建（賣 vol 划算）：</b>
                     <ul style={{paddingLeft:18, marginTop:2}}>
-                      <li>賣 short call @ <Strike v={kCall} />{fmtPct(pct(kCall))}（delta +0.10）</li>
-                      <li>賣 short put @ <Strike v={kShortP} />{fmtPct(pct(kShortP))}（delta -0.05）</li>
+                      <li>賣 short call @ <Strike v={kCall} actual={actualCallK} />{fmtPct(pct(kCall))}（delta +0.10）</li>
+                      <li>賣 short put @ <Strike v={kShortP} actual={actualShortPK} />{fmtPct(pct(kShortP))}（delta -0.05）</li>
                     </ul>
                   </li>
                   <li style={{marginTop:6}}>
                     <b style={{color:'#fca5a5'}}>暫緩（買 vol 太貴）：</b>
                     <ul style={{paddingLeft:18, marginTop:2}}>
-                      <li>long put @ <Strike v={kLongP} />{fmtPct(pct(kLongP))} — 等 IV PR &lt; 50% 或 IV &lt; 25% 再買</li>
+                      <li>long put @ <Strike v={kLongP} actual={actualLongPK} />{fmtPct(pct(kLongP))} — 等 IV PR &lt; 50% 或 IV &lt; 25% 再買</li>
                       <li>災難 put @ <Strike v={kDisP} />{fmtPct(pct(kDisP))} — 同上</li>
                     </ul>
                   </li>
                   <li style={{marginTop:6}}>
                     <b style={{color:'#fbbf24'}}>替代方案（不想等）：</b>
-                    用 bear put spread：買 <Strike v={kLongP} /> + 賣 <Strike v={kSpreadShort} />{fmtPct(pct(kSpreadShort))}（淨成本砍半）
+                    用 bear put spread：買 <Strike v={kLongP} actual={actualLongPK} /> + 賣 <Strike v={kSpreadShort} actual={actualShortPK} />{fmtPct(pct(kSpreadShort))}（淨成本砍半）
                   </li>
                 </ol>
                 <div style={{marginTop:4, fontSize:10, color:'#64748b'}}>
@@ -6677,9 +6920,9 @@ function MonthlyStrategySOP({ data, mode = 'near' }) {
             <>
               <ol style={{margin:'4px 0', paddingLeft:20}}>
                 <li>買深 OTM 災難 put @ <Strike v={kDisP} />{fmtPct(pct(kDisP))}（delta -0.02）— 流動性最差，最先掛限價</li>
-                <li>賣 OTM short put @ <Strike v={kShortP} />{fmtPct(pct(kShortP))}（delta -0.05）</li>
-                <li>買 OTM long put @ <Strike v={kLongP} />{fmtPct(pct(kLongP))}（delta -0.20）</li>
-                <li>賣 OTM short call @ <Strike v={kCall} />{fmtPct(pct(kCall))}（delta +0.10）— 最後賣</li>
+                <li>賣 OTM short put @ <Strike v={kShortP} actual={actualShortPK} />{fmtPct(pct(kShortP))}（delta -0.05）</li>
+                <li>買 OTM long put @ <Strike v={kLongP} actual={actualLongPK} />{fmtPct(pct(kLongP))}（delta -0.20）</li>
+                <li>賣 OTM short call @ <Strike v={kCall} actual={actualCallK} />{fmtPct(pct(kCall))}（delta +0.10）— 最後賣</li>
               </ol>
               <div style={{marginTop:4, fontSize:10, color:'#64748b'}}>
                 履約價以 <b style={{color:'#94a3b8'}}>Black-Scholes target delta</b> 算（TX {tx?.toFixed(0) ?? '—'}, IV {(sigma*100).toFixed(1)}%, DTE {dte}）→ 取最接近 100 整數倍。距現價% 隨 IV/DTE 自動調整。
@@ -6763,6 +7006,8 @@ function SectionNear({ data, taiex, taiexHigh, taiexLow, price2330, price0050, h
         <OptionCard type="put"  data={data.selected_options?.put}  taiex={taiex} taiexHigh={taiexHigh} taiexLow={taiexLow} price2330={price2330} price0050={price0050} />
         <OptionCard type="call" data={data.selected_options?.call} taiex={taiex} taiexHigh={taiexHigh} taiexLow={taiexLow} price2330={price2330} price0050={price0050} />
       </div>
+      {/* 月選策略 SOP — 接在鏈明細卡後，近月 */}
+      <MonthlyStrategySOP data={data} mode="near" />
       <SimTable structures={data.structures} selectedOptions={data.selected_options} taiex={taiex} />
       <RollPanel dte={data.dte} selectedOptions={data.selected_options} taiex={taiex} label={`近月 ${data.txo_month}`} />
       <WheelPanel selectedOptions={data.selected_options} taiex={taiex} price2330={price2330} price0050={price0050} hvVal={hvVal} />
@@ -6770,7 +7015,7 @@ function SectionNear({ data, taiex, taiexHigh, taiexLow, price2330, price0050, h
   );
 }
 
-function SectionWeekly({ weekly, label, taiex, taiexHigh, taiexLow, price2330, price0050, hvVal }) {
+function SectionWeekly({ weekly, label, data, taiex, taiexHigh, taiexLow, price2330, price0050, hvVal }) {
   if (!weekly) return null;
   const { delivery_month, settlement_date, series, dte, dte_trading, iv_used, iv_source, selected_options, structures } = weekly;
   const fmt8 = d => d ? `${d.slice(0,4)}/${d.slice(4,6)}/${d.slice(6,8)}` : d;
@@ -6790,6 +7035,8 @@ function SectionWeekly({ weekly, label, taiex, taiexHigh, taiexLow, price2330, p
         <OptionCard type="put"  data={selected_options?.put}  taiex={taiex} taiexHigh={taiexHigh} taiexLow={taiexLow} price2330={price2330} price0050={price0050} />
         <OptionCard type="call" data={selected_options?.call} taiex={taiex} taiexHigh={taiexHigh} taiexLow={taiexLow} price2330={price2330} price0050={price0050} />
       </div>
+      {/* 週選 IC SOP — 接在鏈明細卡後，用該結算自己的 DTE 計算 */}
+      <WeeklyICSOP data={data} weekly={weekly} label={`${label} ${series}`} />
       <SimTable structures={structures} selectedOptions={selected_options} taiex={taiex} />
       <RollPanel dte={dte} selectedOptions={selected_options} taiex={taiex} label={`${label} ${series}`} />
       <WheelPanel selectedOptions={selected_options} taiex={taiex} price2330={price2330} price0050={price0050} hvVal={hvVal} />
@@ -6797,7 +7044,7 @@ function SectionWeekly({ weekly, label, taiex, taiexHigh, taiexLow, price2330, p
   );
 }
 
-function SectionFarMonth({ farMonth, taiex, taiexHigh, taiexLow, price2330, price0050, hvVal }) {
+function SectionFarMonth({ farMonth, data, taiex, taiexHigh, taiexLow, price2330, price0050, hvVal }) {
   if (!farMonth) return null;
   const { txo_month, dte, dte_trading, iv_used, iv_source, selected_options, structures } = farMonth;
   return (
@@ -6812,6 +7059,8 @@ function SectionFarMonth({ farMonth, taiex, taiexHigh, taiexLow, price2330, pric
         <OptionCard type="put"  data={selected_options?.put}  taiex={taiex} taiexHigh={taiexHigh} taiexLow={taiexLow} price2330={price2330} price0050={price0050} />
         <OptionCard type="call" data={selected_options?.call} taiex={taiex} taiexHigh={taiexHigh} taiexLow={taiexLow} price2330={price2330} price0050={price0050} />
       </div>
+      {/* 月選策略 SOP — 接在鏈明細卡後，次月（建倉用） */}
+      <MonthlyStrategySOP data={data} mode="far" />
       <SimTable structures={structures} selectedOptions={selected_options} taiex={taiex} />
       <RollPanel dte={dte} selectedOptions={selected_options} taiex={taiex} label={`遠月 ${txo_month}`} />
       <WheelPanel selectedOptions={selected_options} taiex={taiex} price2330={price2330} price0050={price0050} hvVal={hvVal} />
@@ -7068,57 +7317,25 @@ function App() {
                      });
                      return dds.length ? dds.join(' · ') : null;
                    })()}>
-            <CollapsibleTrimAddCard s={data?.trim_add_0050} />
-            <CollapsibleTrimAddCard s={data?.trim_add_2330} />
-            <CollapsibleTrimAddCard s={data?.trim_add_00679b} />
+            <CollapsibleTrimAddCard s={data?.trim_add_0050}
+              regime={data?.indicators_0050?.regime}
+              broker={data?.broker} />
+            <CollapsibleTrimAddCard s={data?.trim_add_2330}
+              regime={data?.indicators?.regime}
+              broker={data?.broker} />
+            <CollapsibleTrimAddCard s={data?.trim_add_00679b}
+              regime={data?.indicators_00679b?.regime}
+              broker={data?.broker} />
           </Section>
 
-          {/* 📘 月選策略 SOP — 主結構（4-leg + 次月）— 2026-05-18 移到週選 IC 之前 */}
-          <Section title="📘 月選策略 SOP" defaultOpen={false} accent="blue"
-                   badge={(() => {
-                     const dte = data?.dte;
-                     const tx = data?.market?.tx_futures;
-                     const farDte = data?.far_month?.dte;
-                     const alerts = [];
-                     if (dte != null && dte >= 25 && dte <= 32) alerts.push('建倉時機');
-                     if (farDte != null && farDte >= 25 && farDte <= 35) alerts.push('次月可建');
-                     if (tx != null) {
-                       const callG = Math.round(tx * 1.029 / 100) * 100;
-                       const putG  = Math.round(tx * 0.910 / 100) * 100;
-                       if (tx >= callG) alerts.push('TX↑ 護欄');
-                       if (tx <= putG)  alerts.push('TX↓ 護欄');
-                     }
-                     if (dte != null && dte <= 1) alerts.push('平倉日 🔴');
-                     return alerts.length ? alerts.join(' · ') : null;
-                   })()}>
-            <MonthlyStrategySOP data={data} mode="near" />
-            <div style={{
-              margin:'20px 0 14px 0', padding:'12px 14px',
-              background:'#0a1f0e', borderLeft:'4px solid #22c55e', borderRadius:6,
-              fontSize:13, color:'#86efac', textAlign:'center', fontWeight:600
-            }}>
-              🟢 ─── <b>次月（建倉用）</b> ─── 🟢
-              <div style={{fontSize:10, color:'#64748b', fontWeight:400, marginTop:4}}>
-                ↓ 這才是建月選新單該看的履約價（DTE 30）↓
-              </div>
-            </div>
-            <MonthlyStrategySOP data={data} mode="far" />
-          </Section>
-
-          {/* 📅 週選 IC SOP — Weekly Iron Condor（輔助收入） */}
-          <Section title="📅 週選 IC SOP" defaultOpen={false} accent="blue"
-                   badge={(() => {
-                     const dte = data?.weekly_wed?.dte;
-                     if (dte == null) return null;
-                     if (dte <= 1) return '🔴 平倉日';
-                     if (dte >= 4 && dte <= 6) return '🟢 建單日';
-                     return `DTE ${dte}`;
-                   })()}>
-            <WeeklyICSOP data={data} />
-          </Section>
+          {/* 月選策略 SOP 已移到區塊3：近月→近月區塊、次月→遠月區塊（鏈明細卡後），用各自 DTE 計算 */}
+          {/* 週選 IC SOP 已移到區塊3 各週選結算區塊內（鏈明細卡後），用各自 DTE 計算 */}
 
           {/* ═══════════════ 區塊 3：選擇權鏈細節（依 DTE 排序）═══════════════ */}
           <GroupDivider label="📈 選擇權鏈" color="#60a5fa" />
+
+          {/* 💰 賣 Put 推薦比較表 — 4 個月份一次看（2026-05-26 加，取代各 section 重複 panel）*/}
+          <ShortPutComparison data={data} />
 
           {/* 💡 市場機會 — 屬於選擇權鏈邏輯：哪一週週選最划算建倉（2026-05-18 從決策訊號移過來）*/}
           <Section title="💡 市場機會" defaultOpen={false} accent="blue"
@@ -7138,13 +7355,13 @@ function App() {
             const stockProps = { taiex, taiexHigh, taiexLow, price2330, price0050, hvVal };
             const sections = [
               { dte: data.dte,                  key: 'near',      el: <SectionNear    data={data}                      {...stockProps} /> },
-              data.weekly_wed && { dte: data.weekly_wed.dte, key: 'weekly_wed', el: <SectionWeekly weekly={data.weekly_wed} label="週三週選" {...stockProps} /> },
-              data.weekly_fri && { dte: data.weekly_fri.dte, key: 'weekly_fri', el: <SectionWeekly weekly={data.weekly_fri} label="週五週選" {...stockProps} /> },
-              data.far_month  && { dte: data.far_month.dte,  key: 'far',        el: <SectionFarMonth farMonth={data.far_month}              {...stockProps} /> },
+              data.weekly_wed && { dte: data.weekly_wed.dte, key: 'weekly_wed', el: <SectionWeekly weekly={data.weekly_wed} data={data} label="週三週選" {...stockProps} /> },
+              data.weekly_fri && { dte: data.weekly_fri.dte, key: 'weekly_fri', el: <SectionWeekly weekly={data.weekly_fri} data={data} label="週五週選" {...stockProps} /> },
+              data.far_month  && { dte: data.far_month.dte,  key: 'far',        el: <SectionFarMonth farMonth={data.far_month} data={data}  {...stockProps} /> },
             ].filter(Boolean).sort((a, b) => a.dte - b.dte);
             return sections.map(s => <React.Fragment key={s.key}>{s.el}</React.Fragment>);
           })()}
-          <Section0050 collar={data.collar_0050} taiex={data.market?.taiex} />
+          {/* Section0050 已拿掉（2026-05-26 整理：與動態管理 SOP 重複）*/}
 
           {/* ═══════════════ 區塊 4：帳務（預設摺疊）═══════════════ */}
           <GroupDivider label="📊 帳務" color="#94a3b8" />
