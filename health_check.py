@@ -54,6 +54,7 @@ def evaluate(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     suggestions: List[str] = []
 
     # ── Rule 1: 200 萬法則 ────────────────────────────────────
+    # 2026-05-26 用戶要求：put 口數不足不再提醒（保留 score 顯示在 dashboard，但不推 violation/suggestion）
     if rec_lots > 0:
         gap = held_put_lots - rec_lots
         if abs(gap) <= 1:
@@ -61,18 +62,16 @@ def evaluate(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         elif abs(gap) <= 2:
             r1_score = 80
             r1_detail = f'建議 {rec_lots} 口、實際 {held_put_lots} 口（差 {gap:+d}）'
-            if gap < 0:
-                violations.append(f'put 不足：建議 {rec_lots} 口、實際 {held_put_lots} 口（缺 {-gap}）')
-                suggestions.append(f'加買 {-gap} 口 OTM put 補足對沖比例')
-            else:
+            if gap > 0:
                 violations.append(f'put 過多：建議 {rec_lots} 口、實際 {held_put_lots} 口（多 {gap}）')
                 suggestions.append(f'考慮減 {gap} 口 put 以降低 theta 拖累')
+            # gap < 0 (put 不足) 不提醒
         else:
             r1_score = max(0, 60 - abs(gap) * 10)
             r1_detail = f'建議 {rec_lots} 口、實際 {held_put_lots} 口（差 {gap:+d}，嚴重失衡）'
-            violations.append(r1_detail)
-            if gap < 0:
-                suggestions.append(f'立即加買 {-gap} 口 put 補足保護')
+            if gap > 0:
+                violations.append(r1_detail)
+            # gap < 0 (put 嚴重不足) 不提醒
     else:
         r1_score, r1_detail = 0, 'recommended_put_lots 缺資料'
     breakdown.append({'rule': '200 萬法則', 'score': r1_score, 'detail': r1_detail})

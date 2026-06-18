@@ -25,6 +25,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
+from strategy_terms import gloss
+
 _HERE = Path(__file__).resolve().parent
 LATEST_FILE = _HERE / 'latest_collar.json'
 
@@ -146,7 +148,7 @@ def build_report(data: Dict[str, Any], now: datetime = None) -> str:
         cur = ra.get('current') or {}
         lines.append('')
         lines.append(f'🎯 {ra.get("regime_label", "?")}（月 {ra.get("monthly_pct", 0):+.1f}%）')
-        lines.append(f'💡 主推 {r.get("strategy")}')
+        lines.append(f'💡 主推 {gloss(r.get("strategy"))}')
         if r.get('stats'):
             s = r['stats']; total = r.get('quarters_total', 0)
             line = f'📊 歷史 {s["wins"]}/{total} 冠 ({s["win_rate_pct"]}%)'
@@ -154,13 +156,13 @@ def build_report(data: Dict[str, Any], now: datetime = None) -> str:
                 line += f' · 同情境 {s["regime_wins"]}/{s["regime_total"]}'
             lines.append(line)
         if r.get('fallback'):
-            fb = f'🛡️ Fallback {r.get("fallback")}'
+            fb = f'🛡️ 後備 {gloss(r.get("fallback"))}'
             if r.get('fallback_stats'):
                 fb += f'（前 3 {r["fallback_stats"]["top3_rate_pct"]}%）'
             lines.append(fb)
         if cur.get('has_positions') and ra.get('deviations'):
             n = len(ra['deviations'])
-            lines.append(f'⚠️ 當前 {cur.get("strategy")} 偏離 {n} 項')
+            lines.append(f'⚠️ 當前 {gloss(cur.get("strategy"))} 偏離 {n} 項')
 
     # ━━━ 明日重點 ━━━
     lines.append('')
@@ -232,11 +234,10 @@ def main(force: bool = False, print_only: bool = False) -> int:
 
     sys.path.insert(0, str(_HERE))
     import alerts as _A
+    # 2026-05-26 用戶要求拿掉 DD/Risk row
     buttons = [
         [{'text': '📋 Last 5', 'data': '/last'},
          {'text': '📂 Positions', 'data': '/positions'}],
-        [{'text': '📉 Drawdown', 'data': '/dd'},
-         {'text': '⚠️ Risk', 'data': '/risk'}],
         [{'text': '📅 Events', 'data': '/events'},
          {'text': '🔧 Roll', 'data': '/roll'}],
     ]

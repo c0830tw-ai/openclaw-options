@@ -370,6 +370,44 @@ def _calc_bollinger(closes: list, period: int) -> Tuple[float, float, float]:
     return ma, ma + 2 * std, ma - 2 * std   # (ma, upper, lower)
 
 
+def _calc_rsi(closes: list, period: int = 14):
+    """Wilder's RSI；資料不足回傳 None。"""
+    if len(closes) < period + 1:
+        return None
+    gains = losses = 0.0
+    for i in range(1, period + 1):
+        ch = closes[i] - closes[i - 1]
+        if ch >= 0:
+            gains += ch
+        else:
+            losses -= ch
+    avg_gain = gains / period
+    avg_loss = losses / period
+    for i in range(period + 1, len(closes)):
+        ch = closes[i] - closes[i - 1]
+        avg_gain = (avg_gain * (period - 1) + max(ch, 0.0)) / period
+        avg_loss = (avg_loss * (period - 1) + max(-ch, 0.0)) / period
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return round(100 - 100 / (1 + rs), 1)
+
+
+def _calc_kd(highs: list, lows: list, closes: list, period: int = 9):
+    """台股慣用 KD（9 日 RSV，K/D 各用 1/3 平滑，種子 50）；不足回傳 (None, None)。"""
+    n = len(closes)
+    if n < period or len(highs) < n or len(lows) < n:
+        return None, None
+    k = d = 50.0
+    for i in range(period - 1, n):
+        hh = max(highs[i - period + 1:i + 1])
+        ll = min(lows[i - period + 1:i + 1])
+        rsv = 50.0 if hh == ll else (closes[i] - ll) / (hh - ll) * 100
+        k = k * 2 / 3 + rsv / 3
+        d = d * 2 / 3 + k / 3
+    return round(k, 1), round(d, 1)
+
+
 def _calc_ema_series(values: list, period: int) -> list:
     if not values:
         return []
@@ -2019,9 +2057,12 @@ def fetch_kbars(api, stock_code: str) -> Optional[dict]:
         result = {
             'atr': atr, 'bb_upper': bb_u, 'bb_lower': bb_l,
             'ma20': ma, 'hv': hv, 'adx': adx, 'days': n_days,
+            'rsi': _calc_rsi(closes),
             'closes': closes,
             'dates':  daily['dates'],
         }
+        _kd_k, _kd_d = _calc_kd(highs, lows, closes)
+        result['kd_k'], result['kd_d'] = _kd_k, _kd_d
         if macd_tuple:
             result['macd']        = macd_tuple[0]
             result['macd_signal'] = macd_tuple[1]
@@ -2029,6 +2070,19 @@ def fetch_kbars(api, stock_code: str) -> Optional[dict]:
         if bb_pat:
             result['bb_pattern'] = bb_pat
             log.info(f"{stock_code} BB 形態: {bb_pat['label']} ({bb_pat['detail']})")
+
+        # 日 K 蠟燭（給前端 RangeThermometer 畫 K 線；只送最近 NB 根）
+        try:
+            NB = 40
+            result['bars'] = {
+                'o': [round(float(v), 2) for v in opens[-NB:]],
+                'h': [round(float(v), 2) for v in highs[-NB:]],
+                'l': [round(float(v), 2) for v in lows[-NB:]],
+                'c': [round(float(v), 2) for v in closes[-NB:]],
+                'd': [d.strftime('%m/%d') for d in daily['dates'][-NB:]],
+            }
+        except Exception as _be:
+            log.warning(f'{stock_code} bars 失敗（{_be}），略過')
 
         # MA20 cross-up（trim & add-back 用）
         if n_days >= 21:
@@ -2132,6 +2186,9 @@ def fetch_hv_tx(api, month: str) -> Optional[dict]:
         # Put 進場參考線：10 日 MA + 日 BB + 30M / 60M BB + 近 20 日 low
         put_refs: dict = {}
         try:
+            put_refs['rsi'] = _calc_rsi(closes)
+            _kk, _kd = _calc_kd(daily.get('High', []), daily.get('Low', []), closes)
+            put_refs['kd_k'], put_refs['kd_d'] = _kk, _kd
             if len(closes) >= 10:
                 put_refs['ma10'] = sum(closes[-10:]) / 10
             lows = daily.get('Low', [])
@@ -2151,6 +2208,19 @@ def fetch_hv_tx(api, month: str) -> Optional[dict]:
                 m60, _, l60 = _calc_bollinger(closes_60m, CFG.bb_period)
                 put_refs['bb_60m_mid'] = m60
                 put_refs['bb_60m_low'] = l60
+            # 日 K 蠟燭（給前端 Put 參考線畫 K 線圖；只送最近 NB 根）
+            try:
+                NB = 40
+                dts = daily.get('dates', [])[-NB:]
+                put_refs['bars'] = {
+                    'o': [round(float(v), 1) for v in daily['Open'][-NB:]],
+                    'h': [round(float(v), 1) for v in daily['High'][-NB:]],
+                    'l': [round(float(v), 1) for v in daily['Low'][-NB:]],
+                    'c': [round(float(v), 1) for v in daily['Close'][-NB:]],
+                    'd': [d.strftime('%m/%d') for d in dts],
+                }
+            except Exception as _be:
+                log.warning(f'put_refs bars 失敗（{_be}），略過')
             if put_refs:
                 log.info(f'TX put_refs: ma10={put_refs.get("ma10")} '
                          f'20d_low={put_refs.get("past_20d_low")} '
@@ -2411,10 +2481,19 @@ def _pick_weekly_chain(api, candidates: list, label: str) -> Optional[dict]:
 
 
 def get_nearest_weekly_wed(api, monthly_settlement_date) -> Optional[dict]:
-    """找最近的週三週選 (TX1/TX2/TX4/TX5)，跳過月選結算日（第3週）。"""
+    """找最近的『週三結算』標的來布週選 IC。
+
+    週三週選系列 (TX1/TX2/TX4/TX5) 本來就不含第 3 週（第 3 個週三是月選 TXO）。
+    若最近的週三正好落在月選結算週，該週沒有獨立週選，月選 TXO 就是那週的
+    週三標的——把它一起納入候選、誰的結算日近就用誰，避免 SOP 跳到下一檔
+    週選而顯示不合理的 DTE（例如剩 13 天）。"""
     WED = {1: 'TX1', 2: 'TX2', 4: 'TX4', 5: 'TX5'}
-    candidates = [c for c in _build_weekly_candidates(WED, weekday=2)
-                  if c[1] != monthly_settlement_date]
+    candidates = _build_weekly_candidates(WED, weekday=2)
+    # 月選（第 3 個週三）也是週三結算：納入候選（TXO 系列），與週選一起排序
+    if monthly_settlement_date and monthly_settlement_date > datetime.now().date():
+        candidates.append((monthly_settlement_date, monthly_settlement_date,
+                           'TXO', monthly_settlement_date.strftime('%Y%m')))
+        candidates.sort()
     return _pick_weekly_chain(api, candidates, '週三')
 
 

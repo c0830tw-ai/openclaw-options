@@ -29,6 +29,8 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
+from strategy_terms import gloss, annotate
+
 _HERE = Path(__file__).resolve().parent
 LATEST_FILE = _HERE / 'latest_collar.json'
 STATE_FILE  = _HERE / 'telegram_bot_state.json'
@@ -109,6 +111,7 @@ def cmd_help(data):
             '/roll   — 換倉建議\n'
             '/dd     — drawdown\n'
             '/risk   — 風險限額\n'
+            '/stops  — TXO 賣方停損掃描\n'
             '/iv     — IV 百分位\n'
             '/regime — 情境推薦\n'
             '/report — 完整早報\n'
@@ -200,6 +203,36 @@ def cmd_dd(data):
             f'{dd.get("severity_msg", "")}')
 
 
+def cmd_stops(data):
+    """TXO 賣方部位停損掃描（觸發 + 接近觸發）。"""
+    try:
+        import stop_loss as _SL
+    except Exception as e:
+        return f'❌ stop_loss 模組載入失敗：{e}'
+    legs = _SL.analyze(data, include_unfired=True)
+    if not legs:
+        return '✅ 沒有 TXO 賣方部位'
+    triggered = [L for L in legs if L['triggered']]
+    lines = []
+    if triggered:
+        lines.append(f'🛑 已觸發停損（{len(triggered)} 口）')
+        for L in triggered:
+            lines.append('')
+            lines.append(_SL.format_leg_line(L))
+            ld = L.get('ladder') or {}
+            if ld:
+                lines.append(f"  buy-to-close: {ld['try_1']}→{ld['try_2']}→{ld['try_3']}")
+    others = [L for L in legs if not L['triggered']]
+    if others:
+        lines.append('')
+        lines.append(f'· 其他賣方部位（{len(others)}）')
+        for L in others:
+            right_zh = '賣 put' if L['right'] == 'put' else '賣 call' if L['right'] == 'call' else '短'
+            strike = int(L['strike']) if L.get('strike') else '?'
+            lines.append(f"  {right_zh} {strike} × {L['qty']}口  開{L['opening_price']:g}→現{L['current_price']:g} ({L['loss_pct']*100:+.0f}%)")
+    return '\n'.join(lines)
+
+
 def cmd_risk(data):
     rl = data.get('risk_limits') or {}
     if not rl:
@@ -234,12 +267,12 @@ def cmd_regime(data):
         f'月 {ra.get("monthly_pct", 0):+.2f}%  週 {ra.get("weekly_pct", 0):+.2f}%',
         f'條件：{ra.get("criteria", "")}',
         '',
-        f'💡 主推：DTE {r.get("dte")} / Δ {r.get("delta")} / {r.get("strategy")}',
+        f'💡 主推：DTE {r.get("dte")} / Δ {r.get("delta")} / {gloss(r.get("strategy"))}',
     ]
     if r.get('fallback'):
-        lines.append(f'🛡️ 保守 fallback：{r.get("fallback")}')
+        lines.append(f'🛡️ 保守後備：{gloss(r.get("fallback"))}')
     if r.get('expected'):
-        lines.append(f'📊 預期：{r.get("expected")}')
+        lines.append(f'📊 預期：{annotate(r.get("expected"))}')
     if r.get('why'):
         # why 可能很長，截到 100 字
         why = r['why']
@@ -249,7 +282,7 @@ def cmd_regime(data):
     if cur.get('has_positions'):
         lines.append('')
         lines.append(f'📍 當前：DTE {cur.get("avg_dte")} / '
-                     f'Δ {(cur.get("avg_put_delta") or 0):.2f} / {cur.get("strategy")}')
+                     f'Δ {(cur.get("avg_put_delta") or 0):.2f} / {gloss(cur.get("strategy"))}')
         if ra.get('deviations'):
             lines.append(f'⚠️ 偏離 {len(ra["deviations"])} 項：')
             for d in ra['deviations'][:3]:
@@ -575,6 +608,7 @@ HANDLERS = {
     '/roll':    cmd_roll,
     '/dd':      cmd_dd,
     '/risk':    cmd_risk,
+    '/stops':   cmd_stops,
     '/iv':      cmd_iv,
     '/regime':  cmd_regime,
     '/report':  cmd_report,

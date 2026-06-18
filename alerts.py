@@ -65,6 +65,14 @@ DEFAULT_RULES = {
     'trim_add_cooldown_minutes': 720,   # trim/add 訊號專用 cooldown 12h（避免每次 refresh 重推）
     'regime_sideways_alerts_enabled': True,  # Sideways 連續 N 天警告（用戶 5/16 要求）
     'regime_sideways_min_days':       3,     # 連續 N 天 sideways score > 60 才推
+
+    # TXO 賣方停損（2026-05-26 加）
+    'stop_loss_enabled':              True,  # 開關
+    'stop_loss_multiplier':           2.0,   # 虧損 = 開倉權利金的 N 倍即觸發（2.0 = 收 30 虧 60）
+    'stop_loss_cooldown_minutes':     30,    # 平時 cooldown
+    'stop_loss_quiet_cooldown_minutes': 60,  # 夜盤靜音時段 cooldown（避免吵醒）
+    'stop_loss_quiet_start_hour':     23,    # 靜音時段起（小時，0-23）
+    'stop_loss_quiet_end_hour':       6,     # 靜音時段止（不含）
 }
 
 
@@ -306,7 +314,7 @@ def evaluate(data: dict, rules: dict) -> list:
                 'key':   f"risk_over_{m['label']}",
                 'level': '🔴',
                 'msg':   f"{m['label']} 超限：{m['current']} {m.get('unit', '')} (限 {m['limit']}, 用 {m['usage_pct']}%)",
-                'tip':   '達到風險上限；考慮減倉、roll 履約或調整結構',
+                'tip':   '達到風險上限；考慮減倉、換倉（roll）或調整結構',
             })
         elif m.get('status') == 'hot':
             alerts.append({
@@ -324,8 +332,8 @@ def evaluate(data: dict, rules: dict) -> list:
             alerts.append({
                 'key':   'dd_high',
                 'level': '🔴' if cdd <= -15 else '🟠',
-                'msg':   f"Drawdown {cdd:+.1f}% (peak {dd.get('peak_date', '?')} → 已 {dd.get('days_in_dd', 0)} 天)",
-                'tip':   dd.get('severity_msg') or '檢視 hedge 結構是否生效；嚴重時減碼或 roll 履約',
+                'msg':   f"回檔 {cdd:+.1f}%（從高點 {dd.get('peak_date', '?')} → 已 {dd.get('days_in_dd', 0)} 天）",
+                'tip':   dd.get('severity_msg') or '檢視避險結構是否生效；嚴重時減碼或換倉（roll）',
             })
 
     # 13. 高影響事件（events.json）— 事件前 5 天 IV spike 風險
@@ -342,13 +350,13 @@ def evaluate(data: dict, rules: dict) -> list:
         iv_risk = ev.get('iv_risk', 'medium')
         risk_tip = (
             '事件前 IV 通常 spike，賣方建倉延後到事件後（避免被軋）；長 vega 部位有利' if iv_risk == 'high'
-            else '事件後 IV 可能 crush，已賣方部位可受惠；長 vega 部位有風險'
+            else '事件後波動率可能崩跌，已賣方部位可受惠；做多波動率（vega）部位有風險'
         )
         alerts.append({
             'key':   f'event_{ev.get("type", "?")}_{ev.get("date")}',
             'level': level,
             'msg':   f"{when}（{ev.get('date')}）{ev.get('name')}",
-            'tip':   f'{ev.get("note") or risk_tip}。賣方/長 vega 部位請評估是否調整',
+            'tip':   f'{ev.get("note") or risk_tip}。賣方/做多波動率（vega）部位請評估是否調整',
         })
 
     # 14. 動態管理 SOP 訊號（trim & add-back）— 用戶 5/15 要求一定要推
@@ -400,7 +408,7 @@ def evaluate(data: dict, rules: dict) -> list:
                     alerts.append({
                         'key':   f'trim_{ticker}_tier2',
                         'level': '🔴',
-                        'msg':   f"{ticker} Trim 第 2 階觸發：現價 {price}，**全出 {lots} 口**",
+                        'msg':   f"{ticker} 減碼（Trim）第 2 階觸發：現價 {price}，**全出 {lots} 口**",
                         'tip':   f'規則：{rule}。從高點跌 -10%+，T+1 09:00-09:30 限價賣出剩餘所有口數',
                     })
                 elif tier1:
@@ -408,7 +416,7 @@ def evaluate(data: dict, rules: dict) -> list:
                     alerts.append({
                         'key':   f'trim_{ticker}_tier1',
                         'level': '🟠',
-                        'msg':   f"{ticker} Trim 第 1 階觸發：現價 {price}，砍 {half} 口（留 {lots - half} 口）",
+                        'msg':   f"{ticker} 減碼（Trim）第 1 階觸發：現價 {price}，砍 {half} 口（留 {lots - half} 口）",
                         'tip':   f'規則：{rule}。從高點跌 -5%+，T+1 09:00-09:30 限價賣 50%',
                     })
             elif mode == 'signal_full':
@@ -417,7 +425,7 @@ def evaluate(data: dict, rules: dict) -> list:
                     alerts.append({
                         'key':   f'trim_{ticker}_signal',
                         'level': '🔴',
-                        'msg':   f"{ticker} Trim 訊號：{sig}，現價 {price}，**全出 {lots} 口**",
+                        'msg':   f"{ticker} 減碼（Trim）訊號：{sig}，現價 {price}，**全出 {lots} 口**",
                         'tip':   f'規則：{rule}。T+1 09:00-09:30 限價全出',
                     })
             else:   # single_full / single
@@ -427,7 +435,7 @@ def evaluate(data: dict, rules: dict) -> list:
                     alerts.append({
                         'key':   f'trim_{ticker}',
                         'level': '🔴',
-                        'msg':   f"{ticker} Trim 觸發：現價 {price}，**{act}**",
+                        'msg':   f"{ticker} 減碼（Trim）觸發：現價 {price}，**{act}**",
                         'tip':   f'規則：{rule}。T+1 09:00-09:30 限價執行',
                     })
             # Add-back 訊號（cross_up = 收盤剛站上 add_level，今天才剛 cross）
@@ -442,10 +450,10 @@ def evaluate(data: dict, rules: dict) -> list:
                 alerts.append({
                     'key':   f'add_{ticker}',
                     'level': '🟢',
-                    'msg':   f"{ticker} Add-back 訊號：收盤站上 {lvl} ({lvl_str})，**買回到 {lots} 口滿倉**",
+                    'msg':   f"{ticker} 加回（Add-back）訊號：收盤站上 {lvl} ({lvl_str})，**買回到 {lots} 口滿倉**",
                     'tip':   (f'規則：{rule}\n'
                               f'目標部位：{lots} 口 {futures_name}（依當前 trim 狀態買回對應口數）\n'
-                              f'預估 notional：~{est_notional:.0f} 萬\n'
+                              f'預估名目金額：~{est_notional:.0f} 萬\n'
                               f'執行：T+1 09:00-09:30 限價買回；流動性好可一次掛、差就分 2-3 次掛'),
                 })
 
@@ -484,11 +492,11 @@ def evaluate(data: dict, rules: dict) -> list:
                         alerts.append({
                             'key':   f'regime_sideways_{ticker}',
                             'level': '🟡',
-                            'msg':   f"{ticker} 進入盤整 {prev['count']} 天（Sideways score {sideways_score}）",
-                            'tip':   (f'⚠ 考慮暫停 -5% Trim 規則（盤整裡會 whipsaw）\n'
-                                      f'建議改用：EMA23↓ 全出 + MA60 cross-up 加回\n'
-                                      f'或：保本停利 +5% 啟動 trail -5%\n'
-                                      f'或：觀望等 regime 明朗（牛/熊確認）'),
+                            'msg':   f"{ticker} 進入盤整 {prev['count']} 天（盤整分數 {sideways_score}）",
+                            'tip':   (f'⚠ 考慮暫停 -5% 減碼規則（盤整時會被來回洗損 whipsaw）\n'
+                                      f'建議改用：跌破 EMA23 全出 + 站上 MA60 加回\n'
+                                      f'或：保本停利 +5% 啟動移動停利 -5%\n'
+                                      f'或：觀望等市況明朗（牛/熊確認）'),
                         })
                 else:
                     # 不是 sideways 就清掉 streak
@@ -499,6 +507,23 @@ def evaluate(data: dict, rules: dict) -> list:
                                          encoding='utf-8')
             except Exception:
                 pass
+
+    # 16. TXO 賣方停損（2026-05-26 加）
+    if rules.get('stop_loss_enabled', True):
+        try:
+            import stop_loss as _SL
+            mult = float(rules.get('stop_loss_multiplier', 2.0))
+            triggered_legs = _SL.analyze(data, multiplier=mult, include_unfired=False)
+            for L in triggered_legs:
+                packed = _SL.format_single_alert(L)
+                alerts.append({
+                    'key':   f'stoploss_{L["code"]}',
+                    'level': '🛑',
+                    'msg':   packed['msg'],
+                    'tip':   packed['tip'],
+                })
+        except Exception as e:
+            print(f'[alerts] stop_loss 模組失敗：{e}', file=sys.stderr)
 
     return alerts
 
@@ -690,8 +715,23 @@ def main(dry_run: bool = False):
     fired = evaluate(data, rules)
     cooldown = rules['cooldown_minutes']
     trim_cooldown = rules.get('trim_add_cooldown_minutes', cooldown)
-    # trim/add 訊號用較長 cooldown（避免每次 refresh 重推），其他用通用 cooldown
+    stoploss_cooldown = rules.get('stop_loss_cooldown_minutes', cooldown)
+    stoploss_quiet_cd = rules.get('stop_loss_quiet_cooldown_minutes', stoploss_cooldown)
+    quiet_start = int(rules.get('stop_loss_quiet_start_hour', 23))
+    quiet_end   = int(rules.get('stop_loss_quiet_end_hour', 6))
+
+    def _in_quiet_hours() -> bool:
+        from datetime import datetime as _dt
+        h = _dt.now().hour
+        # 跨午夜處理：23-6 表示 23:00–05:59
+        if quiet_start <= quiet_end:
+            return quiet_start <= h < quiet_end
+        return h >= quiet_start or h < quiet_end
+
+    # 依 key 前綴選擇對應 cooldown
     def _cd(key: str) -> int:
+        if key.startswith('stoploss_'):
+            return stoploss_quiet_cd if _in_quiet_hours() else stoploss_cooldown
         if (key.startswith('trim_') or key.startswith('add_')
                 or key.startswith('dd_warn_') or key.startswith('regime_')):
             return trim_cooldown
@@ -706,25 +746,26 @@ def main(dry_run: bool = False):
 
     if new_fired and not dry_run:
         msg = format_message(new_fired, data)
-        # 依 alert key 動態決定按鈕：dd_high → /dd /risk；roll → /roll /positions；其他通用
+        # 依 alert key 動態決定按鈕：roll → /roll /positions；其他通用
+        # （2026-05-26 用戶要求拿掉 DD/Risk row）
         keys = {a['key'] for a in new_fired}
         rows = []
-        if 'dd_high' in keys or any(k.startswith('risk_') for k in keys):
-            rows.append([{'text': '📉 DD', 'data': '/dd'},
-                         {'text': '⚠️ Risk', 'data': '/risk'}])
+        if any(k.startswith('stoploss_') for k in keys):
+            rows.append([{'text': '🛑 停損明細', 'data': '/stops'},
+                         {'text': '📂 持倉', 'data': '/positions'}])
         if any(k.startswith('roll_') or k == 'call_close' for k in keys):
-            rows.append([{'text': '🔧 Roll', 'data': '/roll'},
-                         {'text': '📂 Positions', 'data': '/positions'}])
+            rows.append([{'text': '🔧 換倉', 'data': '/roll'},
+                         {'text': '📂 持倉', 'data': '/positions'}])
         if any(k.startswith('event_') for k in keys):
-            rows.append([{'text': '📅 Events', 'data': '/events'},
-                         {'text': '🎯 Regime', 'data': '/regime'}])
+            rows.append([{'text': '📅 事件', 'data': '/events'},
+                         {'text': '🎯 市況', 'data': '/regime'}])
         if any(k.startswith('iv_') for k in keys):
-            rows.append([{'text': '📊 IV', 'data': '/iv'},
-                         {'text': '🧮 Greeks', 'data': '/greeks'}])
+            rows.append([{'text': '📊 波動率', 'data': '/iv'},
+                         {'text': '🧮 曝險', 'data': '/greeks'}])
         # 沒任何 specific 規則 → 通用 row
         if not rows:
             rows = [[{'text': '🏥 健診', 'data': '/health'},
-                     {'text': '🧮 Greeks', 'data': '/greeks'}]]
+                     {'text': '🧮 曝險', 'data': '/greeks'}]]
         ok = rules.get('telegram_enabled', True) and send_telegram(msg, buttons=rows)
         for a in new_fired:
             mark_fired(state, a['key'])
