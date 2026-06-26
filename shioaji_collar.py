@@ -2014,6 +2014,53 @@ def _resample_intraday(kbars, minutes: int) -> list:
     return [buckets[s] for s in order]
 
 
+class _MergedKbars:
+    """合併多段 kbars 的容器，提供 _resample_* 需要的 ts / OHLC 屬性。"""
+    __slots__ = ('ts', 'Open', 'High', 'Low', 'Close')
+
+    def __init__(self):
+        self.ts, self.Open, self.High, self.Low, self.Close = [], [], [], [], []
+
+
+def _kbars_chunked(api, contract, start_dt: datetime, end_dt: datetime,
+                   max_days: int = 28) -> _MergedKbars:
+    """
+    Shioaji 2026 起限制單次 api.kbars 日期區間不得超過 30 天
+    （超過回 400 'Kbars date range must not exceed 30 days.'）。
+    這裡把 [start_dt, end_dt] 切成 <=max_days 的視窗分段抓取再合併，
+    回傳物件與原生 kbars 介面相容（ts / Open / High / Low / Close）。
+    """
+    merged = _MergedKbars()
+    seen: set = set()
+    cur = start_dt
+    while cur <= end_dt:
+        win_end = min(cur + timedelta(days=max_days - 1), end_dt)
+        kb = api.kbars(
+            contract=contract,
+            start=cur.strftime('%Y-%m-%d'),
+            end=win_end.strftime('%Y-%m-%d'),
+        )
+        ts = getattr(kb, 'ts', None) or []
+        for i, t in enumerate(ts):
+            if t in seen:          # 視窗邊界保險去重
+                continue
+            seen.add(t)
+            merged.ts.append(t)
+            merged.Open.append(kb.Open[i])
+            merged.High.append(kb.High[i])
+            merged.Low.append(kb.Low[i])
+            merged.Close.append(kb.Close[i])
+        cur = win_end + timedelta(days=1)
+    if merged.ts:                  # 確保時間遞增（分段本就遞增，保險排序）
+        order = sorted(range(len(merged.ts)), key=lambda i: merged.ts[i])
+        merged.ts    = [merged.ts[i]    for i in order]
+        merged.Open  = [merged.Open[i]  for i in order]
+        merged.High  = [merged.High[i]  for i in order]
+        merged.Low   = [merged.Low[i]   for i in order]
+        merged.Close = [merged.Close[i] for i in order]
+    return merged
+
+
 def fetch_kbars(api, stock_code: str) -> Optional[dict]:
     """抓個股日K，計算 ATR / BB / HV / ADX / MACD。失敗回傳 None。"""
     try:
@@ -2025,11 +2072,7 @@ def fetch_kbars(api, stock_code: str) -> Optional[dict]:
         # 至少抓 75 個交易日（MACD 26+9 + MA60 + 緩衝），約 105 個日曆日
         lookback_days = max(int(CFG.bb_period * 1.5 * 7 / 5) + 10, 105)
         start_dt = end_dt - timedelta(days=lookback_days)
-        kbars = api.kbars(
-            contract=contract,
-            start=start_dt.strftime('%Y-%m-%d'),
-            end=end_dt.strftime('%Y-%m-%d'),
-        )
+        kbars = _kbars_chunked(api, contract, start_dt, end_dt)
         daily  = _resample_daily(kbars)
         closes = daily['Close']
         highs  = daily['High']
@@ -2167,11 +2210,7 @@ def fetch_hv_tx(api, month: str) -> Optional[dict]:
 
         end_dt   = datetime.now()
         start_dt = end_dt - timedelta(days=int(CFG.bb_period * 1.5 * 7 / 5) + 10)
-        kbars = api.kbars(
-            contract=contract,
-            start=start_dt.strftime('%Y-%m-%d'),
-            end=end_dt.strftime('%Y-%m-%d'),
-        )
+        kbars = _kbars_chunked(api, contract, start_dt, end_dt)
         daily  = _resample_daily(kbars)
         closes = daily['Close']
         n_days = daily['days']
