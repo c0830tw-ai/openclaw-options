@@ -124,6 +124,7 @@ beta調整比例 = 名目 × beta / (TAIEX × 50)
 | 0050 股期 | `api.Contracts.Futures.NYF`（元大台灣50ETF期貨） | `EWF`/`ETF50` 不存在 |
 | 滾動合約過濾 | `c.symbol == f'TXF{c.delivery_month}'`（CDF/NYF 同理） | 不過濾則 TXFR1/CDFR1/NYFR1 重複混入 |
 | K 棒 | `api.kbars()` 只有 1 分鐘，需自行重採樣成日K | 無 resolution 參數 |
+| K 棒區間 | 單次 `api.kbars` 區間 **≤30 天**，需多次抓取（用 `_kbars_chunked()` 切 28 天視窗合併） | 一次抓 105 天 → 400 `Kbars date range must not exceed 30 days.` → indicators 全 None → 前端「資料不足」 |
 | Snapshot | `buy_price` = bid，`sell_price` = ask | |
 | 金鑰種類 | 正式盤金鑰（simulation=False），模擬盤報 400 | |
 
