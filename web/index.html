@@ -1075,7 +1075,7 @@ function EquityChart({ data }) {
   };
 
   const fmtPct = v => (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
-  const colN = v => v >= 0 ? '#86efac' : '#fca5a5';
+  const colN = v => v >= 0 ? '#fca5a5' : '#86efac';
 
   return (
     <div style={{
@@ -1397,6 +1397,64 @@ function BBPatternBadge({ pattern }) {
   );
 }
 
+// 今日行動卡：一進來最上面，一句話結論「要不要動」。沿用 SOP 同一組旗標與措辭。
+function TodayAction({ data }) {
+  const assets = [data?.trim_add_0050, data?.trim_add_2330, data?.trim_add_00679b].filter(Boolean);
+  if (!assets.length) return null;
+
+  const RANK  = { red:3, orange:2, green:1, none:0 };
+  const COLOR = { red:'#ef4444', orange:'#fb923c', green:'#22c55e', none:'#64748b' };
+
+  function actionOf(s) {
+    const dd = s.dd_from_high_pct != null ? `${s.dd_from_high_pct.toFixed(1)}%` : '';
+    if (s.trim_triggered_2)
+      return { sev:'red', icon:'🔴', verb:'全部出清', why:`已跌 ${dd}（過 −10% 第二階）` };
+    if (s.trim_triggered) {
+      if (s.trim_mode === 'tiered')
+        return { sev:'orange', icon:'🟠', verb:'減碼一半（50%）', why:`已跌 ${dd}（過 −5% 第一階）` };
+      if (s.trim_mode === 'signal_full')
+        return { sev:'red', icon:'🔴', verb:'全部出清', why:'跌破 EMA23 出場訊號' };
+      return { sev:'red', icon:'🔴', verb:'全部出清', why:`已跌 ${dd}（過 −10%）` };
+    }
+    if (s.cross_up)
+      return { sev:'green', icon:'🟢', verb:`加碼買回（碰 ${s.add_level_label}）`,
+               why:`現價 ${s.price} 觸及加碼線 ${s.add_level != null ? s.add_level.toFixed(2) : ''}` };
+    return { sev:'none', icon:'', verb:null, why:null };
+  }
+
+  const rows       = assets.map(s => ({ s, a: actionOf(s) }));
+  const actionable = rows.filter(r => r.a.verb);
+  const worst      = actionable.reduce((m, r) => RANK[r.a.sev] > RANK[m] ? r.a.sev : m, 'none');
+  const barColor   = COLOR[worst];
+  const restTks    = rows.filter(r => !r.a.verb).map(r => r.s.ticker);
+
+  return (
+    <div style={{
+      margin:'10px 0 12px 0', padding:'14px 16px', borderRadius:10,
+      background:'#0c1120', borderLeft:`6px solid ${barColor}`,
+      boxShadow:'0 1px 4px rgba(0,0,0,0.4)'
+    }}>
+      <div style={{fontSize:14, color:'#94a3b8', marginBottom:10, letterSpacing:1, fontWeight:600}}>今日行動</div>
+      {actionable.length === 0 ? (
+        <div style={{fontSize:21, fontWeight:800, color:'#86efac'}}>✅ 今日無動作，續抱</div>
+      ) : (
+        <div style={{display:'flex', flexDirection:'column', gap:11}}>
+          {actionable.map(({ s, a }) => (
+            <div key={s.ticker} style={{display:'flex', alignItems:'baseline', gap:8, flexWrap:'wrap'}}>
+              <span style={{fontSize:21}}>{a.icon}</span>
+              <span style={{fontSize:19, fontWeight:800, color:COLOR[a.sev]}}>{s.ticker} {a.verb}</span>
+              <span style={{fontSize:15, color:'#cbd5e1'}}>{a.why}</span>
+            </div>
+          ))}
+          {restTks.length > 0 && (
+            <div style={{fontSize:15, color:'#94a3b8'}}>其餘續抱：{restTks.join('、')}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MarketStrip({ market: m, txo_month, dte, indicators, targets, indicators0050, indicators00679b, holding00679b, iv, ivSource }) {
   if (!m) return null;
   const basis = m.tx_futures != null && m.taiex ? m.tx_futures - m.taiex : null;
@@ -1495,6 +1553,70 @@ function MarketStrip({ market: m, txo_month, dte, indicators, targets, indicator
         </div>
       )}
 
+    </div>
+  );
+}
+
+function strengthColor(score) {
+  if (score == null) return '#94a3b8';
+  if (score >= 7) return '#86efac';
+  if (score >= 5) return '#fcd34d';
+  if (score >= 3) return '#cbd5e1';
+  if (score >= 1) return '#fb923c';
+  return '#f87171';
+}
+
+function StrengthJudgementCard({ data }) {
+  const strength = data?.strength ?? data?.indicators?.strength_tx ?? data?.indicators?.strength;
+  const mtf = data?.strength_mtf ?? data?.indicators?.strength_mtf;
+  if (!strength && !mtf) return null;
+  const frames = mtf?.timeframes || {};
+  const frameRows = ['60m', '30m', '5m'].map(tf => ({ tf, item: frames[tf] })).filter(x => x.item);
+  const score = strength?.score;
+  const maxScore = strength?.max_score ?? 9;
+  const label = strength?.label ?? '—';
+  const checks = Object.values(strength?.checks || {});
+  const passed = checks.filter(c => c.pass).length;
+  const Box = ({ title, value, sub, color }) => (
+    <div style={{
+      background:'#0b1220', border:'1px solid #1e2535', borderRadius:8,
+      padding:'10px 12px', minHeight:72,
+    }}>
+      <div style={{fontSize:10, color:'#64748b', marginBottom:5}}>{title}</div>
+      <div style={{fontSize:20, fontWeight:800, color: color || '#e2e8f0'}}>{value}</div>
+      {sub && <div style={{fontSize:10, color:'#94a3b8', marginTop:4}}>{sub}</div>}
+    </div>
+  );
+  return (
+    <div style={{
+      background:'#0f172a', border:'1px solid #1e2535', borderRadius:8,
+      padding:12, marginBottom:8,
+    }}>
+      <div className="metric-grid-6">
+        <Box title="TX 日K強弱" value={`${strength?.emoji || ''} ${label}`} sub={`分數 ${score ?? '—'}/${maxScore} · ${passed}/${checks.length || maxScore} 項通過`} color={strengthColor(score)} />
+        {mtf && (
+          <Box title="多週期結論" value={mtf.mode || '—'} sub={mtf.conclusion || ''} color="#7dd3fc" />
+        )}
+        {strength && (
+          <Box title="操作建議" value={strength.bias || '—'} sub={strength.action || ''} color={strengthColor(strength.score)} />
+        )}
+        {frameRows.map(({ tf, item }) => (
+          <Box key={tf} title={tf} value={`${item.emoji || ''} ${item.label || '—'}`} sub={`分數 ${item.score ?? '—'}/${item.max_score ?? 9}`} color={strengthColor(item.score)} />
+        ))}
+      </div>
+      {checks.length > 0 && (
+        <div style={{
+          marginTop:10, paddingTop:8, borderTop:'1px solid #1e2535',
+          display:'flex', flexWrap:'wrap', gap:6,
+        }}>
+          {checks.map((c, i) => (
+            <span key={i} style={{
+              fontSize:10, color:c.pass ? '#86efac' : '#94a3b8', background:'#111827',
+              border:'1px solid #273244', borderRadius:8, padding:'4px 8px',
+            }}>{c.pass ? '通過' : '未過'} · {c.label}</span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -2007,7 +2129,7 @@ function ShortPutComparison({ data }) {
             const rec = r.spr.recommended;
             const sp = r.spr.spread;
             const ev = sp?.ev_ntd;
-            const evColor = ev == null ? '#94a3b8' : (ev >= 0 ? '#86efac' : '#fca5a5');
+            const evColor = ev == null ? '#94a3b8' : (ev >= 0 ? '#fca5a5' : '#86efac');
             const lv = r.spr.relax_level;
             return (
               <tr key={i} style={{borderBottom:'1px dashed #1e293b'}}>
@@ -2074,7 +2196,7 @@ function ShortPutRecommender({ data, recommender, tx }) {
           {spr.spread && !spr.spread.error && (() => {
             const sp = spr.spread;
             const ev = sp.ev_ntd ?? ((1 - r.prob_itm) * sp.max_profit_ntd - r.prob_itm * sp.max_loss_ntd);
-            const evColor = ev > 0 ? '#86efac' : '#fca5a5';
+            const evColor = ev > 0 ? '#fca5a5' : '#86efac';
             const widths = spr.spread_widths || [];
             return (
               <div style={{marginTop:8, padding:'8px 10px', background:'#0f172a', border:'1px dashed #334155', borderRadius:4, fontSize:11}}>
@@ -2119,7 +2241,7 @@ function ShortPutRecommender({ data, recommender, tx }) {
                       <tbody>
                         {(spr.top_grid || widths).map((g, i) => {
                           const isBest = (g.short_strike === sp.short_strike) && (g.spread_width === sp.spread_width);
-                          const evC = g.ev_ntd > 0 ? '#86efac' : '#fca5a5';
+                          const evC = g.ev_ntd > 0 ? '#fca5a5' : '#86efac';
                           const lvl = g.short_relax || 'strict';
                           const lvlC = { strict:'#86efac', no_20d_low:'#fbbf24', min_safety:'#fb923c' }[lvl] || '#94a3b8';
                           return (
@@ -2347,7 +2469,7 @@ function BrokerPositions({ data }) {
   if (!b || !b.positions?.length) return null;
   const fmt = n => n == null ? '—' : n.toLocaleString(undefined, {maximumFractionDigits: 0});
   const sign = n => n == null ? '—' : (n >= 0 ? '+' : '') + fmt(n);
-  const pnlColor = n => n == null ? '#64748b' : (n >= 0 ? '#4ade80' : '#f87171');
+  const pnlColor = n => n == null ? '#64748b' : (n >= 0 ? '#f87171' : '#4ade80');
 
   // 按 category 分組顯示
   const cats = {};
@@ -2680,7 +2802,7 @@ function CalendarSpreadHelper({ data }) {
             賣 {sellLeg.label} ({sellLeg.dte}d) × {Q} 口 @{Math.round(sellPx)} 點
             <div style={{marginTop:'2px'}}>
               估算{netCash > 0 ? '收 ' : '付 '}
-              <b style={{color: netCash > 0 ? '#86efac' : '#fca5a5'}}>NT$ {fmt(Math.abs(netCash))}</b>
+              <b style={{color: netCash > 0 ? '#fca5a5' : '#86efac'}}>NT$ {fmt(Math.abs(netCash))}</b>
               {' · per lot '}<b>{Math.round(netPerLot)} 點</b>
             </div>
           </div>
@@ -2958,7 +3080,7 @@ function HuiRatioHelper({ data }) {
             </div>
             <div style={{fontSize:'10px', color:'#94a3b8', marginTop:'2px'}}>
               估算{netCash > 0 ? '收 ' : '付 '}
-              <b style={{color: netCash > 0 ? '#86efac' : '#fca5a5'}}>NT$ {fmt(Math.abs(netCash))}</b>
+              <b style={{color: netCash > 0 ? '#fca5a5' : '#86efac'}}>NT$ {fmt(Math.abs(netCash))}</b>
               {' · '}下方損益平衡 ≈ <b>{Math.round(lower_be)}</b>
               <span style={{fontSize:'9px', color:'#64748b'}}>（再下跌進入 ×2 損失區）</span>
             </div>
@@ -3027,7 +3149,7 @@ function PretradeSimulator({ data }) {
 
   const fmt  = n => n == null ? '—' : Math.round(n).toLocaleString();
   const fmtS = n => n == null ? '—' : (n > 0 ? '+' : '') + Math.round(n).toLocaleString();
-  const colN = n => n > 0 ? '#86efac' : n < 0 ? '#fca5a5' : '#94a3b8';
+  const colN = n => n > 0 ? '#fca5a5' : n < 0 ? '#86efac' : '#94a3b8';
 
   const S = data?.market?.tx_futures || 0;
   const TXO_MULT = 50;
@@ -3340,7 +3462,7 @@ function PretradeSimulator({ data }) {
             </div>
             <div style={{marginTop:'2px'}}>
               <span style={{color:'#94a3b8'}}>估算現金流：</span>
-              <b style={{color: netCashEst > 0 ? '#86efac' : '#fca5a5'}}>
+              <b style={{color: netCashEst > 0 ? '#fca5a5' : '#86efac'}}>
                 {netCashEst > 0 ? '收 ' : '付 '}{Math.abs(Math.round(netCashEst)).toLocaleString()} NT
               </b>
               <span style={{color:'#64748b'}}> (BS 估算)</span>
@@ -3946,7 +4068,7 @@ function StressTest({ data }) {
   ];
 
   const fmtS = n => n == null ? '—' : (n > 0 ? '+' : '') + Math.round(n).toLocaleString();
-  const colN = n => n > 0 ? '#86efac' : n < 0 ? '#fca5a5' : '#94a3b8';
+  const colN = n => n > 0 ? '#fca5a5' : n < 0 ? '#86efac' : '#94a3b8';
 
   const calc = (s) => {
     const dpl = (t.delta_ntd_per_1pct_tx || 0) * s.tx;
@@ -4032,7 +4154,7 @@ function PortfolioGreeks({ data }) {
   const gh = data?.greeks_history;
   const fmt  = n => n == null ? '—' : n.toLocaleString(undefined, {maximumFractionDigits: 0});
   const fmtS = n => n == null ? '—' : (n > 0 ? '+' : '') + fmt(n);
-  const colN = n => n > 0 ? '#86efac' : n < 0 ? '#fca5a5' : '#94a3b8';
+  const colN = n => n > 0 ? '#fca5a5' : n < 0 ? '#86efac' : '#94a3b8';
 
   // Mini sparkline for theta history
   const Sparkline = ({ values, w = 80, h = 18, color = '#64748b' }) => {
@@ -4436,7 +4558,7 @@ function TrendStrip({ data }) {
   const fmt = n => n == null ? '—' : n.toLocaleString(undefined, {maximumFractionDigits: 0});
   const sign = n => n == null ? '—' : (n >= 0 ? '+' : '') + fmt(n);
   const pctSign = n => n == null ? '—' : (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
-  const pnlColor = n => n == null ? '#64748b' : (n >= 0 ? '#4ade80' : '#f87171');
+  const pnlColor = n => n == null ? '#64748b' : (n >= 0 ? '#f87171' : '#4ade80');
 
   const Cell = ({ label, delta }) => {
     if (!delta) return (
@@ -4483,7 +4605,7 @@ function TradingLedger({ data }) {
   if (!lg) return null;
   const fmt = n => n == null ? '—' : n.toLocaleString(undefined, {maximumFractionDigits: 0});
   const sign = n => n == null ? '—' : (n >= 0 ? '+' : '') + fmt(n);
-  const pnlColor = n => n == null ? '#64748b' : (n >= 0 ? '#4ade80' : '#f87171');
+  const pnlColor = n => n == null ? '#64748b' : (n >= 0 ? '#f87171' : '#4ade80');
   return (
     <div style={{
       background: '#0a0e1c', border: '1px solid #1e2535',
@@ -4583,7 +4705,7 @@ function PortfolioBreakdown({ data }) {
       {!open && (
         <div style={{fontSize:'9px', color:'#475569', marginTop:'2px'}}>
           {pf.items.length} 筆 · 名目 {fmt(t.core_long_notional)} · 未實現
-          <span style={{color: (t.core_long_unrealized || 0) >= 0 ? '#4ade80' : '#f87171'}}> {fmtSign(t.core_long_unrealized)}</span>
+          <span style={{color: (t.core_long_unrealized || 0) >= 0 ? '#f87171' : '#4ade80'}}> {fmtSign(t.core_long_unrealized)}</span>
           <span style={{color:'#64748b'}}>　（點上面展開明細）</span>
         </div>
       )}
@@ -4607,7 +4729,7 @@ function PortfolioBreakdown({ data }) {
                   <td style={{padding:'2px 4px', textAlign:'right'}}>{fmt(it.notional)}</td>
                   <td style={{padding:'2px 4px', textAlign:'right', color:'#64748b'}}>{fmt(it.beta_adj_notional)}</td>
                   <td style={{padding:'2px 4px', textAlign:'right',
-                              color: it.unrealized == null ? '#64748b' : (it.unrealized >= 0 ? '#4ade80' : '#f87171')}}>
+                              color: it.unrealized == null ? '#64748b' : (it.unrealized >= 0 ? '#f87171' : '#4ade80')}}>
                     {fmtSign(it.unrealized)}
                   </td>
                 </tr>
@@ -4618,7 +4740,7 @@ function PortfolioBreakdown({ data }) {
                 <td style={{padding:'2px 4px', textAlign:'right'}}>{fmt(t.core_long_notional)}</td>
                 <td style={{padding:'2px 4px', textAlign:'right'}}>{fmt(t.core_long_beta_adj)}</td>
                 <td style={{padding:'2px 4px', textAlign:'right',
-                            color: (t.core_long_unrealized || 0) >= 0 ? '#4ade80' : '#f87171'}}>
+                            color: (t.core_long_unrealized || 0) >= 0 ? '#f87171' : '#4ade80'}}>
                   {fmtSign(t.core_long_unrealized)}
                 </td>
               </tr>
@@ -4797,7 +4919,7 @@ function PerformanceMetrics({ data }) {
   if (!pm) return null;
   const fmt = n => n == null ? '—' : (n >= 0 ? '+' : '') + n.toFixed(2);
   const fmtPlain = n => n == null ? '—' : n.toFixed(2);
-  const colN = n => n == null ? '#94a3b8' : n > 0 ? '#86efac' : n < 0 ? '#fca5a5' : '#94a3b8';
+  const colN = n => n == null ? '#94a3b8' : n > 0 ? '#fca5a5' : n < 0 ? '#86efac' : '#94a3b8';
   // Rating helpers
   const sharpeRating = s => s >= 2 ? '優秀' : s >= 1 ? '良好' : s >= 0.5 ? '尚可' : s >= 0 ? '微弱' : '虧損';
   const wrRating = w => w >= 60 ? '佳' : w >= 50 ? '中' : '低';
@@ -4959,7 +5081,7 @@ function PnLAttribution({ data }) {
   if (!pa || !pa.recent?.length) return null;
   const cum = pa.cumulative;
   const fmtS = n => n == null ? '—' : (n > 0 ? '+' : '') + Math.round(n).toLocaleString();
-  const colN = n => n > 0 ? '#86efac' : n < 0 ? '#fca5a5' : '#94a3b8';
+  const colN = n => n > 0 ? '#fca5a5' : n < 0 ? '#86efac' : '#94a3b8';
 
   return (
     <div style={{
@@ -5046,7 +5168,7 @@ function TradeJournalPanel({ data }) {
 
   const fmt = n => n == null ? '—' : Math.round(n).toLocaleString();
   const fmtS = n => n == null ? '—' : (n > 0 ? '+' : '') + Math.round(n).toLocaleString();
-  const colN = n => n > 0 ? '#86efac' : n < 0 ? '#fca5a5' : '#94a3b8';
+  const colN = n => n > 0 ? '#fca5a5' : n < 0 ? '#86efac' : '#94a3b8';
 
   const months = Object.entries(tj.by_month || {}).slice(0, 3);
   const theses = Object.entries(tj.by_thesis || {});
@@ -5161,7 +5283,7 @@ function PastEventImpact({ data }) {
   };
 
   const colSign = v =>
-    v == null ? '#94a3b8' : v > 0 ? '#86efac' : '#fca5a5';
+    v == null ? '#94a3b8' : v > 0 ? '#fca5a5' : '#86efac';
   const fmtPct = v => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
 
   return (
@@ -7272,6 +7394,9 @@ function App() {
         </div>
       ) : data ? (
         <>
+          {/* ═══════════════ 今日行動（最上面、一句話結論）═══════════════ */}
+          <TodayAction data={data} />
+
           {/* ═══════════════ 區塊 1：行情總覽 ═══════════════ */}
           <MarketStrip market={data.market} txo_month={data.txo_month} dte={data.dte}
                        indicators={data.indicators} targets={data.targets}
@@ -7296,6 +7421,11 @@ function App() {
                      return tags.length ? tags.join(' · ') : null;
                    })()}>
             <RegimeDetector data={data} />
+          </Section>
+
+          <Section title="強弱判斷" defaultOpen={true} accent="purple"
+                   badge={data?.strength_mtf?.label || data?.strength?.label || null}>
+            <StrengthJudgementCard data={data} />
           </Section>
 
           {/* 📉 動態管理 SOP — 三個資產的 trim & add-back */}
